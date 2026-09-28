@@ -13,6 +13,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from kg.ioutils import setup_stdout
+
+setup_stdout()
+
 from kg import config as config_mod
 
 

@@ -20,6 +20,10 @@
   const DATA = JSON.parse(document.getElementById('graph-data').textContent);
   const META = DATA.meta;
   const ZCFG = META.zoom;
+  // meta.zoom 未定义 wheel_step / level_span，滚轮的 target/hi/lo 会全变 NaN；
+  // 这里给回退值，config.yaml 日后补上这两个键即自动生效。
+  const WHEEL_STEP = ZCFG.wheel_step || 1.18;
+  const LEVEL_SPAN = ZCFG.level_span || ZCFG.zoom_in_ceiling || 1.35;
   const THEME = META.theme || {};
   const MAX_DEPTH = META.max_depth;
   const VAULT = META.vault_name;
@@ -1068,10 +1072,10 @@
     const cam = cameras[level];
     if (!cam) return;
     const dirIn = evt.deltaY < 0;
-    const factor = dirIn ? ZCFG.wheel_step : 1 / ZCFG.wheel_step;
+    const factor = dirIn ? WHEEL_STEP : 1 / WHEEL_STEP;
     const target = cy.zoom() * factor;
-    const hi = cam.zoom * ZCFG.level_span;
-    const lo = cam.zoom / ZCFG.level_span;
+    const hi = cam.zoom * LEVEL_SPAN;
+    const lo = cam.zoom / LEVEL_SPAN;
     if (target > hi) {
       if (level < MAX_DEPTH) {
         const now = Date.now();
