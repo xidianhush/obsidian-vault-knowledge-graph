@@ -27,14 +27,15 @@ class Heading:
 
 
 class WikiLink:
-    __slots__ = ("target", "anchor", "alias", "embed", "raw")
+    __slots__ = ("target", "anchor", "alias", "embed", "raw", "line")
 
-    def __init__(self, target, anchor, alias, embed, raw):
+    def __init__(self, target, anchor, alias, embed, raw, line):
         self.target = target
         self.anchor = anchor
         self.alias = alias
         self.embed = embed
         self.raw = raw
+        self.line = line
 
 
 def read_text(path: str) -> str:
@@ -102,23 +103,40 @@ def parse_headings(body: str, note_id: str, line_offset: int = 0):
     return headings
 
 
-def parse_wikilinks(body: str):
+def parse_wikilinks(body: str, line_offset: int = 0):
+    """逐行扫描 wiki 链接，跳过代码块内的内容。返回 WikiLink 列表（文档顺序）。
+
+    逐行而非整篇 finditer：一是能拿到行号（heading→heading 边需要源端归属），
+    二是代码块里的 [[Foo]] 不是真链接（此前整篇扫描会误认）。
+    """
     links: list[WikiLink] = []
-    for m in WIKILINK_RE.finditer(body):
-        inner = m.group(2)
-        embed = m.group(1) == "!"
-        alias = None
-        if "|" in inner:
-            inner, alias = inner.split("|", 1)
-            alias = alias.strip() or None
-        anchor = None
-        if "#" in inner:
-            inner, anchor = inner.split("#", 1)
-            anchor = anchor.strip() or None
-        target = inner.strip().replace("\\", "/")
-        if not target:
+    fence = None
+    for lineno, line in enumerate(body.split("\n"), start=1 + line_offset):
+        m = FENCE_RE.match(line)
+        if m:
+            marker = m.group(1)
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
             continue
-        links.append(WikiLink(target, anchor, alias, embed, m.group(0)))
+        if fence is not None:
+            continue
+        for m in WIKILINK_RE.finditer(line):
+            inner = m.group(2)
+            embed = m.group(1) == "!"
+            alias = None
+            if "|" in inner:
+                inner, alias = inner.split("|", 1)
+                alias = alias.strip() or None
+            anchor = None
+            if "#" in inner:
+                inner, anchor = inner.split("#", 1)
+                anchor = anchor.strip() or None
+            target = inner.strip().replace("\\", "/")
+            if not target:
+                continue
+            links.append(WikiLink(target, anchor, alias, embed, m.group(0), lineno))
     return links
 
 
@@ -162,7 +180,7 @@ def parse_note(file, attachments: set) -> Note:
         frontmatter=fm,
         body=body,
         headings=parse_headings(body, file.id, offset),
-        links=parse_wikilinks(body),
+        links=parse_wikilinks(body, offset),
         excerpt_text=excerpt(body),
         text=text,
     )

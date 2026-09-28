@@ -63,38 +63,45 @@ def build_payload(cfg, quiet=False):
 
     builder = graph.GraphBuilder(cfg, parsed, folders)
     builder.build_nodes(annotations)
+    builder.build_heading_nodes()        # 必须早于 build_wiki_edges：标题要先成为节点
     builder.build_contains()
     builder.build_wiki_edges()
     builder.build_frontmatter_edges()
     builder.build_annotation_edges(annotations)
     builder.build_candidate_edges(cand_doc)
 
-    max_depth = stats["max_depth"]
-    frames = layout.compute(builder.nodes, cfg, max_depth)
+    max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
+    rings = layout.compute(builder.nodes, cfg, max_depth)
     aggregates = builder.build_aggregates(max_depth)
     levels = builder.levels_table(aggregates)
-    headings = builder.heading_payload()
 
     nodes = []
+    by_kind = {"folder": 0, "note": 0, "heading": 0}
     for node in builder.nodes.values():
         item = dict(node)
         item.pop("aliases", None)
+        by_kind[item["kind"]] = by_kind.get(item["kind"], 0) + 1
         nodes.append(item)
 
     meta = {
         "generated": time.strftime("%Y-%m-%d %H:%M"),
         "vault": cfg["vault"],
         "vault_name": cfg["vault_name"],
-        "note_count": sum(1 for n in nodes if n["kind"] == "note"),
-        "folder_count": len(nodes) - sum(1 for n in nodes if n["kind"] == "note"),
-        "max_depth": max_depth,
+        "note_count": by_kind["note"],
+        "folder_count": by_kind["folder"],
+        "heading_count": by_kind["heading"],
+        "node_count_by_kind": by_kind,
+        "max_depth": max_depth,           # 深度轴已含标题层
+        "file_depth": stats["max_depth"],  # 文件系统本身的深度（不含标题）
+        "layer_count": len(rings),
         "zoom": cfg["zoom"],
+        "lod": cfg.get("lod", {}),
         "theme": cfg["theme"],
         "page_title": cfg.get("page_title") or "知识图谱",
         "scan": stats,
         "link_stats": dict(sorted(builder.stats.items())),
         "unresolved": sorted(builder.unresolved.items(), key=lambda kv: -kv[1])[:50],
-        "heading_total": sum(len(v) for v in headings.values()),
+        "heading_total": by_kind["heading"],
         "heading_link_total": len(builder.heading_links),
         "precedence": cfg["precedence"],
     }
@@ -103,8 +110,7 @@ def build_payload(cfg, quiet=False):
         "nodes": nodes,
         "edges": builder.edges,
         "aggregates": aggregates,
-        "frames": frames,
-        "headings": headings,
+        "rings": rings,
         "heading_links": builder.heading_links,
         "levels": levels,
     }
@@ -116,6 +122,7 @@ def cmd_scan(cfg, args):
     parsed, folders, stats = load_pipeline(cfg)
     builder = graph.GraphBuilder(cfg, parsed, folders)
     builder.build_nodes(load_annotations(cfg))
+    builder.build_heading_nodes()
     builder.build_contains()
     builder.build_wiki_edges()
 
@@ -158,6 +165,7 @@ def cmd_suggest(cfg, args):
     parsed, folders, stats = load_pipeline(cfg)
     builder = graph.GraphBuilder(cfg, parsed, folders)
     builder.build_nodes(load_annotations(cfg))
+    builder.build_heading_nodes()
     builder.build_contains()
     builder.build_wiki_edges()
     builder.build_annotation_edges(load_annotations(cfg))
@@ -191,15 +199,20 @@ def cmd_build(cfg, args):
     json_path = emit.write_json(cfg, payload)
     html_path = emit.build_html(cfg, payload)
     meta = payload["meta"]
-    print(f"\n笔记 {meta['note_count']} 篇 / 文件夹 {meta['folder_count']} 个 / "
-          f"最大深度 {meta['max_depth']}")
+    print(f"\n文件夹 {meta['folder_count']} 个 / 笔记 {meta['note_count']} 篇 / "
+          f"标题 {meta['heading_count']} 个  →  共 {len(payload['nodes'])} 个节点")
+    print(f"深度轴 {meta['max_depth']} 层"
+          f"（文件系统本身 {meta['file_depth']} 层 + 标题层级）")
     contains = sum(1 for e in payload["edges"] if e["type"] == "contains")
     print(f"语义边 {len(payload['edges']) - contains} 条 / 层级包含边 {contains} 条")
-    print(f"标题 {meta['heading_total']} 个，其中标题级链接 {meta['heading_link_total']} 处")
-    print("\n各层可见内容：")
-    for budget, row in payload["levels"].items():
-        print(f"  depth≤{budget}  {row['folders']:>3} 个文件夹 + {row['notes']:>3} 篇笔记"
-              f"  →  {row['edges']} 条边（语义 {row['semantic_edges']}）")
+    print(f"标题级链接 {meta['heading_link_total']} 处"
+          f"（锚点未命中 {meta['link_stats'].get('heading_anchor_miss', 0)} 处）")
+    print("\n各层可见内容（r = 该圈布局半径，世界单位）：")
+    radius_of = {r["depth"]: r["radius"] for r in payload["rings"]}
+    for budget, row in sorted(payload["levels"].items(), key=lambda kv: int(kv[0])):
+        print(f"  depth≤{int(budget):<3} r={radius_of.get(int(budget), 0):>8.0f}"
+              f"   {row['folders']:>3} 夹 + {row['notes']:>3} 笔记 + {row['headings']:>4} 标题"
+              f"  →  {row['edges']:>5} 条边（语义 {row['semantic_edges']}）")
     print(f"\nJSON   {json_path}")
     print(f"HTML   {html_path}  ({os.path.getsize(html_path) / 1024:.0f} KB)")
     print("       双击打开即可，无需服务器、无需联网\n")

@@ -1,4 +1,4 @@
-"""把解析结果装配成带层级的有向图：节点、语义边、聚合边、包围盒。"""
+"""把解析结果装配成带层级的有向图：文件夹 / 笔记 / 标题节点、语义边、层级聚合边。"""
 
 from __future__ import annotations
 
@@ -138,6 +138,53 @@ class GraphBuilder:
                 cnt = node.pop("_m_cnt", 0)
                 node["mastery"] = round(node.pop("_m_sum", 0) / cnt) if cnt else 0
 
+    def build_heading_nodes(self):
+        """把每篇笔记的标题树提升为一等节点。
+
+        depth = 所属笔记 depth + 标题级别，于是「文件夹 → 笔记 → 章 → 节 → 小节」
+        落在同一条深度轴上，缩放时可以逐层淡入而不必区分它们是文件还是标题。
+        """
+        count = 0
+        for note in self.notes:
+            nnode = self.nodes.get(note.file.id)
+            if nnode is None:
+                continue
+            for h in note.headings:
+                self.add_node(
+                    h.id,
+                    kind="heading",
+                    label=h.title,
+                    depth=nnode["depth"] + h.level,
+                    parent=h.parent or note.file.id,
+                    domain=nnode["domain"],
+                    weight=0.0,
+                    mastery=0,
+                    level=h.level,
+                    title=h.title,
+                    line=h.line,
+                    note=note.file.id,
+                    path=nnode.get("path", ""),
+                )
+                count += 1
+        self.stats["heading_nodes"] = count
+
+    def _heading_at_line(self, note_id: str, line):
+        """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。
+
+        标题按文档序排列，所以「最后一个 line ≤ 目标行的标题」就是包含该行的
+        最内层标题。链接写在笔记前言里时返回 None。
+        """
+        note = self.by_id.get(note_id)
+        if note is None or not line:
+            return None
+        found = None
+        for h in note.headings:
+            if h.line <= line:
+                found = h
+            else:
+                break
+        return found.id if found else None
+
     # ── 边 ──────────────────────────────────────────────────────────────
     def add_edge(self, source, target, etype, weight, origin, evidence=""):
         if not source or not target or source == target:
@@ -201,13 +248,16 @@ class GraphBuilder:
     def _record_heading_link(self, source, target, link):
         """把 [[笔记#标题]] 的锚点解析到目标笔记内部的具体标题上。
 
-        笔记本体之间的边表达「引用了这篇笔记」，标题级链接才能在展开标题层时
-        指出「引用的到底是哪个知识点」。
+        笔记本体之间的边表达「引用了这篇笔记」；这里再把源端按行号归属到发出
+        链接的那个标题，于是能建出 heading→heading 的真边 ——
+        「信号与系统#求解微分方程的经典解法」→「Calculus#二阶常系数…」。
+        源端归属不到（链接写在笔记前言里）时回落到笔记节点本身。
         """
         target_note = self.by_id.get(target)
         if target_note is None or not link.anchor:
             return
         wanted = _normalize_heading(link.anchor)
+        from_heading = self._heading_at_line(source, link.line)
         for heading in target_note.headings:
             candidates = {
                 _normalize_heading(heading.title),
@@ -216,12 +266,17 @@ class GraphBuilder:
             if wanted and wanted in candidates:
                 self.heading_links.append({
                     "source": source,
+                    "from_heading": from_heading,
                     "heading": heading.id,
                     "note": target,
                     "raw": link.raw,
                     "anchor": link.anchor,
+                    "line": link.line,
                 })
                 self.stats["heading_links"] += 1
+                wcfg = self.cfg["weight"]
+                self.add_edge(from_heading or source, heading.id, TYPE_DERIVES,
+                              wcfg["wiki_link"] + wcfg["heading_link_bonus"], "wiki", link.raw)
                 return
         self.stats["heading_anchor_miss"] += 1
 
@@ -300,15 +355,22 @@ class GraphBuilder:
         return node["id"] if node else node_id
 
     def build_aggregates(self, max_depth: int):
+        """为每个层级预算算一套聚合边，并记下每条边首次出现的层级 minlayer。
+
+        minlayer 是渲染侧做 LOD 裁剪的依据：一条边在浅层就已经存在（说明它连接
+        的是两个大块头），那么在深层也不必重复画那些只在最浅层才有意义的弱边。
+        """
         aggregates: dict[int, list] = {}
         semantic = [e for e in self.edges if e["type"] != TYPE_CONTAINS]
+        first_seen: dict[tuple, int] = {}
         for budget in range(1, max_depth + 1):
             bucket: dict[tuple, dict] = {}
             for node_id, node in self.nodes.items():
-                if node["depth"] <= budget and node["parent"] and node["depth"] - 1 <= budget:
+                if node["depth"] <= budget and node["parent"]:
                     key = (node["parent"], node_id, TYPE_CONTAINS)
                     slot = bucket.setdefault(key, {"s": key[0], "t": key[1], "type": TYPE_CONTAINS,
                                                    "weight": 0.0, "count": 0, "origin": "hierarchy"})
+                    first_seen.setdefault(key, budget)
                     slot["weight"] = round(slot["weight"] + 1.0, 3)
                     slot["count"] += 1
             for edge in semantic:
@@ -319,10 +381,13 @@ class GraphBuilder:
                 key = (s, t, edge["type"])
                 slot = bucket.setdefault(key, {"s": s, "t": t, "type": edge["type"],
                                                "weight": 0.0, "count": 0, "origin": edge["origin"]})
+                first_seen.setdefault(key, budget)
                 slot["weight"] = round(slot["weight"] + edge["weight"], 3)
                 slot["count"] += 1
                 if slot["origin"] != edge["origin"]:
                     slot["origin"] = "mixed"
+            for edge in bucket.values():
+                edge["minlayer"] = first_seen[(edge["s"], edge["t"], edge["type"])]
             aggregates[budget] = sorted(bucket.values(), key=lambda e: (e["s"], e["t"], e["type"]))
         return aggregates
 
@@ -330,32 +395,18 @@ class GraphBuilder:
         table = {}
         for budget, edges in aggregates.items():
             visible = [n for n in self.nodes.values() if n["depth"] <= budget]
-            notes = [n for n in visible if n["kind"] == "note"]
+            folders = sum(1 for n in visible if n["kind"] == "folder")
+            notes = sum(1 for n in visible if n["kind"] == "note")
+            headings = sum(1 for n in visible if n["kind"] == "heading")
             table[budget] = {
                 "nodes": len(visible),
-                "notes": len(notes),
-                "folders": len(visible) - len(notes),
+                "notes": notes,
+                "folders": folders,
+                "headings": headings,
                 "edges": len(edges),
                 "semantic_edges": sum(1 for e in edges if e["type"] != TYPE_CONTAINS),
             }
         return table
-
-    # ── 输出 ────────────────────────────────────────────────────────────
-    def heading_payload(self):
-        payload = {}
-        for note in self.notes:
-            payload[note.file.id] = [
-                {
-                    "id": h.id,
-                    "note": note.file.id,
-                    "level": h.level,
-                    "title": h.title,
-                    "parent": h.parent or note.file.id,
-                    "line": h.line,
-                }
-                for h in note.headings
-            ]
-        return payload
 
 
 def _normalize_heading(text: str) -> str:

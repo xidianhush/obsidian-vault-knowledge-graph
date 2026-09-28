@@ -20,10 +20,8 @@ DEFAULTS: dict = {
     ],
     "zoom": {
         "parent_dim": 0.5,
-        "wheel_sensitivity": 0.5,
+        "wheel_step": 1.18,
         "transition_ms": 260,
-        "min": 0.10,
-        "max": 5.0,
         "zoom_in_ceiling": 1.35,
         "zoom_out_floor": 0.75,
     },
@@ -43,7 +41,13 @@ DEFAULTS: dict = {
         "max_suggestions": 400,
         "generic_headings": [],
     },
-    "layout": {"radius_step": 260, "start_angle": -90},
+    "layout": {
+        "base_radius": 300,
+        "ring_ratio": 1.7,
+        "angle_power": 0.5,
+        "start_angle": -90,
+    },
+    "lod": {"min_px": 6, "label_min_px": 72, "fade_span": 1.35, "weak_edge_min_count": 2},
     "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
@@ -80,18 +84,31 @@ def _validate(cfg: dict):
     zoom = cfg["zoom"]
     if not isinstance(zoom.get("parent_dim"), (int, float)) or not 0 < zoom["parent_dim"] <= 1:
         _fail("zoom.parent_dim 必须在 (0, 1] 之间（它是父级上下文层的最低不透明度）")
-    if not isinstance(zoom.get("wheel_sensitivity"), (int, float)) or zoom["wheel_sensitivity"] <= 0:
-        _fail("zoom.wheel_sensitivity 必须是正数")
+    if not isinstance(zoom.get("wheel_step"), (int, float)) or zoom["wheel_step"] <= 1:
+        _fail("zoom.wheel_step 必须大于 1（它是滚轮一格的缩放倍率）")
     if not isinstance(zoom.get("zoom_in_ceiling"), (int, float)) or zoom["zoom_in_ceiling"] <= 1:
         _fail("zoom.zoom_in_ceiling 必须大于 1（它是顶层适配缩放的放大倍数上限）")
     if not isinstance(zoom.get("zoom_out_floor"), (int, float)) or not 0 < zoom["zoom_out_floor"] < 1:
         _fail("zoom.zoom_out_floor 必须在 (0, 1) 之间（它是深层适配缩放的收缩倍数下限）")
     if zoom["transition_ms"] < 0:
         _fail("zoom.transition_ms 不能为负")
-    if zoom["max"] <= zoom["min"]:
-        _fail("zoom.max 必须大于 zoom.min")
-    if not isinstance(cfg["layout"].get("radius_step"), (int, float)) or cfg["layout"]["radius_step"] <= 0:
-        _fail("layout.radius_step 必须是正数")
+    lcfg = cfg["layout"]
+    if not isinstance(lcfg.get("base_radius"), (int, float)) or lcfg["base_radius"] <= 0:
+        _fail("layout.base_radius 必须是正数（最内圈半径）")
+    if not isinstance(lcfg.get("ring_ratio"), (int, float)) or lcfg["ring_ratio"] <= 1:
+        _fail("layout.ring_ratio 必须大于 1（半径逐圈放大的倍率，也是每深入一层的缩放倍率）")
+    if not isinstance(lcfg.get("angle_power"), (int, float)) or not 0 < lcfg["angle_power"] <= 1:
+        _fail("layout.angle_power 必须在 (0, 1] 之间（角度权重的次线性指数，1 = 线性）")
+    lod = cfg.get("lod") or {}
+    if not isinstance(lod.get("weak_edge_min_count"), int) or lod["weak_edge_min_count"] < 1:
+        _fail("lod.weak_edge_min_count 必须是 ≥1 的整数")
+    for key in ("min_px", "label_min_px"):
+        if not isinstance(lod.get(key), (int, float)) or not lod[key] > 0:
+            _fail(f"lod.{key} 必须是正数（屏幕像素间距门槛）")
+    if lod["label_min_px"] < lod["min_px"]:
+        _fail("lod.label_min_px 不应小于 lod.min_px（标签比圆点更该被裁剪）")
+    if not isinstance(lod.get("fade_span"), (int, float)) or not lod["fade_span"] >= 1:
+        _fail("lod.fade_span 必须是 ≥1 的倍率（1 = 硬切，不淡入）")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")
