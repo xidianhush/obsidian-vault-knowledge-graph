@@ -44,6 +44,25 @@ reveal：把「该不该画这个节点」交给缩放，而不是交给层级
 它同时修好了缩放方向：zoom 越大 → 门槛 min_px/zoom 越低 → 可见节点越多、
 越深。也就是**滚轮向上（放大）= 看到更深的层级**，和地图一致；
 而旧的「圈适配视口」定义恰好是反的（放大反而只剩最内圈）。
+
+但 reveal 单独还不够：必须再叠一层「按深度的下限门控」
+----------------------------------------------------
+上一段的乐观结论只对了一半。reveal 是**局部**量（与同圈最近邻的角间距 ×
+该圈半径），而「放大 = 更深」要的是一个**全局单调**关系。两者并不自动等价：
+
+* 半径每圈 ×1.7（ring_ratio），
+* 每圈节点数却在第 6 圈见顶（939）后一路回落到 41，
+
+于是深层圈在**世界尺度上反而更稀疏**。实测本 vault 每圈 minzoom 的中位数是
+0.051 / 0.179 / 0.147 / 0.277 / 0.471 / 0.684 / 0.649 / 0.747 / 0.658 / 0.674 ——
+到第 8 圈就饱和了。取前缀最大得到「完全解锁第 L 层所需的 zoom」enter[L]，
+它在 0.7466 处封顶：滚轮从 0.75 推到 2.94 这 8 格不再解锁任何新层级，只是纯放大；
+而居中在原点时 z=2.94 的视口只有 ±275 世界单位，最深的圈在半径 35576 处，
+**画出来 0 个节点**。
+
+根子在于：同心圆布局把深度编码成**半径**，地图把细节编码成**尺度**，两者不同构。
+要保住「坐标一次算定、缩放只改相机」这个前提（换 circle packing / ZUI 布局
+等于推翻整套数据侧），就必须人为把单调性补回来 —— 见 `_apply_depth_floor`。
 """
 
 from __future__ import annotations
@@ -71,10 +90,14 @@ def _leaf_counts(nodes: dict, children: dict):
 
 
 def compute(nodes: dict, cfg: dict, max_depth: int):
-    """给每个节点写入 x / y，并返回每圈的半径表 rings。
+    """给每个节点写入 x / y / reveal，并返回 (rings, enter, home_layer)。
 
-    rings 的每一项是 {"depth", "radius", "count"}，渲染侧用它把连续的 zoom
-    反推成当前层级（depthFromZoom）。
+    * rings：每圈 {"depth", "radius", "count"}，渲染侧用它算「这一圈要装进屏幕
+      需要多大 zoom」；
+    * enter：长度 max_depth 的列表，enter[L-1] 是「完全解锁第 L 层」所需的 zoom，
+      沿深度单调不减。渲染侧用它把连续 zoom 反推成 HUD 上的层级读数；
+    * home_layer：初始视图停在第几圈 —— 既已完全解锁、又能整圈装进屏幕的最深一圈。
+      这里按 NOMINAL_FIT_RADIUS 估一个落盘值；真实值依赖视口，由前端复算。
     """
     lcfg = cfg["layout"]
     base_radius = float(lcfg.get("base_radius", 300))
@@ -145,8 +168,15 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
         })
         radius_of[depth] = radius
 
+    min_px = float(cfg.get("lod", {}).get("min_px", 6))
     reveal = _reveal(by_depth, angles, radius_of, max_depth, base_radius)
     _clamp_to_ancestors(nodes, reveal, max_depth)
+    # 顺序要紧：按深度封顶必须在祖先夹取之后。封顶只会**降低** reveal，
+    # 而 cap[L] = min_px/enter[L] 随 L 不增，所以
+    # reveal_child ≤ cap[depth_child] ≤ cap[depth_parent] ≤ reveal_parent，
+    # 祖先单调性自动保持，不需要再夹一次。
+    enter = _apply_depth_floor(nodes, reveal, by_depth, max_depth, min_px)
+    home_layer = _home_layer(enter, radius_of, max_depth)
 
     outer = radius_of.get(max_depth, base_radius)
     strays = [nid for nid in nodes if angles.get(nid) is None]
@@ -165,7 +195,7 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
         node["y"] = round(-radius * math.sin(angle), 3)
         node["reveal"] = round(reveal.get(node_id, radius), 3)
 
-    return rings
+    return rings, enter, home_layer
 
 
 def _reveal(by_depth, angles, radius_of, max_depth, base_radius):
@@ -212,5 +242,76 @@ def _clamp_to_ancestors(nodes, reveal, max_depth):
             parent = node.get("parent")
             if parent is not None and parent in reveal and parent in nodes:
                 reveal[node_id] = min(reveal[node_id], reveal[parent])
+
+
+# 落盘 home_layer 时用的标称视口半径（屏幕像素）：1600×900 的窗口减去 46px 页脚，
+# 再取半高。真实值依赖窗口尺寸，所以前端拿到 enter 与 rings 后会自己复算一遍 ——
+# 这个常量只是为了让 dist/graph.json 里也有一个可用的默认值。
+NOMINAL_FIT_RADIUS = (900 - 46) / 2
+
+
+def _median(values):
+    if not values:
+        return 0.0
+    mid = len(values) // 2
+    if len(values) % 2:
+        return values[mid]
+    return (values[mid - 1] + values[mid]) / 2
+
+
+def _apply_depth_floor(nodes, reveal, by_depth, max_depth, min_px):
+    """给 reveal 叠一层「按深度的上限封顶」，把缩放方向锁死为「放大 = 更深」。
+
+    为什么非做不可（详见模块 docstring 第三段）：reveal 是局部量，而 r_L 每圈 ×1.7、
+    每圈节点数在第 6 圈见顶后回落，深层圈在世界尺度上反而更稀疏，
+    「解锁第 L 层所需的 zoom」到第 8 圈就饱和在 0.75，之后滚轮 8 格不再解锁任何层级。
+
+    做法：取每圈 minzoom 的中位数、沿深度做前缀最大，得到第 L 层的解锁门槛
+
+        enter[L] = cummax_{L'≤L} median_{n∈ring L'}( min_px / reveal_n )
+
+    再反过来把它变成 reveal 的上限：reveal_n ← min(reveal_n, min_px / enter[depth_n])。
+    于是 minzoom_n = min_px / reveal_n ≥ enter[depth_n]，深度越大门槛越高。
+
+    安全性：封顶只会降低 reveal → 抬高 minzoom → 让节点**更晚**出现，
+    所以「同圈可见节点屏幕间距 ≥ min_px」的构造性保证不受影响（那条保证只依赖
+    reveal 是间距的下界，缩小下界不改变已成立的不等式方向）。
+    又因为 enter 单调不减 ⇒ cap[L] = min_px/enter[L] 单调不增，
+    祖先单调性 reveal_child ≤ reveal_parent 自动保持，无需再夹一次。
+
+    用中位数而不是最小值/最大值：最小值会被单个极窄扇形拖垮（等于没封顶），
+    最大值则会把整圈最松的节点也推迟到最挤的那一刻，层级感全失。中位数表示
+    「这一圈的典型拥挤程度」，正好是「这一层该在什么时候摊开」的语义。
+    """
+    enter: list[float] = []
+    running = 0.0
+    for depth in range(1, max_depth + 1):
+        members = by_depth.get(depth, [])
+        vals = sorted(min_px / max(reveal[nid], 1e-9) for nid in members)
+        running = max(running, _median(vals))
+        enter.append(running)
+
+    caps = [(min_px / e) if e > 0 else float("inf") for e in enter]
+    for node_id, node in nodes.items():
+        depth = node.get("depth", 1)
+        cap = caps[depth - 1] if 1 <= depth <= max_depth else caps[-1]
+        if node_id in reveal and reveal[node_id] > cap:
+            reveal[node_id] = cap
+    return enter
+
+
+def _home_layer(enter, radius_of, max_depth):
+    """初始视图停在第几圈：既已完全解锁（enter[L] ≤ z）、又能整圈装进屏幕（z ≤ fit/r_L）
+    的最深一圈。两个条件都满足才有意义 —— 只看前者会停在一个塞满屏幕的圈上，
+    只看后者会停在一个还没解锁、圆点糊成一团的圈上。
+    """
+    best = 1
+    for depth in range(1, max_depth + 1):
+        radius = radius_of.get(depth)
+        if not radius:
+            continue
+        if enter[depth - 1] <= NOMINAL_FIT_RADIUS / radius:
+            best = depth
+    return best
 
 

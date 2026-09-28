@@ -47,7 +47,7 @@ DEFAULTS: dict = {
         "angle_power": 0.5,
         "start_angle": -90,
     },
-    "lod": {"min_px": 6, "label_min_px": 72, "fade_span": 1.35, "weak_edge_min_count": 2},
+    "lod": {"min_px": 6, "label_alpha": 0.55, "fade_span": 1.35, "weak_edge_min_count": 2},
     "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
@@ -102,11 +102,10 @@ def _validate(cfg: dict):
     lod = cfg.get("lod") or {}
     if not isinstance(lod.get("weak_edge_min_count"), int) or lod["weak_edge_min_count"] < 1:
         _fail("lod.weak_edge_min_count 必须是 ≥1 的整数")
-    for key in ("min_px", "label_min_px"):
-        if not isinstance(lod.get(key), (int, float)) or not lod[key] > 0:
-            _fail(f"lod.{key} 必须是正数（屏幕像素间距门槛）")
-    if lod["label_min_px"] < lod["min_px"]:
-        _fail("lod.label_min_px 不应小于 lod.min_px（标签比圆点更该被裁剪）")
+    if not isinstance(lod.get("min_px"), (int, float)) or not lod["min_px"] > 0:
+        _fail("lod.min_px 必须是正数（屏幕像素间距门槛）")
+    if not isinstance(lod.get("label_alpha"), (int, float)) or not 0 < lod["label_alpha"] <= 1:
+        _fail("lod.label_alpha 必须在 (0, 1] 之间（参与标签竞争所需的淡入进度）")
     if not isinstance(lod.get("fade_span"), (int, float)) or not lod["fade_span"] >= 1:
         _fail("lod.fade_span 必须是 ≥1 的倍率（1 = 硬切，不淡入）")
     for name, color in cfg["theme"].get("domains", {}).items():

@@ -19,6 +19,7 @@ from kg.ioutils import setup_stdout
 setup_stdout()
 
 from kg import config as config_mod
+from kg import layout as layout_mod
 
 
 class CheckFailure(Exception):
@@ -175,6 +176,41 @@ def run(cfg, payload_path=None):
     _check(root_need <= need[-1],
            "顶层学科全部出现所需的缩放，不大于最挤节点所需的缩放", failures)
 
+    # ── enter：按深度的解锁门槛，即「放大 = 更深」的方向锁 ───────────────
+    # reveal 是局部量，单靠它给不出全局单调的方向（深层圈在世界尺度上反而更稀疏，
+    # 门槛会在第 8 圈饱和）。enter[L] 把每圈 minzoom 的中位数沿深度取前缀最大，
+    # 再反过来给 reveal 封顶，于是 minzoom_n ≥ enter[depth_n]。见 _apply_depth_floor。
+    print("\n[LOD enter] 按深度单调的解锁门槛（方向锁）")
+    lod = meta.get("lod", {})
+    enter = lod.get("enter") or []
+    home = lod.get("home_layer")
+    depth1 = [n for n in data["nodes"] if n["depth"] == 1]
+    _check(len(enter) == max_depth,
+           f"enter 覆盖 depth 1..{max_depth}（实到 {len(enter)} 项）", failures)
+    _check(all(b >= a - 1e-9 for a, b in zip(enter, enter[1:])),
+           "enter 沿深度单调不减 —— 越深的层越晚解锁", failures)
+    # reveal 按 3 位小数、enter 按 6 位小数落盘，而封顶后大量节点的 reveal 恰好
+    # 等于 cap[L] —— 正是舍入最敏感的那一批。绝对容差会被噪声误判，用相对容差。
+    below = [n["id"] for n in data["nodes"]
+             if min_px / n["reveal"] < enter[n["depth"] - 1] * (1 - 1e-3)]
+    _check(not below,
+           f"每个节点的 minzoom 都不低于它所在深度的 enter（违反 {len(below)} 个）", failures)
+    _check(bool(enter) and enter[-1] <= z_hi,
+           f"放到最大（z={z_hi:.3f}）时最深层已解锁"
+           f"（enter[{max_depth}]={enter[-1] if enter else 0:.3f}）", failures)
+    fit = layout_mod.NOMINAL_FIT_RADIUS
+    cand = [d for d in range(1, max_depth + 1)
+            if enter[d - 1] <= fit / radius_of[d]] if enter else []
+    _check(home == (max(cand) if cand else 1),
+           f"home_layer={home} 是「已解锁且整圈能装进屏幕」的最深一圈"
+           f"（标称视口半径 {fit:.0f}px，候选 {cand}）", failures)
+    print(f"         {'圈':>3}{'半径':>10}{'适配zoom':>11}{'enter':>10}{'整圈可见':>10}")
+    for d in range(1, max_depth + 1):
+        fz = fit / radius_of[d]
+        whole = "是" if enter[d - 1] <= fz else "—"
+        print(f"         {d:>3}{radius_of[d]:>10.0f}{fz:>11.4f}"
+              f"{enter[d - 1]:>10.4f}{whole:>10}")
+
     # 单调性 + 每层是否有独立的可见窗口（否则语义缩放就退化成一次全开）
     steps = 40
     prev = -1
@@ -188,13 +224,24 @@ def run(cfg, payload_path=None):
             nonmono += 1
         prev = vis
     _check(nonmono == 0, f"可见节点数随缩放单调不减（回退 {nonmono} 次）", failures)
-    _check(counts[0] < len(data["nodes"]) and counts[-1] == len(data["nodes"]),
-           f"缩到最外只见 {counts[0]} 个、放到最内见全部 {counts[-1]} 个", failures)
+    at_root = sum(1 for n in data["nodes"] if n["reveal"] >= min_px / root_need * (1 - 1e-9))
+    at_home = sum(1 for n in data["nodes"]
+                  if n["reveal"] >= min_px / (fit / radius_of[home or 1]) * (1 - 1e-9))
+    _check(at_root == len(depth1),
+           f"zoom={root_need:.4f} 时恰好 {len(depth1)} 个顶层学科硬可见（实到 {at_root}）",
+           failures)
+    _check(counts[-1] == len(data["nodes"]),
+           f"放到最内见全部 {counts[-1]} 个节点", failures)
+    _check(20 <= at_home <= 600,
+           f"home 视图（z={fit / radius_of[home or 1]:.4f}）可见 {at_home} 个节点，"
+           f"是「整个 vault 的骨架」而不是空白或糊团", failures)
 
-    # 注意：这里**不**要求「每层全部出现所需的缩放」逐层递增。全图最挤的点在哪一层，
-    # 哪一层就最后解完；实测拥挤峰在 depth 6（939 个标题挤在一圈），depth 8..10 反而
-    # 更早解完。地图同理：通往远方城市的高速先出现，近处的小路后出现。真正的不变量是
-    # 上面那条「子节点不早于祖先」，以及下面这条同圈间距保证。
+    # 注意：逐层单调的是「首现」—— enter[L] 沿深度单调不减，由 _apply_depth_floor
+    # 构造保证（见上面 [LOD enter] 段）。这里**不**要求「每层全部出现所需的缩放」
+    # （末现）逐层递增，也无需单调：全图最挤的点在哪一层，哪一层就最后解完；实测拥挤峰
+    # 在 depth 6（939 个标题挤在一圈），depth 8..10 反而更早解完。地图同理：通往远方
+    # 城市的高速先出现，近处的小路后出现。真正的不变量是上面那条「子节点不早于祖先」、
+    # enter 的方向锁，以及下面这条同圈间距保证。
     #
     # 间距保证是构造出来的、不是调参调出来的：reveal_n 取的是到同圈最近邻的世界弧长，
     # 所以任意相邻一对的弧长 ≥ 两端各自的 reveal；而「可见」的定义就是

@@ -71,7 +71,7 @@ def build_payload(cfg, quiet=False):
     builder.build_candidate_edges(cand_doc)
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
-    rings = layout.compute(builder.nodes, cfg, max_depth)
+    rings, enter, home_layer = layout.compute(builder.nodes, cfg, max_depth)
     aggregates = builder.build_aggregates(max_depth)
     levels = builder.levels_table(aggregates)
 
@@ -95,7 +95,9 @@ def build_payload(cfg, quiet=False):
         "file_depth": stats["max_depth"],  # 文件系统本身的深度（不含标题）
         "layer_count": len(rings),
         "zoom": cfg["zoom"],
-        "lod": cfg.get("lod", {}),
+        "lod": dict(cfg.get("lod", {}),
+                    enter=[round(v, 6) for v in enter],
+                    home_layer=home_layer),
         "theme": cfg["theme"],
         "page_title": cfg.get("page_title") or "知识图谱",
         "scan": stats,

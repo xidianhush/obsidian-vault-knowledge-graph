@@ -20,7 +20,12 @@
     background: var(--bg); color: var(--text);
     font: 13px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
-  #cy { position: absolute; inset: 0; }
+  /* 画布必须铺满视口并有真实的 clientWidth/clientHeight —— render.js 的
+     fitRadius() 与 home_layer 都按这个尺寸算，CSS 不给尺寸就什么都画不出来。
+     <canvas> 是替换元素：width/height 为 auto 时取固有尺寸 300×150，inset:0
+     撑不开它（left/right 同时为 0 时 right、bottom 被忽略），所以必须写死
+     100%。底部预留 46px 给 footer（render.js 的 FOOTER_H 必须与此一致）。 */
+  #cv { display: block; position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
 
   /* ── 顶栏 ─────────────────────────────────────────────────────── */
   #topbar {
@@ -95,7 +100,6 @@
   #legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
   #legend .sw { width: 22px; height: 3px; border-radius: 2px; flex: none; }
   #legend .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
-  #legend .sq { width: 12px; height: 12px; border-radius: 3px; flex: none; }
   #legend h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 600; }
   #legend section + section { margin-top: 9px; }
   #legend .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
@@ -132,7 +136,7 @@
 </style>
 </head>
 <body>
-<div id="cy"></div>
+<canvas id="cv"></canvas>
 
 <header id="topbar">
   <span class="brand">__PAGE_TITLE__<small id="subtitle"></small></span>
@@ -151,7 +155,7 @@
     <option value="weak">待加强（1-2）</option>
     <option value="none">未标注</option>
   </select>
-  <select id="labels" title="笔记标签的显示策略">
+  <select id="labels" title="标签的显示策略">
     <option value="auto">标签：自动</option>
     <option value="all">标签：全部显示</option>
     <option value="none">标签：只显示选中</option>
@@ -168,21 +172,22 @@
     <div id="legend-domains"></div>
   </section>
   <section>
-    <h4>关系</h4>
+    <h4>关系（线宽 = 当前尺度上聚合了多少条原始链接）</h4>
     <div class="row"><span class="sw" style="background:#8B949E"></span>前置：source 是 target 的前置</div>
     <div class="row"><span class="sw" style="background:#4C8DFF"></span>引用：source 引用了 target</div>
     <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
-    <div class="row"><span class="sw" style="background:#30363D"></span>层级包含</div>
+    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dashed rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只画出祖先链</div>
   </section>
   <section>
-    <h4>节点</h4>
-    <div class="row"><span class="sq" style="background:#2a303c;border:1.5px dashed #7e879a"></span>圆角方框 = 文件夹，「省界」轮廓</div>
-    <div class="row"><span class="dot" style="background:#4C8DFF"></span>圆 = 笔记，颜色按学科</div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #d6dbe4"></span>边框粗细 = 掌握度 1→5</div>
-    <div class="row"><span class="dot" style="background:#6b7383;width:7px;height:7px"></span>小圆 = 笔记内的标题（知识点）</div>
+    <h4>节点（一律实心圆）</h4>
+    <div class="row"><span class="dot" style="background:#4C8DFF"></span>颜色 = 学科（顶层目录）</div>
+    <div class="row"><span class="dot" style="background:#4C8DFF;width:16px;height:16px"></span>大小 = 规模（下辖元素越多越大）</div>
+    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #d6dbe4"></span>白色描边粗细 = 掌握度 1→5</div>
+    <div class="row"><span class="dot" style="background:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.35)"></span>黄色光环 = 搜索命中</div>
   </section>
   <div class="hint">
-    滚轮／<b>+</b> <b>−</b> 换层 · 单击节点看详情 · 单击笔记再点「展开知识点」看标题层 · <b>Esc</b> 收起
+    光标放在节点上<b>向上滚 = 逐层深入</b>，向下滚 = 回到更粗的层级 · 拖拽平移 ·
+    单击看详情 · 双击深入 · <b>Esc</b> 收起 · <b>[</b> <b>]</b> 逐层切换
   </div>
 </div>
 
@@ -192,7 +197,7 @@
   生成于 __GENERATED__ · 数据来自 Obsidian vault（本地构建，无服务器）
 </footer>
 
-<script>/*__CYTOSCAPE__*/</script>
+<script>/*__RENDER__*/</script>
 <script type="application/json" id="graph-data">/*__DATA__*/</script>
 <script>/*__APP__*/</script>
 </body>
