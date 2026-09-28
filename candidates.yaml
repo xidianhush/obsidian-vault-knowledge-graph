@@ -1,0 +1,2260 @@
+# 候选边 —— 由 `python build.py suggest` 生成，请人工审核
+#
+#   status: pending    → 不进图（默认）
+#   status: accepted   → 进图
+#   status: rejected   → 永久忽略（下次 suggest 会保留这个状态，不会重新变成 pending）
+#
+# 方向说明：
+#   prerequisite  source 是 target 的前置（有箭头）
+#   derives       source 推导出 target（有箭头）
+#   contrast      并列/对比，方向未知（无箭头，虚线）
+#
+# 改完跑 `python build.py build` 生效。手工新增的边建议写进 annotations.yaml。
+candidates:
+- source: Science and Tech/Physics basic/量子力学
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.967
+  reason: 共享术语：Ieigenvalue、Hermitian、E_x+E_y、observable、Hamilton
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.931
+  reason: 共享术语：TIMG、calculation、uint16_t、CMSIS、TIMA0
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.931
+  reason: 共享术语：NVIC、Flash、oled、STM32、Cortex
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.923
+  reason: 共享术语：LLVM、Objective、CMake、Clang、Google
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.923
+  reason: 共享术语：Link、Symbol、Static、plaintext、Guide
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  type: contrast
+  weight: 3.0
+  score: 0.92
+  reason: 共享术语：Flash、oled、STM32、Cortex、GPIO
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.915
+  reason: 共享术语：DTFT、CTFT、Linear、recall、aligned
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.915
+  reason: 共享术语：Energy、Band、wave、threshold
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.906
+  reason: 共享术语：Circular、period、Algorithm、Minimum
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.902
+  reason: 共享术语：Processing、translation、Obsidian、Markdown
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.902
+  reason: 共享术语：Characteristics、unity、Power、recall
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/数字集成电路
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.893
+  reason: 共享术语：NMOS、PMOS、array
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.891
+  reason: 共享术语：Codebase、borderradius、vscode、CSDN
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.89
+  reason: 共享术语：array、recall、share、aligned、deepseek
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.888
+  reason: 共享术语：Lattice、exp3、exp1、exp2、World
+  status: pending
+- source: Science and Tech/Computer science & Coding/Operating system
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.887
+  reason: 共享术语：MIPS、RISC、CMake、macOS、Memory
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.886
+  reason: 共享术语：share、deepseek、chat、chatgpt、BBFABBA6
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  type: contrast
+  weight: 3.0
+  score: 0.883
+  reason: 共享术语：MinGW、Clang、Makefile、Microsoft、Visual
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.883
+  reason: 共享术语：MSVC、Clang、macOS、Microsoft、Visual
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.876
+  reason: 共享术语：Gradle、Groovy、Kotlin、Android
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.874
+  reason: 共享术语：Object、extern、Visual、index、ADCCFFA6
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.874
+  reason: 共享术语：Transformation、Linear、Power、aligned、ADCCFFA6
+  status: pending
+- source: Projects/Competition/NEUDC/nep笔试题
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.867
+  reason: 共享术语：Noise、Gain、Voltage、Bandwidth、Current
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.867
+  reason: 共享术语：Group、Series、Block、Random、circular
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.864
+  reason: 共享术语：Magnitude、deepseek、chat、BBFABBA6、ADCCFFA6
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.863
+  reason: 共享术语：share、deepseek、chat、chatgpt、CSDN
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.86
+  reason: 共享术语：Cursor、Step、Studio、Visual、vscode
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.859
+  reason: 共享术语：Mealy、Moore、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.858
+  reason: 共享术语：Github、Vscode、CSDN
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.858
+  reason: 共享术语：XDS110、Composer、JTAG、UART、Studio
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.858
+  reason: 共享术语：degeneration、swing、transistors、Current、align
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.856
+  reason: 共享术语：GitHub、csdn、BBFABBA6、blog、ADCCFFA6
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.856
+  reason: 共享术语：NAND、CSDN、BBFABBA6、blog、ADCCFFA6
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.852
+  reason: 共享术语：JTAG、UART、vscode、CSDN
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.848
+  reason: 共享术语：CSDN、BBFABBA6、blog、Python、ADCCFFA6
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.846
+  reason: 共享术语：Dart、docs、Flutter、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.845
+  reason: 共享术语：Ninja、CMake、Makefile、Linux、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.845
+  reason: 共享术语：share、deepseek、chat、chatgpt、csdn
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  type: contrast
+  weight: 3.0
+  score: 0.844
+  reason: 共享术语：async、index、ABF7F7A6、ADCCFFA6、style
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.844
+  reason: 共享术语：Linear、aligned、align、ADCCFFA6、style
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.843
+  reason: 共享术语：through、chatgpt、BBFABBA6、ADCCFFA6、style
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.843
+  reason: 共享术语：always、wire、Verilog、csdn、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.842
+  reason: 共享术语：doubao、vscode、chatgpt、CSDN
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.839
+  reason: 共享术语：ASCII、chatgpt、BBFABBA6、ADCCFFA6、style
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.837
+  reason: 共享术语：Linux、vscode、CSDN、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Compilers principles
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.835
+  reason: 共享术语：compiler_picture、Assembly、Toolchain、Object
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.832
+  reason: 共享术语：Spectral、Parseval、Density、Power
+  status: pending
+- source: Economy and Finance/Overview of Finance Major
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.831
+  reason: 共享术语：spm_id_from、vd_source、video、bilibili
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.829
+  reason: 共享术语：VHDL、Verilog、FPGA
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.828
+  reason: 共享术语：Flutter、Dart
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.826
+  reason: 共享术语：csdn、BBFABBA6、blog、ADCCFFA6、style
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  type: contrast
+  weight: 3.0
+  score: 0.822
+  reason: 共享术语：GitHub、index、CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.822
+  reason: 共享术语：String、index、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.822
+  reason: 共享术语：major、Markdown、ADCCFFA6、style、background
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.816
+  reason: 共享术语：nT_s、BBFABBA6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.816
+  reason: 共享术语：Effect、BBFABBA6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.812
+  reason: 共享术语：Transfer、Domain、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数字信号处理(自己理解)
+  type: contrast
+  weight: 3.0
+  score: 0.811
+  reason: 共享术语：DTFT、CTFT、deepseek、chat
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数字信号处理(自己理解)
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.811
+  reason: 共享术语：DTFT、CTFT、deepseek、chat
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.81
+  reason: 共享术语：Windows、Google、Linux
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.81
+  reason: 共享术语：Chrome、Node、Linux、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Coding language/Java script
+  type: contrast
+  weight: 3.0
+  score: 0.808
+  reason: 共享术语：Linux、Windows、ABF7F7A6、style、background
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.803
+  reason: 共享术语：index、Python、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.801
+  reason: 共享术语：Kotlin、Android、Java、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Operating system
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.801
+  reason: 共享术语：Google、Android、Linux、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.799
+  reason: 共享术语：Reddit、Linux、chatgpt、Windows
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.799
+  reason: 共享术语：align、BBFABBA6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.799
+  reason: 共享术语：align、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.799
+  reason: 共享术语：align、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、Python、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、ABF7F7A6、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.796
+  reason: 共享术语：BBFABBA6、Python、ADCCFFA6、style、background
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.794
+  reason: 共享术语：share、deepseek、chat、chatgpt
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.794
+  reason: 共享术语：share、deepseek、chat、chatgpt
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路进阶
+  target: Science and Tech/Electronic engineering/Embedded engineering/模块信息
+  type: contrast
+  weight: 3.0
+  score: 0.794
+  reason: 共享术语：A2cos、Vmix、Phase
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.791
+  reason: 共享术语：Electron、ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.787
+  reason: 共享术语：React、Windows、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.787
+  reason: 共享术语：Access、Windows、style、background、mark
+  status: pending
+- source: Economy and Finance/Finance
+  target: Economy and Finance/Overview of Finance Major
+  type: contrast
+  weight: 3.0
+  score: 0.781
+  reason: 共享术语：vd_source、video、bilibili
+  status: pending
+- source: Economy and Finance/Finance
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.781
+  reason: 共享术语：vd_source、video、bilibili
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.781
+  reason: 共享术语：Control、IEEE、Access
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.779
+  reason: 共享术语：Guide、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.779
+  reason: 共享术语：Step、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.779
+  reason: 共享术语：conjugate、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.779
+  reason: 共享术语：conjugate、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.778
+  reason: 共享术语：Java、vscode、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Coding language/Java script
+  type: contrast
+  weight: 3.0
+  score: 0.777
+  reason: 共享术语：JavaScript、ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.774
+  reason: 共享术语：Maven、Gradle、Java
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.774
+  reason: 共享术语：FPGA、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.773
+  reason: 共享术语：Linux、Windows、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Operating system
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.773
+  reason: 共享术语：Control、Memory、Studio
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  type: contrast
+  weight: 3.0
+  score: 0.772
+  reason: 共享术语：vscode、CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.771
+  reason: 共享术语：vscode、ABF7F7A6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.766
+  reason: 共享术语：CSDN、blog、Python
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Embedded engineering/Embedded engineering
+  type: contrast
+  weight: 3.0
+  score: 0.765
+  reason: 共享术语：Arduino、STM32、Linux
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路进阶
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.765
+  reason: 共享术语：Phase、Obsidian、Markdown
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.764
+  reason: 共享术语：vscode、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：Kotlin、Android、Java
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：docs、Development、Windows
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：align、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：align、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：align、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：align、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.762
+  reason: 共享术语：align、ADCCFFA6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：Python、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：Python、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：ABF7F7A6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.757
+  reason: 共享术语：BBFABBA6、ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/数字集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.755
+  reason: 共享术语：array、aligned、align
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Basic concept
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.752
+  reason: 共享术语：Dart、JavaScript、Java
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.752
+  reason: 共享术语：React、JavaScript、Windows
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/Embedded engineering
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.752
+  reason: 共享术语：FPGA、STM32、Linux
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.749
+  reason: 共享术语：Power、aligned、align
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.747
+  reason: 共享术语：Studio、Visual、Java
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.747
+  reason: 共享术语：Studio、Visual、Java
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.745
+  reason: 共享术语：Gradle、Java、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.742
+  reason: 共享术语：Reverse、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.742
+  reason: 共享术语：Reverse、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Basic concept
+  target: Science and Tech/Computer science & Coding/Other
+  type: contrast
+  weight: 3.0
+  score: 0.731
+  reason: 共享术语：JavaScript、Java、Python
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.731
+  reason: 共享术语：FPGA、csdn、blog
+  status: pending
+- source: Projects/Competition/NEUDC/nep笔试题
+  target: Projects/Competition/NEUDC/nep面试
+  type: contrast
+  weight: 3.0
+  score: 0.726
+  reason: 共享术语：exclude、graph
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Engineering basic/Excel
+  type: contrast
+  weight: 3.0
+  score: 0.726
+  reason: 共享术语：Excel
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电磁场与电磁波
+  target: Science and Tech/Physics basic/大物2
+  type: contrast
+  weight: 3.0
+  score: 0.726
+  reason: 共享术语：MdI_、Magnetic
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路进阶
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.726
+  reason: 共享术语：noise、Amplifier
+  status: pending
+- source: Science and Tech/Engineering basic/Latex
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.726
+  reason: 共享术语：LaTeX
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.721
+  reason: 共享术语：vscode、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.721
+  reason: 共享术语：vscode、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.721
+  reason: 共享术语：vscode、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.719
+  reason: 共享术语：chatgpt、CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.716
+  reason: 共享术语：chatgpt、csdn、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Mathematics Basic/概率论
+  type: contrast
+  weight: 3.0
+  score: 0.716
+  reason: 共享术语：Laplace、Calculus#
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/数字集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.716
+  reason: 共享术语：CMOS、NAND
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.716
+  reason: 共享术语：Impedance、Guide
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.714
+  reason: 共享术语：Windows、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.713
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Projects/Competition/NEUDC/训练题(软件）
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：BBFABBA6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Computer science & Coding/Coding language/Java script
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Engineering basic/Weird problem
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Engineering basic/Weird problem
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.712
+  reason: 共享术语：ABF7F7A6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.71
+  reason: 共享术语：CSDN、blog、Python
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/模块信息
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.704
+  reason: 共享术语：Phase、Digital
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Embedded engineering/TI learning
+  type: contrast
+  weight: 3.0
+  score: 0.701
+  reason: 共享术语：stop、Studio
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/模电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Embedded engineering/stm32基础
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/半导体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Mathematics Basic/Calculus
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Science and Tech/Mathematics Basic/Calculus
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.7
+  reason: 共享术语：ADCCFFA6、style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.689
+  reason: 共享术语：GitHub、JavaScript
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Other
+  type: contrast
+  weight: 3.0
+  score: 0.689
+  reason: 共享术语：Node、JavaScript
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/控制论
+  type: contrast
+  weight: 3.0
+  score: 0.683
+  reason: 共享术语：GitHub、index
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python for math
+  type: contrast
+  weight: 3.0
+  score: 0.679
+  reason: 共享术语：Python
+  status: pending
+- source: Medical and Health/Biology
+  target: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  type: contrast
+  weight: 3.0
+  score: 0.673
+  reason: 共享术语：Obsidian、Markdown
+  status: pending
+- source: Medical and Health/Biology
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路进阶
+  type: contrast
+  weight: 3.0
+  score: 0.673
+  reason: 共享术语：Obsidian、Markdown
+  status: pending
+- source: Medical and Health/Biology
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.673
+  reason: 共享术语：Obsidian、Markdown
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路进阶
+  type: contrast
+  weight: 3.0
+  score: 0.673
+  reason: 共享术语：Obsidian、Markdown
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  type: contrast
+  weight: 3.0
+  score: 0.671
+  reason: 共享术语：Studio、Visual
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.671
+  reason: 共享术语：Studio、Visual
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  type: contrast
+  weight: 3.0
+  score: 0.669
+  reason: 共享术语：React、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.669
+  reason: 共享术语：Control、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.667
+  reason: 共享术语：Android、vscode
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/控制论
+  type: contrast
+  weight: 3.0
+  score: 0.665
+  reason: 共享术语：doubao、index
+  status: pending
+- source: Science and Tech/Computer science & Coding/Other
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.665
+  reason: 共享术语：Node、Python
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  target: Science and Tech/Computer science & Coding/Other
+  type: contrast
+  weight: 3.0
+  score: 0.659
+  reason: 共享术语：JavaScript、Java
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Flutter(Focus on framework)
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.659
+  reason: 共享术语：share、chatgpt
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Flutter(Focus on framework)
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.659
+  reason: 共享术语：share、chatgpt
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Flutter(Focus on framework)
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.659
+  reason: 共享术语：share、chatgpt
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Flutter(Focus on framework)
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.659
+  reason: 共享术语：share、chatgpt
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Engineering basic/Latex
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：Microsoft、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  target: Science and Tech/Engineering basic/Latex
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：Microsoft、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Create a schedule app
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：Android、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Operating system
+  target: Science and Tech/Engineering basic/Latex
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：Microsoft、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数字信号处理(自己理解)
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：deepseek、chat
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：deepseek、chat
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数字信号处理(自己理解)
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：deepseek、chat
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数字信号处理(自己理解)
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/模拟集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.658
+  reason: 共享术语：deepseek、chat
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/数字集成电路
+  type: contrast
+  weight: 3.0
+  score: 0.653
+  reason: 共享术语：aligned、align
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Computer science & Coding/Coding language/C&CPP
+  type: contrast
+  weight: 3.0
+  score: 0.651
+  reason: 共享术语：index、chatgpt
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.651
+  reason: 共享术语：index、vscode
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Basic concept
+  type: contrast
+  weight: 3.0
+  score: 0.644
+  reason: 共享术语：JavaScript、Python
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Other
+  type: contrast
+  weight: 3.0
+  score: 0.644
+  reason: 共享术语：JavaScript、Python
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Build & Build tool
+  target: Science and Tech/Computer science & Coding/Coding language/Java script
+  type: contrast
+  weight: 3.0
+  score: 0.634
+  reason: 共享术语：Linux、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Operating system
+  type: contrast
+  weight: 3.0
+  score: 0.634
+  reason: 共享术语：Linux、Windows
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Basic concept
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.629
+  reason: 共享术语：Java、Python
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Computer science & Coding/Other
+  type: contrast
+  weight: 3.0
+  score: 0.629
+  reason: 共享术语：Java、Python
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  type: contrast
+  weight: 3.0
+  score: 0.629
+  reason: 共享术语：vscode、Python
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Coding language/Java script
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Medical and Health/Neuroscience
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Dart&Flutter
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Java script
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Coding language/Python/Python语言学习
+  target: Science and Tech/Computer science & Coding/Computer networks
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Physics basic/量子力学
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Computer networks
+  target: Science and Tech/Physics basic/量子力学和固体物理
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Computer science & Coding/Mobile software development/Android develop
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/电路分析基础
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/DSP
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/IC and semiconductor manufacture/FPGA基本知识
+  target: Science and Tech/Engineering basic/Weird problem
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Engineering basic/Weird problem
+  target: Science and Tech/Mathematics Basic/Calculus
+  type: contrast
+  weight: 3.0
+  score: 0.626
+  reason: 共享术语：style、background、mark
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  type: contrast
+  weight: 3.0
+  score: 0.623
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/数电
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.623
+  reason: 共享术语：CSDN、blog
+  status: pending
+- source: Projects/Competition/NEUDC/训练题(软件）
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Git & Github
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Basic concepts & methods & tools/Vscode
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Computer science & Coding/Relearn how to use the computer
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Communication engineering/通信原理
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(FPGA)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending
+- source: Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统
+  target: Science and Tech/Electronic engineering/IC and semiconductor manufacture/Verilog(class note)
+  type: contrast
+  weight: 3.0
+  score: 0.618
+  reason: 共享术语：csdn、blog
+  status: pending

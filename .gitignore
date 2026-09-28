@@ -1,0 +1,15 @@
+# 构建产物（可由 python build.py build 重建）
+dist/
+
+# 第三方库（Cytoscape vendored；已弃用后不再需要）
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 同步日志
+*.log
+
+# 同步任务的防重入锁
+*.lock
