@@ -34,7 +34,8 @@
     background: linear-gradient(180deg, rgba(15,17,22,.96), rgba(15,17,22,.75));
     border-bottom: 1px solid var(--line); z-index: 20;
   }
-  #topbar .brand { font-weight: 600; letter-spacing: .3px; }
+  /* 顶栏一行放不下时宁可让 #readout 折成两行，也不让 brand 折成三行溢出顶栏 */
+  #topbar .brand { font-weight: 600; letter-spacing: .3px; white-space: nowrap; flex: 0 0 auto; }
   #topbar .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; }
   .spacer { flex: 1; }
   button, select, input {
@@ -44,16 +45,17 @@
   }
   button:hover, select:hover { border-color: #3d4657; cursor: pointer; }
   input:focus { border-color: var(--accent); }
-  #search { width: 200px; }
+  #search { width: 150px; }
 
-  #levelbar { display: flex; align-items: center; gap: 6px; }
-  #levelbar button { width: 26px; padding: 5px 0; text-align: center; }
+  #levelbar { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  #levelbar button { width: 22px; padding: 5px 0; text-align: center; }
   .pill {
-    padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
+    padding: 3px 0; width: 22px; text-align: center;
+    border-radius: 999px; border: 1px solid var(--line);
     background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 12px;
   }
   .pill.on { color: #fff; border-color: var(--accent); background: #1d2c48; }
-  #readout { color: var(--muted); font-size: 12px; min-width: 240px; }
+  #readout { color: var(--muted); font-size: 12px; min-width: 0; flex: 0 1 auto; }
   #readout b { color: var(--text); font-weight: 600; }
 
   /* ── 侧栏 ─────────────────────────────────────────────────────── */

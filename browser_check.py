@@ -4,7 +4,7 @@ Drives wheel / keyboard / click / search / filters against the built single-file
 HTML and asserts the same LOD contract that verify.py proves on the data side,
 plus regressions for the three bugs found by hand:
   A. camera tween never notified hooks.onCamera -> HUD stale after programmatic zoom
-  B. fully empty viewport gave no feedback (concentric layout has an empty center)
+  B. fully empty viewport gave no feedback (deep zoom can land in a gap between circles)
   C. label gate read the parent_dim-dimmed alpha -> zero labels at every zoom level
 
 Usage: pip install playwright, then `python browser_check.py` after a build.
@@ -40,18 +40,32 @@ DESC_COUNT = """(tgt) => {
     }
     return n;
 }"""
-PICK_NODE = """(minDesc) => {
+PICK_NODE = """(opt) => {
+    opt = opt || {};
     const R = window.KG.renderer; const [W, H] = R.size();
+    const minDesc = opt.minDesc || 0, minDepth = opt.minDepth || 0;
+    const ok = (n) => !!n && n.depth >= minDepth && R.descOf(n.id) >= minDesc;
+    const rec = (n, x, y) => ({id: n.id, x: x, y: y, d: R.descOf(n.id),
+                              sr: Math.round(n._sr), depth: n.depth});
+    if (opt.smallest) {                       // 全屏扫一遍，取屏上半径最小的那个
+        let best = null;
+        for (let y = H * 0.15; y < H * 0.85; y += 6)
+            for (let x = W * 0.10; x < W * 0.90; x += 6) {
+                const n = R.hitTest(x, y);
+                if (ok(n) && (!best || n._sr < best.sr)) best = rec(n, x, y);
+            }
+        return best;
+    }
     for (let y = H * 0.30; y < H * 0.72; y += 5) {
         for (let x = W * 0.28; x < W * 0.72; x += 5) {
             const n = R.hitTest(x, y);
-            if (n && R.descOf(n.id) >= minDesc) return {id: n.id, x: x, y: y, d: R.descOf(n.id)};
+            if (ok(n)) return rec(n, x, y);
         }
     }
     for (let y = H * 0.15; y < H * 0.85; y += 6) {
         for (let x = W * 0.10; x < W * 0.90; x += 6) {
             const n = R.hitTest(x, y);
-            if (n) return {id: n.id, x: x, y: y, d: R.descOf(n.id)};
+            if (ok(n)) return rec(n, x, y);
         }
     }
     return null;
@@ -69,6 +83,18 @@ PICK_EMPTY = """() => {
     }
     return null;
 }"""
+# packing 下「视口里一个圆都不落笔」不再是默认状态（父圆套着子圆，处处有归属），
+# 要验 bug B 得先在圆之间的间隙里平移。这两段直接驱动真实相机、读真实 stats，
+# 不在测试里复刻渲染器的裁剪/maxzoom 判据 —— 复刻的判据一旦和实现漂移就会假绿。
+PAN_BY = """(d) => {
+    const R = window.KG.renderer;
+    R.tweenTo({zoom: R.camera.zoom, panX: R.camera.panX + d[0], panY: R.camera.panY + d[1]}, 0);
+}"""
+SCREEN_CENTER = """() => {
+    const c = document.getElementById('cv').getBoundingClientRect();
+    const s = window.KG.renderer.centerScreen();
+    return {x: c.left + s[0], y: c.top + s[1]};
+}"""
 
 fails = []
 warns = []
@@ -82,6 +108,20 @@ def check(name, cond, detail=""):
 
 def shot(tag):
     page.screenshot(path=SHOT % tag)
+
+
+def pan_to_empty(steps=((0, 0), (110, 80), (-130, 95), (180, -140), (-240, -110),
+                        (300, 210), (-360, 260), (430, -330), (-520, 380))):
+    """小幅平移直到视口里一个圆都不落笔，返回累计位移；找不到返回 None。"""
+    drift = [0, 0]
+    for dx, dy in steps:
+        page.evaluate(PAN_BY, [dx, dy])
+        drift[0] += dx
+        drift[1] += dy
+        page.wait_for_timeout(150)
+        if page.evaluate(STATE)["shownNodes"] == 0:
+            return tuple(drift)
+    return None
 
 
 with sync_playwright() as p:
@@ -123,7 +163,7 @@ with sync_playwright() as p:
           "%s vs %s" % (st["level"], meta["homeLayer"]))
     check("initial zoom == zHome", abs(st["zoom"] - meta["zHome"]) < 0.01,
           "%s vs %s" % (st["zoom"], meta["zHome"]))
-    check("initial shownNodes in 150..350", 150 <= st["shownNodes"] <= 350, str(st["shownNodes"]))
+    check("initial shownNodes in 40..120", 40 <= st["shownNodes"] <= 120, str(st["shownNodes"]))
 
     painted = page.evaluate("""() => {
         const cv = document.getElementById('cv'); const g = cv.getContext('2d');
@@ -155,7 +195,7 @@ with sync_playwright() as p:
     check("labels stay inside the per-frame budget", on <= 400, str(on))
     shot("01_home")
 
-    print("\n=== 2. wheel down x20 -> zoom floor, only the 6 top disciplines left ===")
+    print("\n=== 2. wheel down x20 -> zoom floor, the 6 top disciplines all on screen ===")
     page.mouse.move(720, 430)
     for _ in range(20):
         page.mouse.wheel(0, 100)
@@ -168,14 +208,25 @@ with sync_playwright() as p:
     check("zoom hit floor", abs(camz - meta["zMin"]) < 1e-9,
           "%.8f vs zMin %.8f" % (camz, meta["zMin"]))
     check("level == 1 at floor", out["level"] == 1, str(out["level"]))
-    check("shownNodes == 6 (top disciplines)", out["shownNodes"] == 6, str(out["shownNodes"]))
+    top = page.evaluate("""() => {
+        const R = window.KG.renderer;
+        const roots = R.NODES.filter(n => n.depth === 1);
+        return {roots: roots.length,
+                vis: roots.filter(n => R.alphaOf(n.id) > 0.05).length};
+    }""")
+    print("    depth-1 roots=%d, visible=%d" % (top["roots"], top["vis"]))
+    # 同心环时代地板处「只剩 6 个圆」；packing 下父圆包含子圆，孩子随父圆一起留在画面里，
+    # 所以这里只断言六个顶层学科全部可见 + 总数仍在合理区间。
+    check("all 6 top disciplines visible at the zoom floor",
+          top["roots"] == 6 and top["vis"] == 6, str(top))
+    check("shownNodes in 40..120 at floor", 40 <= out["shownNodes"] <= 120, str(out["shownNodes"]))
     check("the 6 top disciplines are labelled at the zoom floor",
           out["shownLabels"] >= 1, str(out["shownLabels"]))
     shot("02_zmin")
 
-    print("\n=== 3. wheel up x40 -> zoom/level monotonic, reach max_depth and ceiling ===")
+    print("\n=== 3. wheel up x48 -> zoom/level monotonic, reach max_depth and ceiling ===")
     ups, prev_z, prev_lv, z_mono, lv_mono = [], 0.0, 0, True, True
-    for i in range(40):
+    for i in range(48):
         page.mouse.wheel(0, -100)
         page.wait_for_timeout(38)
         s = page.evaluate(STATE)
@@ -185,40 +236,50 @@ with sync_playwright() as p:
         if s["level"] < prev_lv:
             lv_mono = False
         prev_z, prev_lv = s["zoom"], s["level"]
-        if i in (0, 5, 9, 14, 19, 24, 29, 35, 39):
+        if i in (0, 5, 11, 17, 23, 29, 35, 41, 47):
             print("    step %2d  zoom=%8.4f  level=%2d  nodes=%4d  edges=%3d  labels=%3d" % (i + 1, *ups[-1]))
-        if i in (4, 13, 24, 39):
+        if i in (4, 15, 29, 47):
             shot("03_up%02d" % (i + 1))
     check("zoom monotonic increasing on wheel up", z_mono)
     check("level monotonic non-decreasing (direction lock)", lv_mono)
     check("reached max_depth %d" % meta["maxDepth"], prev_lv == meta["maxDepth"], str(prev_lv))
     check("zoom hit ceiling", prev_z >= meta["zMax"] * 0.999, "%.4f vs zMax %.4f" % (prev_z, meta["zMax"]))
     nanseen = [u for u in ups if any(v != v for v in u)]
-    check("no NaN during 40 wheel steps", not nanseen, str(nanseen[:2]))
-    nolabel = [u for u in ups if u[2] > 0 and u[4] == 0]
-    check("labels never all vanish while nodes are on screen (was 0 at every zoom before)",
+    check("no NaN during 48 wheel steps", not nanseen, str(nanseen[:2]))
+    # 深缩放时画面可能只剩几个铺满视口的祖先圆（画不出标签）甚至落进圆之间的空隙，
+    # 这些都是合法状态；只有「明显还有一堆内容却一个标签都没有」才算 bug C 复发。
+    nolabel = [u for u in ups if u[2] > 8 and u[4] == 0]
+    check("labels never all vanish while a real crowd is on screen (was 0 at every zoom before)",
           not nolabel, str(nolabel[:3]))
 
     print("\n=== 3b. bug B: empty viewport must say so, not look broken ===")
-    check("premise: viewport really is empty at the center of the rings",
-          ups[-1][2] == 0, "shownNodes=%d" % ups[-1][2])
-    px = page.evaluate("""() => {
-        const cv = document.getElementById('cv'); const g = cv.getContext('2d');
-        const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
-        const d = g.getImageData(Math.round(W/2*k), Math.round((H-46)/2*k), 1, 1).data;
-        return [d[0], d[1], d[2]]; }""")
-    check("hint text painted at screen center", px != [15, 17, 22], str(px))
+    # 同心环布局的中心天然是空的，天花板处直接就能验；packing 下父圆套着子圆、
+    # 画面处处有归属，得先在圆之间的间隙里平移把视口清空。
+    at_center = page.evaluate(STATE)["shownNodes"]
+    drift = pan_to_empty()
+    print("    shownNodes at ceiling center=%d, empty after pan=%s" % (at_center, drift))
+    if drift is None:
+        warns.append("no empty viewport found at the zoom ceiling -> bug B test skipped")
+        print("    !! no gap; skipping")
+    else:
+        px = page.evaluate("""() => {
+            const cv = document.getElementById('cv'); const g = cv.getContext('2d');
+            const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
+            const d = g.getImageData(Math.round(W/2*k), Math.round((H-46)/2*k), 1, 1).data;
+            return [d[0], d[1], d[2]]; }""")
+        check("hint text painted at screen center", px != [15, 17, 22], str(px))
     shot("07_blank")
 
     print("\n=== 4. LOD contract: zooming in on a node reveals its descendants ===")
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
-    tgt = page.evaluate(PICK_NODE, 20)
+    tgt = page.evaluate(PICK_NODE, {"minDesc": 20})
     if not tgt:
         warns.append("no node with >=20 descendants found -> LOD contract test skipped")
         print("    !! no suitable node; skipping")
     else:
-        print("    target %s (desc=%d) at (%d,%d)" % (tgt["id"], tgt["d"], tgt["x"], tgt["y"]))
+        print("    target %s (desc=%d, depth=%d, sr=%dpx) at (%d,%d)"
+              % (tgt["id"], tgt["d"], tgt["depth"], tgt["sr"], tgt["x"], tgt["y"]))
         before = page.evaluate(DESC_COUNT, tgt["id"])
         s_before = page.evaluate(STATE)
         page.mouse.move(tgt["x"], tgt["y"])
@@ -271,8 +332,10 @@ with sync_playwright() as p:
     check("resetView returns to home layer", lv2 == meta["homeLayer"], str(lv2))
 
     print("\n=== 7. click a node -> sidebar + breadcrumb ===")
-    picked = page.evaluate(PICK_NODE, 0)
+    # 要验面包屑就得点一个有祖先的节点；packing 下扫描最先命中的往往是顶层学科圆
+    picked = page.evaluate(PICK_NODE, {"minDepth": 2})
     if picked:
+        print("    picked %s (depth=%d, sr=%dpx)" % (picked["id"], picked["depth"], picked["sr"]))
         page.mouse.click(picked["x"], picked["y"])
         page.wait_for_timeout(600)
         sbsel = page.evaluate("""() => ({
@@ -331,20 +394,43 @@ with sync_playwright() as p:
     page.evaluate("() => window.KG.setLevel(3)")
     page.wait_for_timeout(800)
     z3 = page.evaluate(STATE)["zoom"]
-    picked = page.evaluate(PICK_NODE, 0)
+    picked = page.evaluate(PICK_NODE, {"smallest": True, "minDepth": 2})
     if picked:
+        # 挑屏上最小的圆：它离「占满大半屏」最远，双击必然要放大过去。
+        # 若挑中已经铺满屏幕的大圆，focusOn 算出来的目标 zoom 就等于当前 zoom（正确行为），
+        # 断言会假失败。
         page.mouse.dblclick(picked["x"], picked["y"])
         page.wait_for_timeout(1300)
         z4 = page.evaluate(STATE)["zoom"]
-        print("    dblclick node: zoom %.4f -> %.4f" % (z3, z4))
+        print("    dblclick %s (depth=%d, sr=%dpx): zoom %.4f -> %.4f"
+              % (picked["id"], picked["depth"], picked["sr"], z3, z4))
         check("dblclick on a node zooms in", z4 > z3 * 1.15, "%.4f->%.4f" % (z3, z4))
+    else:
+        warns.append("no node found under scan -> dblclick-deepen test skipped")
+        print("    !! no node hit; skipping")
     empty = page.evaluate(PICK_EMPTY)
+    how = "in-view empty point"
+    if not empty:
+        # packing 下 hitTest 会命中「已铺满视口因而停画」的祖先圆（有意保留：点空隙=选中所在省），
+        # 所以画面内几乎处处有归属。退一步把视口拖到所有内容之外再验 —— 这也正是
+        # 空白提示里「双击空白处回到默认视角」真正会发生的场景。
+        page.evaluate("() => window.KG.setLevel(3)")
+        page.wait_for_timeout(800)
+        page.evaluate(PAN_BY, [6000, 4000])
+        page.wait_for_timeout(350)
+        if page.evaluate(STATE)["shownNodes"] == 0:
+            empty = page.evaluate(SCREEN_CENTER)
+            how = "viewport dragged outside all content"
     if empty:
         page.mouse.dblclick(empty["x"], empty["y"])
         page.wait_for_timeout(1300)
         zr = page.evaluate(STATE)
-        print("    dblclick empty at (%d,%d): level=%d zoom=%.4f" % (empty["x"], empty["y"], zr["level"], zr["zoom"]))
+        print("    dblclick empty (%s) at (%d,%d): level=%d zoom=%.4f"
+              % (how, empty["x"], empty["y"], zr["level"], zr["zoom"]))
         check("dblclick on empty space resets to home", zr["level"] == meta["homeLayer"], str(zr["level"]))
+        check("dblclick on empty space restores the home zoom",
+              abs(zr["zoom"] - meta["zHome"]) < meta["zHome"] * 0.02,
+              "%.4f vs zHome %.4f" % (zr["zoom"], meta["zHome"]))
     else:
         warns.append("no empty canvas point found -> dblclick-reset test skipped")
         print("    !! no empty point; skipping")

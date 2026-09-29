@@ -202,6 +202,7 @@
     var tween = null;
     var dirty = true, rafId = 0;
     var hoverId = null, selectedId = null;
+    var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
     var stats = { nodes: 0, edges: 0, labels: 0 };
     var lastDrawn = [];
@@ -401,6 +402,10 @@
                      W / 2, (H - FOOTER_H) / 2);
         ctx.textAlign = 'left';
       }
+
+      // 相机一动（滚轮 / 拖拽 / tween），光标下的圆就换了；鼠标没动就不会再有
+      // mousemove，悬停提示会停在旧节点上。落笔后用最近一次鼠标位置重算 hover。
+      if (lastMouse && !dragging) evalHover(lastMouse[0], lastMouse[1]);
 
       if (hooks.onFrame) hooks.onFrame(stats);
     }
@@ -715,6 +720,21 @@
       return best;
     }
 
+    // hover 的判定只有一处：mousemove 与 draw 收尾都走这里，保证相机自己动
+    // （滚轮 / tween / 程序化 tweenTo）之后悬停态也跟着光标下的新内容走。
+    function evalHover(px, py) {
+      var hit = hitTest(px, py);
+      var id = hit ? hit.id : null;
+      canvas.style.cursor = id ? 'pointer' : 'grab';
+      if (id !== hoverId) {
+        hoverId = id;
+        invalidate();
+        if (hooks.onHover) hooks.onHover(id, hit, px, py);
+      } else if (hooks.onHover && id) {
+        hooks.onHover(id, hit, px, py);
+      }
+    }
+
     function focusOn(id, mult, ms) {
       var n = byId.get(id);
       if (!n) return;
@@ -768,6 +788,7 @@
 
     window.addEventListener('mousemove', function (e) {
       var p = pos(e);
+      lastMouse = (p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H) ? null : p;
       if (dragging) {
         var dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
@@ -777,18 +798,10 @@
         if (hooks.onCamera) hooks.onCamera();
         return;
       }
-      if (p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H) return;
-      var hit = hitTest(p[0], p[1]);
-      var id = hit ? hit.id : null;
-      canvas.style.cursor = hit ? 'pointer' : 'grab';
-      if (id !== hoverId) {
-        hoverId = id;
-        invalidate();
-        if (hooks.onHover) hooks.onHover(id, hit, p[0], p[1]);
-      } else if (hooks.onHover && id) {
-        hooks.onHover(id, hit, p[0], p[1]);
-      }
+      if (lastMouse) evalHover(p[0], p[1]);
     });
+
+    canvas.addEventListener('mouseleave', function () { lastMouse = null; });
 
     window.addEventListener('mouseup', function () {
       dragging = false;
