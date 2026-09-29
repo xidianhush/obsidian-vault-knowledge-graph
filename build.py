@@ -71,7 +71,7 @@ def build_payload(cfg, quiet=False):
     builder.build_candidate_edges(cand_doc)
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
-    rings, enter, home_layer = layout.compute(builder.nodes, cfg, max_depth)
+    layers, enter, home_layer, root_radius = layout.compute(builder.nodes, cfg, max_depth)
     aggregates = builder.build_aggregates(max_depth)
     levels = builder.levels_table(aggregates)
 
@@ -93,7 +93,12 @@ def build_payload(cfg, quiet=False):
         "node_count_by_kind": by_kind,
         "max_depth": max_depth,           # 深度轴已含标题层
         "file_depth": stats["max_depth"],  # 文件系统本身的深度（不含标题）
-        "layer_count": len(rings),
+        "layer_count": len(layers),
+        # 虚拟根的归一化半径与标称视口半径：渲染侧用它们算 home_zoom 与 zMin。
+        # fit_radius() 依赖真实窗口尺寸，所以前端拿到这两个值后会自己复算一遍，
+        # home_layer 只是落盘的默认读数。
+        "layout_root_radius": round(root_radius, 4),
+        "nominal_fit_radius": layout.NOMINAL_FIT_RADIUS,
         "zoom": cfg["zoom"],
         "lod": dict(cfg.get("lod", {}),
                     enter=[round(v, 6) for v in enter],
@@ -112,7 +117,7 @@ def build_payload(cfg, quiet=False):
         "nodes": nodes,
         "edges": builder.edges,
         "aggregates": aggregates,
-        "rings": rings,
+        "layers": layers,
         "heading_links": builder.heading_links,
         "levels": levels,
     }
@@ -209,12 +214,15 @@ def cmd_build(cfg, args):
     print(f"语义边 {len(payload['edges']) - contains} 条 / 层级包含边 {contains} 条")
     print(f"标题级链接 {meta['heading_link_total']} 处"
           f"（锚点未命中 {meta['link_stats'].get('heading_anchor_miss', 0)} 处）")
-    print("\n各层可见内容（r = 该圈布局半径，世界单位）：")
-    radius_of = {r["depth"]: r["radius"] for r in payload["rings"]}
+    print("\n各层可见内容（r = 该层圆的世界半径中位数）：")
+    r_median_of = {row["depth"]: row["r_median"] for row in payload["layers"]}
     for budget, row in sorted(payload["levels"].items(), key=lambda kv: int(kv[0])):
-        print(f"  depth≤{int(budget):<3} r={radius_of.get(int(budget), 0):>8.0f}"
+        print(f"  depth≤{int(budget):<3} r={r_median_of.get(int(budget), 0):>8.2f}"
               f"   {row['folders']:>3} 夹 + {row['notes']:>3} 笔记 + {row['headings']:>4} 标题"
               f"  →  {row['edges']:>5} 条边（语义 {row['semantic_edges']}）")
+    print(f"\n布局根半径 {meta['layout_root_radius']:.1f}"
+          f"（标称视口半径 {meta['nominal_fit_radius']:.0f}px，"
+          f"home 停在第 {meta['lod']['home_layer']} 层）")
     print(f"\nJSON   {json_path}")
     print(f"HTML   {html_path}  ({os.path.getsize(html_path) / 1024:.0f} KB)")
     print("       双击打开即可，无需服务器、无需联网\n")

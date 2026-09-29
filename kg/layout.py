@@ -1,115 +1,310 @@
-"""层级径向布局。
+"""Circle packing 布局：半径编码「内容规模」，嵌套编码「层级深度」。
 
-设计要点（也是「节点位置永不跳动」的实现方式）：
+为什么不是同心环
+----------------
+旧版把每个深度摊在一圈圆周上，半径 = base_radius × ring_ratio^(L-1)。那个模型里
+半径只能用来**分圈**，压根不携带子树规模的信息（旧 docstring 里那条「约分推导」
+证明了：把某圈半径撑大丝毫不能改善该圈自己的疏密）。于是有两个改不掉的毛病：
 
-* 每个深度一圈，角度按子树规模加权分配，半径按**等比**逐圈放大；
-* 所有层级的坐标在构建时**一次算定**，语义缩放只改相机、从不重算坐标；
-* 因此同一节点在任何缩放下的世界坐标完全相同 —— 位置稳定是构造出来的，
-  不是靠动画掩盖的。
+1. 同一圈上所有节点一样大 —— 「包含内容多的应该更大」无从表达；
+2. 子节点在父节点**外面**一圈 —— 「子元素落在父元素内部」几何上不可能。
 
-为什么半径是等比的、而不是「按同圈最小间距反解」出来的
-------------------------------------------------------
-第 L 圈刚好适配视口时 zoom_L = R / r_L（R = 视口半径，屏幕像素）。圈上相邻两点的
-屏幕间距 = (r_L · Δθ) · zoom_L = R · Δθ —— **r_L 被约掉了**。也就是说，把某一圈的
-半径撑大丝毫不能改善该圈自己的疏密，疏密只由角度分布 Δθ 决定；半径唯一能决定的
-是「圈与圈的相对位置」，即适配第 L 圈时上一圈出现在 R / ratio 处。
+根子上的范畴差别：同心环把深度编码成**半径**，地图把细节编码成**尺度**，两者不同构。
+circle packing 才同构 —— 深度 = 嵌套层数，规模 = 圆半径，缩放到哪一层就看见哪一层。
 
-所以这里把两件事彻底分开：
+「换 packing 等于推翻整套数据侧」这个顾虑是错的
+------------------------------------------------
+被推翻的只有布局，没有被推翻的是**前提**：坐标依然在构建期一次算定，语义缩放只改
+相机、从不重算坐标，同一节点在任何缩放下的世界坐标完全相同。聚合边（aggregates）、
+层级表（levels）、标题级链接（heading_links）都与布局无关，原样保留。
 
-* 角度：子树规模加权（angle_power 次线性压缩），负责同圈的疏密与扇形嵌套；
-* 半径：base_radius × ring_ratio^(L-1)，负责圈间分离，且让每层适配缩放构成
-  等比数列 —— 于是滚轮每格推进的层级深度是均匀的，不会某几层挤在一起过不去。
+真正被删掉的是三个补丁函数 —— 它们全是在为「半径=深度」擦屁股：
 
-早期版本用「同圈弧长 ≥ min_gap（世界单位）」反解半径，正是踩了上面那个约分的坑：
-一个极窄扇形就能把整圈半径顶到上万，depth 1→2 的半径比一度是 20 倍，语义缩放
-的层级阈值全挤在 1% 的缩放区间里，滚轮根本落不进去。
+* ``_reveal``：算「到同圈最近邻的世界弧长」。packing 下没有「同圈」，且节点自己
+  的半径就是它与邻居的间距保证；
+* ``_clamp_to_ancestors``：把 reveal 沿包含链取前缀最小，防止深层节点比祖先先冒出来。
+  packing 下祖先半径**严格**更大，minzoom 沿链严格递增，这条自动成立；
+* ``_apply_depth_floor``：按深度给 reveal 封顶，人为把「放大 = 更深」的单调性补回来
+  （同心环的深层圈在世界尺度上反而更稀疏，enter 到第 8 圈就饱和在 0.7466，
+  滚轮 8 格不再解锁任何层级）。packing 下单调性是几何构造出来的，不需要封顶。
 
-reveal：把「该不该画这个节点」交给缩放，而不是交给层级
-----------------------------------------------------
-约分那条推导还有个更要命的推论：**某一圈整体适配视口时，圈上节点的屏幕间距
-= 2πR / N_L，只由该圈节点数 N_L 决定**。本 vault 的 N_L 是
-6/22/63/193/558/939/862/585/212/41 —— 第 6 圈 939 个节点，就算完美等角分布，
-适配时也只剩 2.7px，任何半径、任何 angle_power 都改不了这个数。
+半径怎么定：leaves^p 定向 + 自顶向下等比缩放
+-------------------------------------------
+先自底向上数出每个节点的叶子数 L（叶子 = 没有子节点的节点），再自顶向下分配半径：
 
-所以「让第 L 圈刚好装进视口」不能当作第 L 层的定义。改用地图软件的做法：
-每个 feature 带一个 minzoom，够大才画（Mapbox 的 vector tile 就是这样，
-国家级只显示高速、市级才显示街道）。这里给每个节点算一个世界量纲的
+    T[n] = L[n] ** size_exponent        # 该节点「想要」的相对大小
+    assign(n, R):                       # R 是父节点分给它的实际半径
+        radius[n] = R
+        positions, enc = _pack_siblings([T[c] for c in children])
+        s = min(R / (enc × padding),    # 上界一：子圆必须装得下
+                R / (max(T) × level_ratio))   # 上界二：父圆必须明显大于最大子圆
+        child 的半径 = T[c] × s，中心 = n 的中心 + positions[c] × s
 
-    reveal_n = r_L × Δθ_n     （Δθ_n = 与同圈最近邻的角间距）
+**为什么不能反过来自底向上打包**（「每个节点 = 把子圆打包后的包围圆」）：那样半径
+会随叶子数近乎线性增长。实测本 vault 的等效指数是 L^0.83~L^0.95，六个学科根的半径
+spread 高达 79.6× —— 任何一个能让最小根（8 个叶子）看得清的 zoom，都会让最大根
+（2104 个叶子）冲出屏幕 80 倍远。自顶向下 + 固定指数把 spread 钉成
+(2104/8)^0.5 = 16.2×，这是唯一能同时让六个学科在 home 视图都可见的办法。
 
-渲染侧只需 minzoom_n = min_px / reveal_n：屏幕间距 = reveal_n × zoom，
-于是「zoom ≥ minzoom_n」等价于「这个节点与最近邻在屏幕上至少分开 min_px」。
-可见节点两两间距恒 ≥ min_px，是构造出来的保证，不是调参调出来的。
+**为什么 p = 0.5 是特殊的**：p = 0.5 时
 
-它同时修好了缩放方向：zoom 越大 → 门槛 min_px/zoom 越低 → 可见节点越多、
-越深。也就是**滚轮向上（放大）= 看到更深的层级**，和地图一致；
-而旧的「圈适配视口」定义恰好是反的（放大反而只剩最内圈）。
+    √(Σ T_i²) = √(Σ L_i) = √L = T_parent        （因为 Σ L_i = L，叶子数可加）
 
-但 reveal 单独还不够：必须再叠一层「按深度的下限门控」
-----------------------------------------------------
-上一段的乐观结论只对了一半。reveal 是**局部**量（与同圈最近邻的角间距 ×
-该圈半径），而「放大 = 更深」要的是一个**全局单调**关系。两者并不自动等价：
+而六方密堆下包围圆半径 ≈ √(Σ T_i²/0.907) = 1.05·√(Σ T_i²)。于是子圆们**自然打包
+出来的尺寸恰好等于父圆的目标尺寸**，每层的缩放因子退化成一个与分支数无关的常数
+s ≈ 1/(1.05·padding) ≈ 0.85。p 偏离 0.5 都会破坏这个恒等式：p > 0.5 时
+enc < 1.05·T_parent，s 变大，深层圆相对膨胀，根 spread 上升（实测 p=0.6 → 28.3×）；
+p < 0.5 时相反，深层圆急剧缩小，zMax 爆掉，缩放跨度拉长。
 
-* 半径每圈 ×1.7（ring_ratio），
-* 每圈节点数却在第 6 圈见顶（939）后一路回落到 41，
+**为什么不会指数爆炸**：两个上界都 < R，所以 s 严格小于「父节点那一层的累积缩放」。
+反例是「永远把子圆放大到填满父圆」：那会得到 A[n] = A[parent]²·k，即
+A[d] = k^(2^d − 1) —— k = 0.85 时第 10 层是 10^−73，彻底崩掉。本方案里 A[d] 只是
+几何衰减，实测每层约 ×0.68，10 层累积 0.02，有界。
 
-于是深层圈在**世界尺度上反而更稀疏**。实测本 vault 每圈 minzoom 的中位数是
-0.051 / 0.179 / 0.147 / 0.277 / 0.471 / 0.684 / 0.649 / 0.747 / 0.658 / 0.674 ——
-到第 8 圈就饱和了。取前缀最大得到「完全解锁第 L 层所需的 zoom」enter[L]，
-它在 0.7466 处封顶：滚轮从 0.75 推到 2.94 这 8 格不再解锁任何新层级，只是纯放大；
-而居中在原点时 z=2.94 的视口只有 ±275 世界单位，最深的圈在半径 35576 处，
-**画出来 0 个节点**。
+``level_ratio`` 负责分支数少的退化情形：独子节点打包出来的包围圆就等于子圆自己，
+光靠 padding 只能保证 1.12× 的差，肉眼分不出父子。有了 level_ratio 这条硬上界，
+父圆至少是最大子圆的 1.5 倍 —— 实测 343 条独子链的父子半径比精确落在 1.500，
+既不会塌成同心靶环，也不会因为「填满」而失控。
 
-根子在于：同心圆布局把深度编码成**半径**，地图把细节编码成**尺度**，两者不同构。
-要保住「坐标一次算定、缩放只改相机」这个前提（换 circle packing / ZUI 布局
-等于推翻整套数据侧），就必须人为把单调性补回来 —— 见 `_apply_depth_floor`。
+代价：半径不再是「绝对内容量」的函数，而是「相对父节点分到的份额」。深层同叶子数的
+两个节点半径可以差几倍，取决于它们各自路径上的累积缩放。这是有意为之 —— 用户关心
+的是**包含关系**（文件夹 > 其内笔记 > 其内标题）和**同级相对大小**（同层里内容多的
+更大），这两条都被完整保留；跨分支比较绝对大小从来不是这张图的读法。
+
+LOD：minzoom = min_px / worldR
+------------------------------
+每个节点的世界半径 r 就是它的「细节尺度」。渲染侧只需
+
+    minzoom_n = min_px / r_n      （min_px = 该圆在屏幕上值得被画出来的最小半径）
+
+r 沿包含链严格递减 ⇒ minzoom 严格递增 ⇒「滚轮向上（放大）= 看到更深的层级」，
+和地图一致。
+
+它还顺带解决了同心环时代那笔无解的账：第 6 圈 939 个节点整体适配视口时只剩
+2.7px 间距，任何半径、任何 angle_power 都改不了。packing 下这 939 个节点**不会
+被同时要求浮现** —— 它们分散在各自的父圆里，只有放大到对应父圆时才出现。浮现的
+圆两两不相交且屏幕半径 ≥ min_px，于是同屏圆数 ≤ (视口半径/min_px)²，是个常数上界。
+
+同心环时代还有个更隐蔽的毛病：所有叶子半径相同 ⇒ minzoom 相同 ⇒ 2308 个叶子会在
+**同一格滚轮**里齐刷刷弹出（实测单个 notch 涌入 2308/3481 = 66% 的节点）。packing
+下叶子半径随路径累积缩放而分散（最深处的叶子约小 3~5 倍），浮现被摊开到十几格
+滚轮上，实测单 notch 最大涌入降到 18%。
+
+缩放轴的三条边界
+----------------
+* ``zMin = max(depth1 的 minzoom) × zoom_out_floor``：滚轮能滚到最外面的一档。
+  由最小那个学科根决定，所以 zoom_out_floor **必须 ≥ 1** —— 取 0.9 会让最小根只剩
+  16.2px < min_px，「缩到最外层看见全部 6 个学科」的契约当场破掉。默认 1.05，
+  留 5% 余量抵消落盘时 r 只保留 4 位小数的舍入。
+* ``home_zoom = NOMINAL_FIT_RADIUS / root_radius × home_fit``：初始视图。
+  home_fit 的上限由「六个学科全部完整落在视口内」决定，即
+  home_fit ≤ NOMINAL_FIT_RADIUS / root_enc ÷ (NOMINAL_FIT_RADIUS / root_radius)
+  = root_radius / root_enc = padding = 1.12。默认 1.08 贴着这个上限，
+  再大就会把 Science and Tech 裁掉。
+* ``zMax = max(所有节点的 minzoom) × zoom_in_ceiling``。
+
+算法：Wang et al. 2001 前端链相切打包（d3.pack 同款），零第三方依赖
+--------------------------------------------------------------------
+``_pack_siblings`` 只管「一组圆怎么摆得两两相切且包围圆尽量小」，摆完平移到包围圆
+圆心为原点，所以返回值可以直接当作「子节点相对父节点中心的偏移」。半径的**大小**
+由上面的定向 + 等比缩放决定，``_pack_siblings`` 只负责**方向**。
+
+6 个真根再打包进一个**虚拟根**，但虚拟根**不落盘为节点** —— depth==1 必须恰好是
+6 个学科，否则前端「缩到最外层看到 6 个学科」的契约就破了。虚拟根处**不套
+level_ratio**（它不是节点，没有「父子要看得出差别」的需求），直接取
+root_radius = 包围圆半径 × padding，省掉白扔的 1.5×。这个值写进
+meta.layout_root_radius，供前端算 zMin 与 home_zoom。
+
+最后统一归一化到 norm_root_radius，把世界坐标量级钉住（JSON 体积可控，
+且 zMin/zMax 的数值不随 vault 增长而漂移）。
+
+兄弟顺序沿用 sort_key（folder 优先；heading 按文档顺序；其余按 weight 降序再 label），
+打包完整体旋转 start_angle —— 同输入必得同输出，这是 30 分钟同步任务的硬要求。
 """
 
 from __future__ import annotations
 
 import math
 
-
-def _leaf_counts(nodes: dict, children: dict):
-    """自底向上算每个节点的叶子数（无子节点的笔记与末级标题都算叶子）。"""
-    counts: dict[str, int] = {}
-
-    def walk(node_id: str) -> int:
-        kids = children.get(node_id, [])
-        if not kids:
-            counts[node_id] = 1
-            return 1
-        total = sum(walk(k) for k in kids)
-        counts[node_id] = total
-        return total
-
-    for node_id, node in nodes.items():
-        if node["parent"] is None:
-            walk(node_id)
-    return counts
+# 落盘 home_layer 时用的标称视口半径（屏幕像素）：1600×900 的窗口减去 46px 页脚，
+# 再取半高。真实值依赖窗口尺寸，所以前端拿到 enter 与 layout_root_radius 后会自己
+# 复算一遍 —— 这个常量只是为了让 dist/graph.json 里也有一个可用的默认值。
+NOMINAL_FIT_RADIUS = (900 - 46) / 2
 
 
+# ── 前端链相切打包 ──────────────────────────────────────────────────────
+def _place(a, b, c):
+    """把圆 c 放到与 a、b 同时外切的位置（取两解中固定的那一支）。"""
+    ax, ay = a["x"], a["y"]
+    da = b["r"] + c["r"]
+    db = a["r"] + c["r"]
+    dx = b["x"] - ax
+    dy = b["y"] - ay
+    dc = dx * dx + dy * dy
+    if dc:
+        da2 = da * da
+        db2 = db * db
+        x = 0.5 + (db2 - da2) / (2 * dc)
+        db3 = db2 - dc
+        y = math.sqrt(max(0.0, 2 * da2 * (db2 + dc) - db3 * db3 - da2 * da2)) / (2 * dc)
+        c["x"] = ax + x * dx + y * dy
+        c["y"] = ay + x * dy - y * dx
+    else:
+        c["x"] = ax + db
+        c["y"] = ay
+
+
+def _intersects(a, b):
+    dx = b["x"] - a["x"]
+    dy = b["y"] - a["y"]
+    dr = a["r"] + b["r"]
+    return dr * dr - 1e-6 > dx * dx + dy * dy
+
+
+def _enclose(disks):
+    """一组圆的包围圆 (cx, cy, R)。
+
+    n ≤ 2 给精确的最小包围圆；n ≥ 3 用「面积加权质心 + 朝最远支撑圆爬山收紧」。
+    后者不保证最小，但 R 每轮都重新取 max(dist + r)，**包含性是构造出来的**，
+    爬山只可能让它更小。子节点数上限只有 18，这点近似换来的简单性很划算。
+    """
+    n = len(disks)
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    if n == 1:
+        d = disks[0]
+        return d["x"], d["y"], d["r"]
+    if n == 2:
+        p, q = disks[0], disks[1]
+        dx = q["x"] - p["x"]
+        dy = q["y"] - p["y"]
+        d = math.hypot(dx, dy)
+        R = (d + p["r"] + q["r"]) / 2
+        if d <= 1e-12:
+            return p["x"], p["y"], R
+        t = (R - p["r"]) / d
+        return p["x"] + t * dx, p["y"] + t * dy, R
+
+    total = sum(d["r"] * d["r"] for d in disks) or 1.0
+    cx = sum(d["x"] * d["r"] * d["r"] for d in disks) / total
+    cy = sum(d["y"] * d["r"] * d["r"] for d in disks) / total
+    R = max(math.hypot(d["x"] - cx, d["y"] - cy) + d["r"] for d in disks)
+
+    for _ in range(12):
+        far = max(disks, key=lambda d: math.hypot(d["x"] - cx, d["y"] - cy) + d["r"])
+        best = (R, cx, cy)
+        for step in (0.5, 0.25, 0.125, 0.0625):
+            nx = cx + (far["x"] - cx) * step
+            ny = cy + (far["y"] - cy) * step
+            cand = max(math.hypot(d["x"] - nx, d["y"] - ny) + d["r"] for d in disks)
+            if cand < best[0] - 1e-12:
+                best = (cand, nx, ny)
+        if best[0] >= R - 1e-12:
+            break
+        R, cx, cy = best
+    return cx, cy, R
+
+
+def _pack_siblings(radii):
+    """把一组圆两两相切打包，返回 (positions, 包围圆半径)。
+
+    positions 已平移到以包围圆圆心为原点，所以调用方可以直接把它们当作
+    「子节点相对父节点中心的偏移」。
+    """
+    n = len(radii)
+    if n == 0:
+        return [], 0.0
+    C = [{"x": 0.0, "y": 0.0, "r": float(radii[i])} for i in range(n)]
+    if n == 1:
+        return [(0.0, 0.0)], C[0]["r"]
+
+    a, b = C[0], C[1]
+    a["x"] = -b["r"]
+    b["x"] = a["r"]
+    b["y"] = 0.0
+    if n == 2:
+        cx, cy, R = _enclose(C)
+        return [(p["x"] - cx, p["y"] - cy) for p in C], R
+
+    _place(b, a, C[2])
+    nxt = [0] * n
+    prv = [0] * n
+    nxt[0], prv[0] = 1, 2
+    nxt[1], prv[1] = 2, 0
+    nxt[2], prv[2] = 0, 1
+
+    ai, bi = 0, 1
+    i = 3
+    # 前端链每次至多删掉一个成员，所以总步数被 2n 兜住；guard 只为防御性收尾
+    guard = 0
+    while i < n and guard < 64 * n + 64:
+        guard += 1
+        c = C[i]
+        _place(C[ai], C[bi], c)
+        j = nxt[bi]
+        k = prv[ai]
+        sj = C[bi]["r"]
+        sk = C[ai]["r"]
+        collided = False
+        while True:
+            if sj <= sk:
+                if _intersects(C[j], c):
+                    bi = j
+                    nxt[ai] = bi
+                    prv[bi] = ai
+                    collided = True
+                    break
+                sj += C[j]["r"]
+                j = nxt[j]
+            else:
+                if _intersects(C[k], c):
+                    ai = k
+                    nxt[ai] = bi
+                    prv[bi] = ai
+                    collided = True
+                    break
+                sk += C[k]["r"]
+                k = prv[k]
+            if j == nxt[k]:
+                break
+        if collided:
+            continue                      # 用新的 a、b 重试同一个圆
+        prv[i] = ai
+        nxt[i] = bi
+        nxt[ai] = i
+        prv[bi] = i
+        bi = i
+        i += 1
+
+    cx, cy, R = _enclose(C)
+    return [(p["x"] - cx, p["y"] - cy) for p in C], R
+
+
+# ── 主入口 ─────────────────────────────────────────────────────────────
 def compute(nodes: dict, cfg: dict, max_depth: int):
-    """给每个节点写入 x / y / reveal，并返回 (rings, enter, home_layer)。
+    """给每个节点写入 x / y / r，返回 (layers, enter, home_layer, root_radius)。
 
-    * rings：每圈 {"depth", "radius", "count"}，渲染侧用它算「这一圈要装进屏幕
-      需要多大 zoom」；
+    * layers：每层 {"depth","count","r_min","r_median","r_max","minzoom_median"}；
     * enter：长度 max_depth 的列表，enter[L-1] 是「完全解锁第 L 层」所需的 zoom，
       沿深度单调不减。渲染侧用它把连续 zoom 反推成 HUD 上的层级读数；
-    * home_layer：初始视图停在第几圈 —— 既已完全解锁、又能整圈装进屏幕的最深一圈。
-      这里按 NOMINAL_FIT_RADIUS 估一个落盘值；真实值依赖视口，由前端复算。
+    * home_layer：初始视图停在第几层（按 NOMINAL_FIT_RADIUS 估的落盘值，前端会复算）；
+    * root_radius：虚拟根的归一化后半径 —— 整张图刚好装进屏幕时 zoom = fit/root_radius。
     """
     lcfg = cfg["layout"]
-    base_radius = float(lcfg.get("base_radius", 300))
-    ring_ratio = float(lcfg.get("ring_ratio", 1.7))
-    angle_power = float(lcfg.get("angle_power", 0.5))
-    start_angle = math.radians(float(lcfg.get("start_angle", 90)))
+    leaf_radius = float(lcfg.get("leaf_radius", 1.0))
+    level_ratio = float(lcfg.get("level_ratio", 1.5))
+    padding = float(lcfg.get("padding", 1.12))
+    size_exponent = float(lcfg.get("size_exponent", 0.5))
+    norm_root = float(lcfg.get("norm_root_radius", 1000.0))
+    start_angle = math.radians(float(lcfg.get("start_angle", -90)))
+    min_px = float(cfg.get("lod", {}).get("min_px", 18))
+    home_fit = float(cfg.get("zoom", {}).get("home_fit", 1.08))
 
     children: dict[str, list[str]] = {}
     roots: list[str] = []
     for node_id, node in nodes.items():
-        parent = node["parent"]
-        if parent is None:
+        parent = node.get("parent")
+        if parent is None or parent not in nodes:
             roots.append(node_id)
         else:
             children.setdefault(parent, []).append(node_id)
@@ -126,128 +321,109 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
         kids.sort(key=sort_key)
     roots.sort(key=sort_key)
 
-    counts = _leaf_counts(nodes, children)
-    # 次线性压缩：标题节点让子树规模差出三个数量级，线性加权会把小文件夹挤成
-    # 极窄扇形；但压得太狠又会让大子树的后代挤在一起。angle_power 是这两者的旋钮。
-    weights = {nid: cnt ** angle_power for nid, cnt in counts.items()}
-    total = sum(weights.get(r, 1.0) for r in roots) or 1.0
+    # ── Pass 1（自底向上）：数叶子 ────────────────────────────────────────
+    leaves: dict[str, int] = {}
 
-    angles: dict[str, float] = {}
+    def count_leaves(node_id: str) -> int:
+        if node_id in leaves:
+            return leaves[node_id]
+        kids = children.get(node_id, [])
+        # 先占位再递归，parent 环（数据损坏时）才会退化成 1 而不是无限递归
+        leaves[node_id] = 1
+        total = 1 if not kids else sum(count_leaves(k) for k in kids)
+        leaves[node_id] = total
+        return total
 
-    def assign(node_id: str, a0: float, a1: float):
-        angles[node_id] = (a0 + a1) / 2
+    for root in roots:
+        count_leaves(root)
+
+    # ── Pass 2（自顶向下）：leaves^p 定向 + 等比缩放 ─────────────────────
+    radius: dict[str, float] = {}
+    pos: dict[str, tuple] = {}
+
+    def assign(node_id: str, x: float, y: float, allocated: float):
+        radius[node_id] = allocated
+        pos[node_id] = (x, y)
         kids = children.get(node_id, [])
         if not kids:
             return
-        span = a1 - a0
-        sub = sum(weights.get(k, 1.0) for k in kids) or 1.0
-        cursor = a0
-        for kid in kids:
-            share = span * weights.get(kid, 1.0) / sub
-            assign(kid, cursor, cursor + share)
-            cursor += share
+        targets = [leaves.get(k, 1) ** size_exponent for k in kids]
+        positions, enc = _pack_siblings(targets)
+        biggest = max(targets)
+        if enc > 0 and biggest > 0:
+            s = min(allocated / (enc * padding), allocated / (biggest * level_ratio))
+        else:
+            s = 1.0
+        for kid, (ox, oy), target in zip(kids, positions, targets):
+            assign(kid, x + ox * s, y + oy * s, target * s)
 
-    cursor = start_angle
-    for root in roots:
-        span = 2 * math.pi * weights.get(root, 1.0) / total
-        assign(root, cursor, cursor + span)
-        cursor += span
+    # 虚拟根：把真根们打包在一起，但它自己**不**成为节点。
+    # 这里不套 level_ratio —— 虚拟根不画出来，没有「父子要看得出差别」的需求。
+    root_targets = [leaves.get(r, 1) ** size_exponent for r in roots]
+    if root_targets:
+        root_positions, root_enc = _pack_siblings(root_targets)
+        root_radius = root_enc * padding
+    else:
+        root_positions, root_radius = [], leaf_radius
 
+    scale = norm_root / root_radius if root_radius > 0 else 1.0
+    for root, (ox, oy), target in zip(roots, root_positions, root_targets):
+        assign(root, ox * scale, oy * scale, target * scale)
+    root_radius *= scale
+
+    # 孤点（parent 链断裂、又不在 roots 里）：摊在虚拟根之外的一圈，避免与正常节点
+    # 重合。本 vault 目前是 0 个，这段只是安全网。
+    strays = [nid for nid in nodes if nid not in pos]
+    if strays:
+        ring = root_radius * 1.15
+        for index, node_id in enumerate(strays):
+            ang = 2 * math.pi * index / len(strays)
+            assign(node_id, ring * math.cos(ang), ring * math.sin(ang), leaf_radius * scale)
+            root_radius = max(root_radius, ring + radius[node_id])
+
+    cos_a, sin_a = math.cos(start_angle), math.sin(start_angle)
+    for node_id, node in nodes.items():
+        x, y = pos.get(node_id, (0.0, 0.0))
+        rx = x * cos_a - y * sin_a
+        ry = x * sin_a + y * cos_a
+        node["x"] = round(rx, 3)
+        node["y"] = round(-ry, 3)          # 屏幕坐标系 y 向下
+        node["r"] = round(radius.get(node_id, leaf_radius * scale), 4)
+
+    # ── LOD：minzoom = min_px / r ────────────────────────────────────────
     by_depth: dict[int, list[str]] = {}
     for node_id, node in nodes.items():
         by_depth.setdefault(node["depth"], []).append(node_id)
 
-    rings = []
-    radius_of: dict[int, float] = {}
+    def minzoom(node_id: str) -> float:
+        return min_px / max(nodes[node_id]["r"], 1e-9)
+
+    layers = []
+    enter: list[float] = []
+    running = 0.0
     for depth in range(1, max_depth + 1):
-        radius = base_radius * ring_ratio ** (depth - 1)
-        rings.append({
+        members = by_depth.get(depth, [])
+        rs = sorted(nodes[m]["r"] for m in members)
+        mz = sorted(minzoom(m) for m in members)
+        if mz:
+            running = max(running, _median(mz))
+        layers.append({
             "depth": depth,
-            "radius": round(radius, 3),
-            "count": len(by_depth.get(depth, [])),
+            "count": len(members),
+            "r_min": round(rs[0], 4) if rs else 0.0,
+            "r_median": round(_median(rs), 4) if rs else 0.0,
+            "r_max": round(rs[-1], 4) if rs else 0.0,
+            "minzoom_median": round(_median(mz), 6) if mz else 0.0,
         })
-        radius_of[depth] = radius
+        enter.append(running)
 
-    min_px = float(cfg.get("lod", {}).get("min_px", 6))
-    reveal = _reveal(by_depth, angles, radius_of, max_depth, base_radius)
-    _clamp_to_ancestors(nodes, reveal, max_depth)
-    # 顺序要紧：按深度封顶必须在祖先夹取之后。封顶只会**降低** reveal，
-    # 而 cap[L] = min_px/enter[L] 随 L 不增，所以
-    # reveal_child ≤ cap[depth_child] ≤ cap[depth_parent] ≤ reveal_parent，
-    # 祖先单调性自动保持，不需要再夹一次。
-    enter = _apply_depth_floor(nodes, reveal, by_depth, max_depth, min_px)
-    home_layer = _home_layer(enter, radius_of, max_depth)
-
-    outer = radius_of.get(max_depth, base_radius)
-    strays = [nid for nid in nodes if angles.get(nid) is None]
-    for index, node_id in enumerate(nodes):
-        node = nodes[node_id]
-        angle = angles.get(node_id)
-        if angle is None:
-            # 不在任何根的子树里（孤点）：摊在最外圈之外，避免与正常节点重合
-            angle = 2 * math.pi * index / max(len(strays), 1)
-            node["x"] = round(outer * 1.05 * math.cos(angle), 3)
-            node["y"] = round(-outer * 1.05 * math.sin(angle), 3)
-            node["reveal"] = round(reveal.get(node_id, outer), 3)
-            continue
-        radius = radius_of.get(node["depth"], outer)
-        node["x"] = round(radius * math.cos(angle), 3)
-        node["y"] = round(-radius * math.sin(angle), 3)
-        node["reveal"] = round(reveal.get(node_id, radius), 3)
-
-    return rings, enter, home_layer
-
-
-def _reveal(by_depth, angles, radius_of, max_depth, base_radius):
-    """每个节点到同圈最近邻的世界弧长 r_L × Δθ；单节点圈给整圈周长。
-
-    只比同圈：相邻两圈的径向间距是 0.7·r_L，远大于同圈的角向拥挤，
-    真正决定「画得下画不下」的是同一圈上的角间距。
-    """
-    reveal: dict[str, float] = {}
-    outer = radius_of.get(max_depth, base_radius)
-    for depth, members in by_depth.items():
-        radius = radius_of.get(depth, outer)
-        if len(members) < 2:
-            for node_id in members:
-                reveal[node_id] = 2 * math.pi * radius
-            continue
-        ordered = sorted(members, key=lambda nid: angles.get(nid, 0.0))
-        theta = [angles.get(nid, 0.0) for nid in ordered]
-        count = len(ordered)
-        for i, node_id in enumerate(ordered):
-            prev = theta[i] - theta[(i - 1) % count]
-            nxt = theta[(i + 1) % count] - theta[i]
-            if i == 0:
-                prev += 2 * math.pi
-            if i == count - 1:
-                nxt += 2 * math.pi
-            reveal[node_id] = radius * min(prev, nxt)
-    return reveal
-
-
-def _clamp_to_ancestors(nodes, reveal, max_depth):
-    """沿包含路径取前缀最小：reveal_n ← min(reveal_n, reveal_parent)。
-
-    不夹会出这种事：某个深层节点恰好落在极稀疏的扇形里，reveal 高达数千，
-    于是它在 zoom 0.0013 就冒出来，而 6 个顶层学科要等到 0.0555 ——
-    缩到最外面时屏幕上只剩一个孤立标题。语义上也不该如此：
-    子节点出现的前提是它所属的那一整条包含链都已经摊开到位。
-    夹完之后 minzoom 沿树单调不降，「先看到学科，再看到它的细节」是构造保证的。
-    """
+    home_zoom = NOMINAL_FIT_RADIUS / root_radius * home_fit if root_radius > 0 else 0.0
+    home_layer = 1
     for depth in range(1, max_depth + 1):
-        for node_id, node in nodes.items():
-            if node["depth"] != depth:
-                continue
-            parent = node.get("parent")
-            if parent is not None and parent in reveal and parent in nodes:
-                reveal[node_id] = min(reveal[node_id], reveal[parent])
+        if enter[depth - 1] <= home_zoom:
+            home_layer = depth
 
-
-# 落盘 home_layer 时用的标称视口半径（屏幕像素）：1600×900 的窗口减去 46px 页脚，
-# 再取半高。真实值依赖窗口尺寸，所以前端拿到 enter 与 rings 后会自己复算一遍 ——
-# 这个常量只是为了让 dist/graph.json 里也有一个可用的默认值。
-NOMINAL_FIT_RADIUS = (900 - 46) / 2
+    return layers, enter, home_layer, root_radius
 
 
 def _median(values):
@@ -257,61 +433,3 @@ def _median(values):
     if len(values) % 2:
         return values[mid]
     return (values[mid - 1] + values[mid]) / 2
-
-
-def _apply_depth_floor(nodes, reveal, by_depth, max_depth, min_px):
-    """给 reveal 叠一层「按深度的上限封顶」，把缩放方向锁死为「放大 = 更深」。
-
-    为什么非做不可（详见模块 docstring 第三段）：reveal 是局部量，而 r_L 每圈 ×1.7、
-    每圈节点数在第 6 圈见顶后回落，深层圈在世界尺度上反而更稀疏，
-    「解锁第 L 层所需的 zoom」到第 8 圈就饱和在 0.75，之后滚轮 8 格不再解锁任何层级。
-
-    做法：取每圈 minzoom 的中位数、沿深度做前缀最大，得到第 L 层的解锁门槛
-
-        enter[L] = cummax_{L'≤L} median_{n∈ring L'}( min_px / reveal_n )
-
-    再反过来把它变成 reveal 的上限：reveal_n ← min(reveal_n, min_px / enter[depth_n])。
-    于是 minzoom_n = min_px / reveal_n ≥ enter[depth_n]，深度越大门槛越高。
-
-    安全性：封顶只会降低 reveal → 抬高 minzoom → 让节点**更晚**出现，
-    所以「同圈可见节点屏幕间距 ≥ min_px」的构造性保证不受影响（那条保证只依赖
-    reveal 是间距的下界，缩小下界不改变已成立的不等式方向）。
-    又因为 enter 单调不减 ⇒ cap[L] = min_px/enter[L] 单调不增，
-    祖先单调性 reveal_child ≤ reveal_parent 自动保持，无需再夹一次。
-
-    用中位数而不是最小值/最大值：最小值会被单个极窄扇形拖垮（等于没封顶），
-    最大值则会把整圈最松的节点也推迟到最挤的那一刻，层级感全失。中位数表示
-    「这一圈的典型拥挤程度」，正好是「这一层该在什么时候摊开」的语义。
-    """
-    enter: list[float] = []
-    running = 0.0
-    for depth in range(1, max_depth + 1):
-        members = by_depth.get(depth, [])
-        vals = sorted(min_px / max(reveal[nid], 1e-9) for nid in members)
-        running = max(running, _median(vals))
-        enter.append(running)
-
-    caps = [(min_px / e) if e > 0 else float("inf") for e in enter]
-    for node_id, node in nodes.items():
-        depth = node.get("depth", 1)
-        cap = caps[depth - 1] if 1 <= depth <= max_depth else caps[-1]
-        if node_id in reveal and reveal[node_id] > cap:
-            reveal[node_id] = cap
-    return enter
-
-
-def _home_layer(enter, radius_of, max_depth):
-    """初始视图停在第几圈：既已完全解锁（enter[L] ≤ z）、又能整圈装进屏幕（z ≤ fit/r_L）
-    的最深一圈。两个条件都满足才有意义 —— 只看前者会停在一个塞满屏幕的圈上，
-    只看后者会停在一个还没解锁、圆点糊成一团的圈上。
-    """
-    best = 1
-    for depth in range(1, max_depth + 1):
-        radius = radius_of.get(depth)
-        if not radius:
-            continue
-        if enter[depth - 1] <= NOMINAL_FIT_RADIUS / radius:
-            best = depth
-    return best
-
-

@@ -3,6 +3,12 @@
 
 无法脚本客观判定的事（动画帧率、悬停响应、file:// 双击体验）不在这里假装通过，
 README.md 里给了人工核对清单。
+
+布局换成 circle packing 之后，这里的几何断言也跟着换了一副骨架：旧版校验的是
+「半径严格等比 r_L = base × ratio^(L-1)」+「同圈相邻节点的弧长间距」，这两条都
+建立在「一层一圈圆周」上；新版校验的是三条包含关系（子在父内、父至少比子大
+level_ratio 倍、兄弟互不相交）。这三条一旦成立，就顺带把旧版要靠采样才能检查的
+「任意缩放下可见节点不重叠」变成了定理 —— 证明写在下面 [包含几何] 段。
 """
 
 from __future__ import annotations
@@ -20,6 +26,11 @@ setup_stdout()
 
 from kg import config as config_mod
 from kg import layout as layout_mod
+
+# x/y 按 3 位小数、r 按 4 位小数落盘，而 _pack_siblings 是「相切」打包 ——
+# 兄弟圆恰好接触（dist == r_i + r_j），正是对舍入最敏感的那一批。
+# 所以三条几何断言一律用相对容差，不用绝对容差。
+REL_TOL = 2e-3
 
 
 class CheckFailure(Exception):
@@ -45,7 +56,7 @@ def run(cfg, payload_path=None):
     nodes = {n["id"]: n for n in data["nodes"]}
     edges = data["edges"]
     aggregates = data["aggregates"]
-    rings = data["rings"]
+    layers = data["layers"]
     failures: list[str] = []
 
     print(f"\n校验 {payload_path}")
@@ -126,50 +137,90 @@ def run(cfg, payload_path=None):
 
     # ── 标准 4：位置稳定（构造性保证 + 包含关系一致） ───────────────────
     print("\n[标准 4] 节点位置稳定 —— 坐标一次算定，缩放只切可见性")
+    # packing 下同心是合法几何：父节点只有一个孩子时，_pack_siblings 把那一个孩子
+    # 放在原点，于是父子同心、只按 level_ratio 缩小半径 —— 正是地图上「这个省只有
+    # 一个市」的画法。所以旧版「坐标两两不同」要放宽成「重合的一对必须是父子」。
     coords = {}
-    duplicates = []
+    dup_pairs = []
     for node in data["nodes"]:
-        key = (round(node["x"], 2), round(node["y"], 2))
+        key = (round(node["x"], 3), round(node["y"], 3))
         if key in coords:
-            duplicates.append((coords[key], node["id"]))
+            dup_pairs.append((coords[key], node["id"]))
         coords[key] = node["id"]
-    _check(not duplicates, f"{len(coords)} 个节点坐标两两不同（重叠 {len(duplicates)} 对）", failures)
+    nonfamily = [(a, b) for a, b in dup_pairs
+                 if nodes[a]["parent"] != b and nodes[b]["parent"] != a]
+    _check(not nonfamily,
+           f"{len(data['nodes'])} 个节点里坐标重合的 {len(dup_pairs)} 对全是父子关系"
+           f"（独子链同心；非父子重合 {len(nonfamily)} 对）", failures)
 
-    # ── 圈层几何 ────────────────────────────────────────────────────────
-    print("\n[圈层几何] 半径等比放大；同圈疏密只由角度决定")
-    base_radius = float(cfg["layout"]["base_radius"])
-    ring_ratio = float(cfg["layout"]["ring_ratio"])
-    radius_of = {r["depth"]: r["radius"] for r in rings}
-    _check([r["depth"] for r in rings] == list(range(1, meta["max_depth"] + 1)),
-           f"{len(rings)} 圈覆盖 depth 1..{meta['max_depth']}，无缺口", failures)
-    expect = [round(base_radius * ring_ratio ** (d - 1), 3)
-              for d in range(1, meta["max_depth"] + 1)]
-    got = [r["radius"] for r in rings]
-    _check(all(abs(a - b) < 0.01 for a, b in zip(got, expect)),
-           f"半径严格等比 r_L = {base_radius} × {ring_ratio}^(L-1)"
-           f"（r_1={got[0]:.0f} → r_{len(got)}={got[-1]:.0f}）", failures)
-    _check(all(b > a for a, b in zip(got, got[1:])), "半径逐圈严格递增", failures)
-    _check(all(r["count"] == sum(1 for n in data["nodes"] if n["depth"] == r["depth"])
-               for r in rings), "每圈登记的 count 与实际节点数一致", failures)
+    # ── 包含几何 ────────────────────────────────────────────────────────
+    # 这三条是 packing 的全部契约，其余视觉性质都从它们推出来：
+    #   ① 子在父内      dist(c,p) + r_c ≤ r_p        —— 用户要求 3「子元素在父圆内」
+    #   ② 父至少大 1.5 倍 r_p ≥ level_ratio × r_c     —— 用户要求 2「按包含关系分档」
+    #   ③ 兄弟不相交    dist(a,b) ≥ r_a + r_b        —— 圆点互不糊在一起
+    # ①+③ 合起来 ⇒ 任意两个「互不包含」的圆都不相交：取 a、b 的最近公共祖先 c，
+    # a 落在 c 的某个孩子 S_a 里、b 落在另一个孩子 S_b 里（① 反复套用），而 S_a 与
+    # S_b 是兄弟故不相交（③），于是 a ∩ b = ∅。这就是旧版要靠 40 档缩放采样才能
+    # 检查的「屏幕上可见节点不重叠」—— 现在它是定理，不用再采样了（下面只在可见集
+    # 很小的两个 zoom 上抽验一遍，防实现走样）。
+    print("\n[包含几何] 子在父内 · 父比子大 level_ratio 倍 · 兄弟不相交")
+    level_ratio = float(cfg["layout"]["level_ratio"])
+    _check([row["depth"] for row in layers] == list(range(1, max_depth + 1)),
+           f"{len(layers)} 层覆盖 depth 1..{max_depth}，无缺口", failures)
+    _check(all(row["count"] == sum(1 for n in data["nodes"] if n["depth"] == row["depth"])
+               for row in layers),
+           "每层登记的 count 与实际节点数一致", failures)
+    _check(all(n.get("r", 0) > 0 for n in data["nodes"]),
+           f"{len(data['nodes'])} 个节点都有正的世界半径 r", failures)
 
-    # ── reveal：按缩放裁剪细节的依据 ────────────────────────────────────
-    # 某一圈整体适配视口时，圈上节点的屏幕间距 = 2πR/N_L，只由该圈节点数决定，
-    # 与半径无关。所以「让第 L 圈装进视口」不能当作第 L 层的定义；改用地图软件的
-    # minzoom 思路：reveal_n = 与同圈最近邻的世界弧长，minzoom_n = min_px / reveal_n，
-    # 于是「可见 ⇒ 屏幕上与最近邻至少分开 min_px」是构造出来的保证。
-    print("\n[LOD reveal] 每个节点自带「该在多大缩放下出现」")
+    outside, too_small = [], []
+    for n in data["nodes"]:
+        p = nodes.get(n["parent"])
+        if p is None:
+            continue
+        d = math.hypot(n["x"] - p["x"], n["y"] - p["y"])
+        if d + n["r"] > p["r"] * (1 + REL_TOL):
+            outside.append((n["id"], d + n["r"], p["r"]))
+        if p["r"] < n["r"] * level_ratio * (1 - REL_TOL):
+            too_small.append((n["id"], p["r"], n["r"]))
+    _check(not outside,
+           f"每个节点都完整落在父节点圆内（越界 {len(outside)} 个）", failures)
+    _check(not too_small,
+           f"每个父节点的半径都 ≥ 孩子的 {level_ratio} 倍（不足 {len(too_small)} 个）", failures)
+
+    kids_of: dict = {}
+    for n in data["nodes"]:
+        if n["parent"] is not None:
+            kids_of.setdefault(n["parent"], []).append(n)
+    overlap = []
+    sibling_pairs = 0
+    for kids in kids_of.values():
+        for i in range(len(kids)):
+            for j in range(i + 1, len(kids)):
+                sibling_pairs += 1
+                a, b = kids[i], kids[j]
+                d = math.hypot(a["x"] - b["x"], a["y"] - b["y"])
+                if d < (a["r"] + b["r"]) * (1 - REL_TOL):
+                    overlap.append((a["id"], b["id"], d, a["r"] + b["r"]))
+    _check(not overlap,
+           f"{sibling_pairs} 对兄弟圆互不相交（重叠 {len(overlap)} 对）", failures)
+
+    # ── LOD r：按缩放裁剪细节的依据 ─────────────────────────────────────
+    # minzoom_n = min_px / r_n：世界半径越大，越早（在越小的 zoom 下）就够 min_px。
+    # 于是「放大 = 更深」不再需要人为补丁，它直接来自 ②：沿包含链 r 严格递减 ⇒
+    # minzoom 严格递增 ⇒ 孩子绝不会比祖先先浮现。这就是被删掉的
+    # _reveal/_clamp_to_ancestors/_apply_depth_floor 三个补丁原来在硬凑的东西。
+    print("\n[LOD r] 世界半径直接决定「该在多大缩放下出现」")
     min_px = float(cfg["lod"]["min_px"])
     fade = float(cfg["lod"]["fade_span"])
-    _check(all(n.get("reveal", 0) > 0 for n in data["nodes"]),
-           f"{len(data['nodes'])} 个节点都有正的 reveal", failures)
     viol = [n["id"] for n in data["nodes"]
-            if n["parent"] in nodes and n["reveal"] > nodes[n["parent"]]["reveal"] + 1e-9]
+            if n["parent"] in nodes and n["r"] >= nodes[n["parent"]]["r"] * (1 - REL_TOL)]
     _check(not viol,
-           f"reveal 沿包含链单调不增 —— 子节点不会比祖先先出现（违反 {len(viol)} 个）",
+           f"r 沿包含链严格递减 —— 子节点不会比祖先先出现（违反 {len(viol)} 个）",
            failures)
 
-    need = sorted(min_px / n["reveal"] for n in data["nodes"])   # = minzoom
-    root_need = max(min_px / n["reveal"] for n in data["nodes"] if n["depth"] == 1)
+    need = sorted(min_px / n["r"] for n in data["nodes"])   # = minzoom
+    root_need = max(min_px / n["r"] for n in data["nodes"] if n["depth"] == 1)
     z_lo = root_need * float(cfg["zoom"]["zoom_out_floor"])
     z_hi = need[-1] * float(cfg["zoom"]["zoom_in_ceiling"])
     _check(z_hi > z_lo, f"缩放区间 [{z_lo:.4f}, {z_hi:.4f}] 非空", failures)
@@ -177,9 +228,11 @@ def run(cfg, payload_path=None):
            "顶层学科全部出现所需的缩放，不大于最挤节点所需的缩放", failures)
 
     # ── enter：按深度的解锁门槛，即「放大 = 更深」的方向锁 ───────────────
-    # reveal 是局部量，单靠它给不出全局单调的方向（深层圈在世界尺度上反而更稀疏，
-    # 门槛会在第 8 圈饱和）。enter[L] 把每圈 minzoom 的中位数沿深度取前缀最大，
-    # 再反过来给 reveal 封顶，于是 minzoom_n ≥ enter[depth_n]。见 _apply_depth_floor。
+    # enter[L] = 第 L 层 minzoom 的中位数沿深度取前缀最大。packing 下它只用于两件事：
+    # HUD 上「第几层」的读数、以及 zoomToDepth(L) 的跳转目标。它不再反过来给节点封顶
+    # （那是 _apply_depth_floor 干的、已删），所以这里**不**断言 minzoom_n ≥ enter[depth_n]：
+    # 一个很大的子圆（如 Science and Tech/Electronic engineering，r=391）minzoom 远低于
+    # 本层中位数是正确行为 —— 它内容多，本来就该更早被看见（用户要求 1）。
     print("\n[LOD enter] 按深度单调的解锁门槛（方向锁）")
     lod = meta.get("lod", {})
     enter = lod.get("enter") or []
@@ -189,114 +242,157 @@ def run(cfg, payload_path=None):
            f"enter 覆盖 depth 1..{max_depth}（实到 {len(enter)} 项）", failures)
     _check(all(b >= a - 1e-9 for a, b in zip(enter, enter[1:])),
            "enter 沿深度单调不减 —— 越深的层越晚解锁", failures)
-    # reveal 按 3 位小数、enter 按 6 位小数落盘，而封顶后大量节点的 reveal 恰好
-    # 等于 cap[L] —— 正是舍入最敏感的那一批。绝对容差会被噪声误判，用相对容差。
-    below = [n["id"] for n in data["nodes"]
-             if min_px / n["reveal"] < enter[n["depth"] - 1] * (1 - 1e-3)]
-    _check(not below,
-           f"每个节点的 minzoom 都不低于它所在深度的 enter（违反 {len(below)} 个）", failures)
     _check(bool(enter) and enter[-1] <= z_hi,
            f"放到最大（z={z_hi:.3f}）时最深层已解锁"
            f"（enter[{max_depth}]={enter[-1] if enter else 0:.3f}）", failures)
-    fit = layout_mod.NOMINAL_FIT_RADIUS
-    cand = [d for d in range(1, max_depth + 1)
-            if enter[d - 1] <= fit / radius_of[d]] if enter else []
-    _check(home == (max(cand) if cand else 1),
-           f"home_layer={home} 是「已解锁且整圈能装进屏幕」的最深一圈"
-           f"（标称视口半径 {fit:.0f}px，候选 {cand}）", failures)
-    print(f"         {'圈':>3}{'半径':>10}{'适配zoom':>11}{'enter':>10}{'整圈可见':>10}")
-    for d in range(1, max_depth + 1):
-        fz = fit / radius_of[d]
-        whole = "是" if enter[d - 1] <= fz else "—"
-        print(f"         {d:>3}{radius_of[d]:>10.0f}{fz:>11.4f}"
-              f"{enter[d - 1]:>10.4f}{whole:>10}")
 
-    # 单调性 + 每层是否有独立的可见窗口（否则语义缩放就退化成一次全开）
+    # home 的定义：整张图缩到「布局根圆恰好贴合视口」再乘 home_fit 的余量。
+    # home_fit 的硬上限是 padding（= 布局根半径 / 最大包围盒半径），config._validate
+    # 已经把这条钉死了，这里只负责用它复算 home_layer。
+    fit = layout_mod.NOMINAL_FIT_RADIUS
+    _check(abs(fit - float(meta["nominal_fit_radius"])) < 1e-6,
+           f"meta.nominal_fit_radius={meta['nominal_fit_radius']} 与 layout 常量 {fit} 一致",
+           failures)
+    root_radius = float(meta["layout_root_radius"])
+    home_fit = float(cfg["zoom"]["home_fit"])
+    home_zoom = fit / root_radius * home_fit
+    cand = [d for d in range(1, max_depth + 1) if enter[d - 1] <= home_zoom] if enter else []
+    _check(home == (max(cand) if cand else 1),
+           f"home_layer={home} 是 home_zoom={home_zoom:.4f} 下已解锁的最深一层"
+           f"（布局根半径 {root_radius:.0f}，候选 {cand}）", failures)
+
+    r_median_of = {row["depth"]: row["r_median"] for row in layers}
+    print(f"         {'层':>3}{'节点':>7}{'r中位':>10}{'r最小':>9}{'r最大':>10}"
+          f"{'minzoom中位':>12}{'enter':>10}")
+    for row in layers:
+        print(f"         {row['depth']:>3}{row['count']:>7}{row['r_median']:>10.2f}"
+              f"{row['r_min']:>9.2f}{row['r_max']:>10.2f}"
+              f"{row['minzoom_median']:>12.4f}{enter[row['depth'] - 1]:>10.4f}")
+    distinct = len({round(v, 4) for v in enter})
+    print(f"         enter 有 {distinct}/{len(enter)} 个互不相同的取值"
+          + ("（每层在 HUD 上都能区分开）" if distinct == len(enter) else "（有层共用门槛）"))
+
+    # ── 可见数随缩放的变化 ──────────────────────────────────────────────
+    def visible(z):
+        return [n for n in data["nodes"] if n["r"] * z >= min_px]
+
     steps = 40
     prev = -1
     counts = []
     nonmono = 0
     for i in range(steps + 1):
         z = z_lo * (z_hi / z_lo) ** (i / steps)
-        vis = sum(1 for n in data["nodes"] if n["reveal"] >= min_px / z)
+        vis = len(visible(z))
         counts.append(vis)
         if vis < prev:
             nonmono += 1
         prev = vis
     _check(nonmono == 0, f"可见节点数随缩放单调不减（回退 {nonmono} 次）", failures)
-    at_root = sum(1 for n in data["nodes"] if n["reveal"] >= min_px / root_need * (1 - 1e-9))
-    at_home = sum(1 for n in data["nodes"]
-                  if n["reveal"] >= min_px / (fit / radius_of[home or 1]) * (1 - 1e-9))
-    _check(at_root == len(depth1),
-           f"zoom={root_need:.4f} 时恰好 {len(depth1)} 个顶层学科硬可见（实到 {at_root}）",
-           failures)
     _check(counts[-1] == len(data["nodes"]),
            f"放到最内见全部 {counts[-1]} 个节点", failures)
-    _check(20 <= at_home <= 600,
-           f"home 视图（z={fit / radius_of[home or 1]:.4f}）可见 {at_home} 个节点，"
+
+    at_root_ids = {n["id"] for n in visible(z_lo)}
+    missing_roots = [n["id"] for n in depth1 if n["id"] not in at_root_ids]
+    _check(not missing_roots,
+           f"缩到最小（z={z_lo:.4f}）时 {len(depth1)} 个顶层学科全部可见"
+           f"（缺 {len(missing_roots)} 个）", failures)
+    # 注意：z_lo 处可见的**不止** 6 个学科根 —— 这是 packing 与同心环的根本区别。
+    # 同心环时代「缩到最小 = 只剩 6 个点」，因为每圈半径是全局等比的；packing 下
+    # 大学科根的孩子（如 Science and Tech/Electronic engineering，r=391）在世界尺度
+    # 上比小学科根（Medical and Health，r=44）还大得多，它当然应该一起可见。
+    # 「内容多的元素更大、更早被看见」正是用户要求 1，所以这里不断言恰好 6 个。
+    at_home = len(visible(home_zoom))
+    _check(20 <= at_home <= 400,
+           f"home 视图（z={home_zoom:.4f}）可见 {at_home} 个节点，"
            f"是「整个 vault 的骨架」而不是空白或糊团", failures)
 
-    # 注意：逐层单调的是「首现」—— enter[L] 沿深度单调不减，由 _apply_depth_floor
-    # 构造保证（见上面 [LOD enter] 段）。这里**不**要求「每层全部出现所需的缩放」
-    # （末现）逐层递增，也无需单调：全图最挤的点在哪一层，哪一层就最后解完；实测拥挤峰
-    # 在 depth 6（939 个标题挤在一圈），depth 8..10 反而更早解完。地图同理：通往远方
-    # 城市的高速先出现，近处的小路后出现。真正的不变量是上面那条「子节点不早于祖先」、
-    # enter 的方向锁，以及下面这条同圈间距保证。
-    #
-    # 间距保证是构造出来的、不是调参调出来的：reveal_n 取的是到同圈最近邻的世界弧长，
-    # 所以任意相邻一对的弧长 ≥ 两端各自的 reveal；而「可见」的定义就是
-    # reveal ≥ min_px/zoom。两式相乘即得屏幕间距 ≥ min_px，对任意 zoom 成立。
-    # 抽四个 zoom 复算一遍，防的是实现走样而非数据走样。
-    # reveal 与坐标都按 3 位小数落盘，比对留 1e-3 的相对容差（不是放宽 min_px）。
+    # 用户要求 2/4 的守门条件：home 视图下每个学科根都必须大到看得见。
+    # 这条同时把 size_exponent 钉住了 —— 调大到 0.6，最小的 Medical and Health
+    # 在 home 只有 18.24px，贴着 min_px=18 没有余量；0.5 时是 20.39px。
+    small_roots = [(n["id"], n["r"] * home_zoom) for n in depth1 if n["r"] * home_zoom < min_px]
+    _check(not small_roots,
+           f"home_zoom 下 {len(depth1)} 个学科根的屏幕半径都 ≥ min_px={min_px}"
+           f"（最小 {min(n['r'] for n in depth1) * home_zoom:.2f}px、"
+           f"最大 {max(n['r'] for n in depth1) * home_zoom:.1f}px）", failures)
+
+    # 判据：滚轮一格不能齐刷刷弹出一大片。旧同心环模型下最深几圈的 enter 会饱和，
+    # 一格滚轮直接弹出 66% 的节点（2308/3481）—— 那不是「语义缩放」，是一次全开。
+    # packing 下叶子半径随所在路径的缩放系数分散开，同一层的 minzoom 铺成一个区间，
+    # 于是涌入被摊平。20% 是实测值（18%）留一点余量。
+    wheel_step = float(cfg["zoom"]["wheel_step"])
+    total = len(data["nodes"])
+    notch_counts = []
+    z = z_lo
+    while z < z_hi * (1 + 1e-9):
+        notch_counts.append(len(visible(z)))
+        z *= wheel_step
+    notch_counts.append(total)
+    jumps = [b - a for a, b in zip(notch_counts, notch_counts[1:])]
+    worst = max(jumps) / total if jumps else 0.0
+    _check(worst <= 0.20,
+           f"滚轮单格最大涌入 {worst:.0%}（{max(jumps)}/{total} 个节点，"
+           f"共 {len(jumps)} 格），不超过 20%", failures)
+
+    # 抽验 ①+③ 推出的那条定理：屏幕上任意两个互不包含的可见圆，中心距 ≥ 2×min_px。
+    # 只在可见集很小的两个 zoom 上做全对检查（z_hi 处 3482 个节点两两配对要 600 万次，
+    # 而这个性质上面已经证过了，抽样只是防实现走样）。
+    def ancestors(nid):
+        out = set()
+        cur = nodes[nid]["parent"]
+        while cur in nodes:
+            out.add(cur)
+            cur = nodes[cur]["parent"]
+        return out
+
     spacing_bad = []
-    for z in (z_lo, need[len(need) // 2], need[-1], z_hi):
-        thresh = min_px / z
-        for r in rings:
-            members = sorted((n for n in data["nodes"] if n["depth"] == r["depth"]),
-                             key=lambda n: math.atan2(-n["y"], n["x"]))
-            count = len(members)
-            if count < 2:
-                continue
-            theta = [math.atan2(-n["y"], n["x"]) for n in members]
-            for i in range(count):
-                a, b = members[i], members[(i + 1) % count]
-                if min(a["reveal"], b["reveal"]) < thresh:
-                    continue        # 这一对里还有人没浮现，间距无从谈起
-                gap = theta[(i + 1) % count] - theta[i]
-                if i == count - 1:
-                    gap += 2 * math.pi
-                if gap * r["radius"] * z < min_px * (1 - 1e-3):
-                    spacing_bad.append((round(z, 4), r["depth"], a["id"]))
+    for z in (z_lo, home_zoom):
+        vis = visible(z)
+        anc = {n["id"]: ancestors(n["id"]) for n in vis}
+        for i in range(len(vis)):
+            for j in range(i + 1, len(vis)):
+                a, b = vis[i], vis[j]
+                if b["id"] in anc[a["id"]] or a["id"] in anc[b["id"]]:
+                    continue        # 嵌套关系，本来就该一个套在另一个里
+                d = math.hypot(a["x"] - b["x"], a["y"] - b["y"]) * z
+                if d < 2 * min_px * (1 - REL_TOL):
+                    spacing_bad.append((round(z, 4), a["id"], b["id"], round(d, 2)))
     _check(not spacing_bad,
-           f"任意缩放下，同圈相邻的可见节点屏幕间距都 ≥ min_px={min_px}"
+           f"z_lo 与 home 两处，可见的非嵌套圆屏幕中心距都 ≥ 2×min_px={2 * min_px}"
            f"（不足 {len(spacing_bad)} 对）", failures)
 
-    notch = math.log(z_hi / z_lo) / math.log(float(cfg["zoom"]["wheel_step"]))
-    print(f"         reveal 区间 [{min(n['reveal'] for n in data['nodes']):.1f}, "
-          f"{max(n['reveal'] for n in data['nodes']):.1f}] 世界单位")
+    notch = math.log(z_hi / z_lo) / math.log(wheel_step)
+    print(f"         r 区间 [{min(n['r'] for n in data['nodes']):.3f}, "
+          f"{max(n['r'] for n in data['nodes']):.1f}] 世界单位，"
+          f"跨度 {max(n['r'] for n in data['nodes']) / min(n['r'] for n in data['nodes']):.0f} 倍")
     print(f"         缩放区间 [{z_lo:.4f}, {z_hi:.4f}] = {z_hi / z_lo:.0f} 倍，"
-          f"滚轮约 {notch:.0f} 格（每层平均 {notch / len(rings):.1f} 格）")
-    print(f"         {'圈':>3}{'节点':>7}{'半径':>10}{'全出现zoom':>12}{'可见数':>8}")
-    for r in rings:
-        members = [n for n in data["nodes"] if n["depth"] == r["depth"]]
-        z = min_px / min(n["reveal"] for n in members) if members else 0.0
-        at = sum(1 for n in data["nodes"] if n["reveal"] >= min_px / z) if members else 0
-        print(f"         {r['depth']:>3}{r['count']:>7}{r['radius']:>10.0f}"
-              f"{z:>12.4f}{at:>8}")
+          f"滚轮约 {notch:.0f} 格（每层平均 {notch / len(layers):.1f} 格）")
+    print(f"         home 视图 z={home_zoom:.4f} 可见 {at_home} 个；"
+          f"缩到最小 z={z_lo:.4f} 可见 {len(at_root_ids)} 个")
+    print(f"         单格涌入峰值 {worst:.0%}（第 {jumps.index(max(jumps)) + 1} 格）；"
+          f"视口理论容量约 (视口半径/min_px)² = ({fit:.0f}/{min_px:.0f})² ≈ {(fit / min_px) ** 2:.0f} 个圆")
     print(f"         淡入带宽 fade_span={fade}（zoom 从 minzoom/{fade} 到 minzoom，"
-          f"alpha 0→1，约 {math.log(fade) / math.log(float(cfg['zoom']['wheel_step'])):.1f} 格滚轮）")
+          f"alpha 0→1，约 {math.log(fade) / math.log(wheel_step):.1f} 格滚轮）")
 
-    # 跨圈（父→子）间距只做信息输出，不作失败条件：包含关系已由半径几何表达，
-    # 稀疏扇形里父子靠得近反而正好说明「这块内容不多」。
-    # 量的是「子节点刚浮现的那一刻」它与父节点的屏幕距离。
-    cross = sorted(
-        math.hypot(n["x"] - nodes[n["parent"]]["x"], n["y"] - nodes[n["parent"]]["y"])
-        * min_px / n["reveal"]
-        for n in data["nodes"] if n["parent"] in nodes
-    )
-    if cross:
-        print(f"         子节点刚浮现时与父节点的屏幕间距：最小 {cross[0]:.1f}px、"
-              f"中位 {cross[len(cross) // 2]:.1f}px、最大 {cross[-1]:.1f}px（信息，不设门槛）")
+    # 跨层（父→子）半径比只做信息输出：它衡量「包含关系在视觉上有多明显」。
+    # 独子链是下界情形 —— 只有一个孩子时 s 被 level_ratio 那一项夹住，
+    # 比值恰好等于 level_ratio，孩子正好同心缩在父亲中间。
+    ratios = sorted(nodes[n["parent"]]["r"] / n["r"]
+                    for n in data["nodes"] if n["parent"] in nodes)
+    sole = sorted(nodes[n["parent"]]["r"] / n["r"]
+                  for n in data["nodes"]
+                  if n["parent"] in nodes and len(kids_of.get(n["parent"], [])) == 1)
+    if ratios:
+        print(f"         父/子半径比：最小 {ratios[0]:.3f}、中位 {ratios[len(ratios) // 2]:.3f}、"
+              f"最大 {ratios[-1]:.2f}")
+    if sole:
+        print(f"         其中独子链 {len(sole)} 个，父/子比 "
+              f"{sole[0]:.3f} / {sole[len(sole) // 2]:.3f} / {sole[-1]:.3f}"
+              f"（= level_ratio {level_ratio}，同心嵌套）")
+    for n in sorted(depth1, key=lambda n: -n["r"]):
+        kids = kids_of.get(n["id"], [])
+        biggest = max((k["r"] for k in kids), default=0.0)
+        print(f"         {n['label']:<34} r={n['r']:>8.2f}  孩子 {len(kids):>2} 个，"
+              f"最大的孩子 r={biggest:>7.2f}（父/子 {n['r'] / biggest if biggest else 0:.2f}）")
 
     # ── 标题节点 ────────────────────────────────────────────────────────
     print("\n[标题节点] 标题已提升为一等节点")
@@ -337,9 +433,9 @@ def run(cfg, payload_path=None):
 
     # ── 各层一览 ────────────────────────────────────────────────────────
     print("\n[各层可见内容]")
-    print(f"         {'层级':<8}{'半径':>8}{'文件夹':>7}{'笔记':>7}{'标题':>7}{'边':>8}{'语义边':>8}")
+    print(f"         {'层级':<8}{'r中位':>9}{'文件夹':>7}{'笔记':>7}{'标题':>7}{'边':>8}{'语义边':>8}")
     for budget, row in sorted(payload_levels(data).items(), key=lambda kv: int(kv[0])):
-        print(f"         depth≤{int(budget):<4}{radius_of.get(int(budget), 0):>8.0f}"
+        print(f"         depth≤{int(budget):<4}{r_median_of.get(int(budget), 0):>9.2f}"
               f"{row['folders']:>7}{row['notes']:>7}{row['headings']:>7}"
               f"{row['edges']:>8}{row['semantic_edges']:>8}")
 
