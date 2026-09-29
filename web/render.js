@@ -1,11 +1,23 @@
 /* 渲染层：Canvas2D 语义缩放地图。
  *
  * 只干一件事：给定相机 {zoom, panX, panY}，把 payload 画出来。所有「该不该画、
- * 画多透明」都来自构建期算好的 reveal（→ minzoom = lod.min_px / reveal），
- * 渲染期不做任何布局计算 —— 坐标一次算定，所以缩放时节点永不跳动。
+ * 画多透明」都来自构建期算好的世界半径 r（→ minzoom = lod.min_px / r），
+ * 渲染期不做任何布局计算 —— 坐标与半径一次算定，所以缩放时节点永不跳动。
  *
  * 方向：**放大（zoom 变大）= 看到更深的层级**，和地图一致。
- * 这个方向不是自动成立的，是 kg/layout.py `_apply_depth_floor` 按深度封顶封出来的。
+ * 这个方向不是自动成立的，是 circle packing 的包含几何锁住的：kg/layout.py
+ * 保证沿包含链 r 严格递减（父半径 ≥ level_ratio × 最大子半径），于是
+ * minzoom = min_px / r 沿链严格递增 —— 孩子永远比父母更晚浮现。
+ *
+ * ── 圆的大小 = 它在知识树里占的地盘 ────────────────────────────────────────
+ * r 不是按层级查表的常量，而是 packing 分配到的世界半径：包含的东西越多半径
+ * 越大，且父圆一定套住全部子圆。屏幕半径一律 = r × zoom，所以放大就真的大，
+ * 和地图上的省市区一样。父子同色（都继承所属学科的 domain 色），靠描边分界线；
+ * 已经有孩子浮现的元素退化成压暗的「底图」（wash），当前尺度上最细的那一层
+ * 才是不透明实心圆 —— 这就是「放大时省淡出、市界线淡入」。wash 还有地图瓦片
+ * 的另一半语义 maxzoom：圆铺满整个视口后它的填充只是一层均匀色罩、界线也在
+ * 屏幕外，继续画只会和更外层的罩子叠成不透明色块，所以接近铺满时平滑退场、
+ * 铺满后停画，只留还没铺满的最内层圆当「你在哪个区域里」的界线。
  *
  * ── 用户那个「跨层级链接怎么淡入淡出」的疑惑，答案是两层机制叠加 ──────────
  * 地图软件处理「北京到上海的高铁」在省级图上是两个省会之间一条线、
@@ -26,9 +38,12 @@
   'use strict';
 
   var FOOTER_H = 46;          // 与 template.html 里 #footer 的高度一致
-  var HIT_CELL = 64;          // 拾取网格边长（屏幕像素）
   var LABEL_CELL = 24;        // 标签碰撞网格边长（屏幕像素）
   var LABEL_BUDGET = 400;     // 每帧最多考虑多少个标签候选
+  var CULL_MARGIN = 32;       // 视口外扩余量（屏幕像素）
+  var LABEL_INSIDE_PX = 28;   // 屏幕半径超过这个值的容器，标签压在圆内顶部
+  var TAU = 6.283185307179586;
+  var FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif';
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -54,6 +69,13 @@
     return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a.toFixed(3) + ')';
   }
 
+  // 描边色：domain 色往白里提一点。父子同色，全靠这条界线把嵌套的圆分开。
+  function mixWhite(rgb, t) {
+    return [Math.round(rgb[0] + (255 - rgb[0]) * t),
+            Math.round(rgb[1] + (255 - rgb[1]) * t),
+            Math.round(rgb[2] + (255 - rgb[2]) * t)];
+  }
+
   function createRenderer(canvas, DATA, hooks) {
     hooks = hooks || {};
 
@@ -64,30 +86,28 @@
     var NODES = DATA.nodes;
     var EDGES = DATA.edges;
     var AGG = DATA.aggregates;
-    var RINGS = DATA.rings;
 
-    var MIN_PX = LOD.min_px || 6;
-    // 标签门槛是「淡入进度」而不是「世界像素间距」：_r 是屏幕像素半径，绘制时不随
-    // zoom 缩放，所以「世界尺寸超过多少 px 才给标签」在这个渲染器里根本没有对应量。
-    // 而且它不能读压暗后的 alpha —— 祖先层被 parent_dim 压到 0.5 之后就永远够不到
-    // 门槛，最粗视图（最该有标签的视图）会一个标签都没有。
+    var MIN_PX = LOD.min_px || 18;
+    // 标签门槛是「淡入进度」而不是「屏幕像素间距」，而且它不能读压暗后的 alpha ——
+    // 祖先层被 parent_dim 压到底图浓度之后就永远够不到门槛，最粗视图（最该有
+    // 标签的视图）会一个标签都没有。
     var LABEL_A = LOD.label_alpha == null ? 0.55 : LOD.label_alpha;
     var FADE = LOD.fade_span || 1.35;
     var WEAK = LOD.weak_edge_min_count || 2;
-    var PARENT_DIM = ZC.parent_dim == null ? 0.5 : ZC.parent_dim;
+    var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
+    var HOME_FIT = ZC.home_fit == null ? 1.08 : ZC.home_fit;
     var ENTER = LOD.enter || [];
     var MAXD = META.max_depth || ENTER.length || 1;
+    // 虚拟根的世界半径（构建期落盘）。home 视角 = 让整个根正好铺满可视半径。
+    var ROOT_R = META.layout_root_radius || 1000;
 
     var EDGE_RGB = {};
     Object.keys(THEME.edges || {}).forEach(function (k) { EDGE_RGB[k] = hexToRgb(THEME.edges[k]); });
     var FALLBACK_RGB = hexToRgb(THEME.fallback);
     var DOMAIN_RGB = {};
     Object.keys(THEME.domains || {}).forEach(function (k) { DOMAIN_RGB[k] = hexToRgb(THEME.domains[k]); });
-
-    var radiusOf = {};
-    RINGS.forEach(function (r) { radiusOf[r.depth] = r.radius; });
 
     // ── 索引与预计算（全部一次算完，绘制循环里只做查表）─────────────────
     var byId = new Map();
@@ -101,8 +121,8 @@
       list.push(n.id);
     });
 
-    // 后代数量：标题节点在构建期没有子树规模字段，这里沿 parent 链一次遍历补出来。
-    // 圆点半径按它取对数 —— 地图上的 POI 也是「越重要越大」，而不是按层级定大小。
+    // 后代数量：只用来给标签排优先级（规模大的先抢位置），不再参与半径计算 ——
+    // 半径现在是构建期 packing 分配的世界半径 n.r。
     var desc = new Map();
     NODES.forEach(function (n) { desc.set(n.id, 0); });
     NODES.slice().sort(function (a, b) { return b.depth - a.depth; }).forEach(function (n) {
@@ -112,10 +132,12 @@
     });
 
     NODES.forEach(function (n) {
-      n._mz = MIN_PX / n.reveal;                        // minzoom
+      var wr = n.r > 0 ? n.r : 1;
+      n._r = wr;                                     // 世界半径
+      n._mz = MIN_PX / wr;                           // minzoom
       n._d = desc.get(n.id) || 0;
-      n._r = clamp(2.4 + 1.9 * Math.log(1 + n._d) / Math.LN2, 2.4, 16);
       n._rgb = DOMAIN_RGB[n.domain] || FALLBACK_RGB;
+      n._brgb = mixWhite(n._rgb, 0.4);
       // chain[L-1] = 该节点在第 L 层的祖先 id（L ≤ depth 时；更深的层就是它自己）
       var ch = new Array(MAXD);
       var cur = n;
@@ -126,16 +148,24 @@
       n._chain = ch;
     });
     // 父节点在「所有子节点都已浮现」之后压暗，把视觉重量让给细节。
-    // 预计算门槛，绘制时每节点只比一次。
+    // _gate 给 alphaOf 用（边、标签、api 都读它）；_cLo/_cHi 给填充用 ——
+    // 孩子里最先浮现的那一个的淡入区间，父圆跟着它同步退成底图。
     kids.forEach(function (list, pid) {
       var p = byId.get(pid);
       if (!p) return;
-      var g = 0;
+      var g = 0, lo = Infinity;
       for (var i = 0; i < list.length; i++) {
         var c = byId.get(list[i]);
-        if (c && c._mz > g) g = c._mz;
+        if (!c) continue;
+        if (c._mz > g) g = c._mz;
+        if (c._mz < lo) lo = c._mz;
       }
       p._gate = g;
+      p._cHi = lo;
+      p._cLo = lo / FADE;
+    });
+    NODES.forEach(function (n) {
+      if (n._cHi == null) { n._cHi = Infinity; n._cLo = Infinity; }
     });
 
     // 语义边（contains 不画：包含关系已经由半径几何表达，画出来只会糊成一团）
@@ -158,13 +188,13 @@
       pairSeen.set(k, (pairSeen.get(k) || 0) + 1);
     });
 
-    // ── 缩放边界：全部从 reveal / enter 现算，不写死任何绝对值 ────────────
+    // ── 缩放边界：全部从 r / enter 现算，不写死任何绝对值 ─────────────────
     var rootNeed = 0, maxMz = 0;
     NODES.forEach(function (n) {
       if (n.depth === 1 && n._mz > rootNeed) rootNeed = n._mz;
       if (n._mz > maxMz) maxMz = n._mz;
     });
-    var zMin = rootNeed * (ZC.zoom_out_floor == null ? 0.9 : ZC.zoom_out_floor);
+    var zMin = rootNeed * (ZC.zoom_out_floor == null ? 1.05 : ZC.zoom_out_floor);
     var zMax = maxMz * (ZC.zoom_in_ceiling == null ? 1.35 : ZC.zoom_in_ceiling);
 
     var W = 0, H = 0, dpr = 1;
@@ -174,7 +204,7 @@
     var hoverId = null, selectedId = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
     var stats = { nodes: 0, edges: 0, labels: 0 };
-    var hitGrid = new Map();
+    var lastDrawn = [];
     var textW = new Map();
     var ctx = canvas.getContext('2d');
 
@@ -182,21 +212,19 @@
       return Math.max(40, Math.min(W / 2, (H - FOOTER_H) / 2));
     }
 
-    // home 层：既已完全解锁（enter[L] ≤ fit/r_L）、又能整圈装进屏幕（fit/r_L ≥ enter[L]）
-    // 的最深一圈。构建期按标称视口算了一个 home_layer 落盘，这里用真实视口复算。
-    function homeLayer() {
-      var R = fitRadius(), best = 1;
-      for (var L = 1; L <= MAXD; L++) {
-        var r = radiusOf[L];
-        if (!r || !ENTER[L - 1]) continue;
-        if (ENTER[L - 1] <= R / r) best = L;
-      }
-      return best;
+    // home 视角：让整个虚拟根（包住全部六个学科）正好铺满可视半径，再留 home_fit
+    // 的余量。构建期按标称视口算了一个 home_layer 落盘，这里用真实视口复算。
+    function homeZoom() {
+      return clamp(fitRadius() / ROOT_R * HOME_FIT, zMin, zMax);
     }
 
-    function homeZoom() {
-      var r = radiusOf[homeLayer()] || radiusOf[1] || 300;
-      return clamp(fitRadius() / r, zMin, zMax);
+    // home 层：home 视角下已经解锁的最深一层，即 max{ L : enter[L] ≤ homeZoom }
+    function homeLayer() {
+      var hz = homeZoom(), best = 1;
+      for (var L = 1; L <= ENTER.length; L++) {
+        if (ENTER[L - 1] <= hz) best = L; else break;
+      }
+      return best;
     }
 
     function resize() {
@@ -266,6 +294,21 @@
       return a;
     }
 
+    // 填充用的 alpha。和 alphaOf 的区别只在一处：压暗不再是「全部孩子浮现后」
+    // 的一次性跳变，而是跟着**最先浮现的那个孩子**同步渐变。
+    // 旧同心环布局里节点互不嵌套，alphaOf 在 [_mz, _gate] 区间保持 1.0 是对的；
+    // packing 下父圆真的套着子圆，那段平台会让父圆变成不透明色块、把正在淡入的
+    // 同色孩子整个吃掉。改成同步渐变之后，「省淡出、市淡入」才真的接得上。
+    // 端点行为与 alphaOf 一致：孩子没浮现时 = 淡入进度，全部浮现后 = 进度 × parent_dim。
+    function fillAlphaOf(n) {
+      var base = smoothstep(n._mz / FADE, n._mz, cam.zoom);
+      if (base <= 0.01) return 0;
+      if (filterSet && !filterSet.has(n.id)) return 0;
+      if (n._cHi === Infinity) return base;
+      var c = smoothstep(n._cLo, n._cHi, cam.zoom);
+      return base * (1 - c * (1 - PARENT_DIM));
+    }
+
     // HUD 上的层级读数：max{ L : enter[L] ≤ zoom }
     function enterAt(zoom) {
       var L = 0;
@@ -273,8 +316,8 @@
       return Math.max(1, L);
     }
 
-    // 端点沿祖先链「当前浮现在哪一层」：alpha 沿链单调不增（reveal 沿链单调不增），
-    // 所以从浅往深扫，遇到第一个不可见的就停。
+    // 端点沿祖先链「当前浮现在哪一层」：alpha 沿链单调不增（r 沿包含链严格递减
+    // ⇒ minzoom 严格递增），所以从浅往深扫，遇到第一个不可见的就停。
     function visibleLayer(n) {
       var ch = n._chain, L = 1;
       for (var i = 0; i < n.depth; i++) {
@@ -295,43 +338,64 @@
     }
 
     // ── 绘制 ────────────────────────────────────────────────────────────
+    // 四趟：① 容器底图 → ② 语义边 → ③ 前景实心圆 → ④ 标签。
+    // 边夹在底图和实心圆之间：压在底图之上才看得见，被实心圆盖住又正好形成
+    // 「线连到圆边上」的观感。强调环（掌握度/命中/选中）单独一趟，永远在最上面。
     function draw() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#0f1116';
       ctx.fillRect(0, 0, W, H);
 
-      hitGrid.clear();
       var zoom = cam.zoom;
-      var margin = 24;
-      var wx0 = s2wx(-margin), wx1 = s2wx(W + margin);
-      var wy0 = s2wy(-margin), wy1 = s2wy(H + margin);
-
-      // 先算一遍可见节点的 alpha，边要用两端点的 alpha
       var alpha = new Map();
-      var drawn = [];
+      var drawn = [], wash = [], front = [];
+
       for (var i = 0; i < NODES.length; i++) {
         var n = NODES[i];
-        if (n.x < wx0 || n.x > wx1 || n.y < wy0 || n.y > wy1) continue;
+        var sr = n._r * zoom;
+        // 视口裁剪必须按半径外扩：大圆的中心常常在屏幕外，圆本身却铺满整屏
+        var cx = n.x * zoom + cam.panX, cy = n.y * zoom + cam.panY;
+        if (cx + sr < -CULL_MARGIN || cx - sr > W + CULL_MARGIN ||
+            cy + sr < -CULL_MARGIN || cy - sr > H + CULL_MARGIN) continue;
         var a = alphaOf(n);
         if (a <= 0) continue;
+        n._sr = sr;
         alpha.set(n.id, a);
         drawn.push(n);
+        // 地图矢量瓦片的 maxzoom：圆铺满整个内容视口后，它的填充只是一层均匀色
+        // 罩、界线也在屏幕外，继续画只会和更外层的罩子叠成不透明色块。停画它，
+        // 由还没铺满视口的最内层圆提供「你在哪个区域里」的界线 —— 省界退出屏幕
+        // 后只剩市界，正是地图的做法。节点仍留在 drawn 里供命中测试与标签。
+        if (sr >= farCornerDist(cx, cy)) continue;
+        // 已经有孩子开始浮现 → 它是「区域」；否则它是当前尺度上的「点」
+        if (n._cHi !== Infinity && smoothstep(n._cLo, n._cHi, zoom) > 0.01) wash.push(n);
+        else front.push(n);
       }
-      stats.nodes = drawn.length;
+      // 子盖父：深度升序，同深度大圆先画
+      function byDepth(p, q) { return p.depth - q.depth || q._r - p._r; }
+      wash.sort(byDepth);
+      front.sort(byDepth);
 
+      lastDrawn = drawn;
+      // drawn 含「铺满视口而停画」的祖先（命中测试还要用它们），真正落笔的是
+      // wash + front，footer 与空白兜底都以落笔数为准
+      stats.nodes = wash.length + front.length;
+
+      drawWash(wash);
       drawEdges(alpha);
-      drawChainHighlight(alpha);
-      drawNodes(drawn, alpha);
+      drawChainHighlight();
+      drawNodes(front, alpha);
+      drawEmphasis(drawn, alpha);
       drawLabels(drawn, alpha);
 
-      // 全空白兜底：同心圆布局的圆心是空的，在空白处一路放大就会什么都看不见
-      // （stats.nodes 是按世界视口裁剪后真正画出的数量，不是丢数据）。
-      // 地图软件在这种情况下会提示「此区域暂无详情」，这里照做，免得用户以为坏了。
-      if (!drawn.length) {
+      // 全空白兜底：packing 布局没有空心，但一路放大到某个分支的最深处再往旁边
+      // 平移，视口里确实可能一个圆都不落笔（铺满视口的祖先停画、间隙里又没有更
+      // 细的圆）。地图软件在这种情况下会提示「此区域暂无详情」，这里照做。
+      if (!wash.length && !front.length) {
         ctx.globalAlpha = 1;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.font = '13px -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif';
+        ctx.font = '13px ' + FONT;
         ctx.fillStyle = 'rgba(126,135,154,0.9)';
         ctx.fillText('此处没有内容 · 向下滚回到更粗的层级，或双击空白处回到默认视角',
                      W / 2, (H - FOOTER_H) / 2);
@@ -339,6 +403,43 @@
       }
 
       if (hooks.onFrame) hooks.onFrame(stats);
+    }
+
+    // 内容视口（去掉 footer 那条）里离 (sx, sy) 最远的角的距离。屏幕半径超过它，
+    // 圆就铺满整屏：填充退成均匀色罩、界线退出屏幕外 —— 即地图瓦片的 maxzoom。
+    function farCornerDist(sx, sy) {
+      var Hc = H - FOOTER_H;
+      var dx = Math.max(sx, W - sx), dy = Math.max(sy, Hc - sy);
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // ① 容器底图：同色压暗填充 + 一条清晰界线。地图里的省就是这样 —— 面很淡，
+    //    界线很清楚，市画在它上面。
+    function drawWash(list) {
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i];
+        var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
+        // maxzoom 淡出：圆接近铺满视口时让它平滑退场（fade 1→0），否则停画那一
+        // 瞬会看到整屏亮度跳一下；也避免多层罩子叠成不透明色块
+        var dFar = farCornerDist(sx, sy);
+        var fade = 1 - smoothstep(dFar * 0.7, dFar, sr);
+        if (fade <= 0.004) continue;
+        var fa = fillAlphaOf(n) * fade;
+        if (fa > 0.004) {
+          ctx.globalAlpha = fa;
+          ctx.fillStyle = rgba(n._rgb, 1);
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalAlpha = clamp(fa * 1.2 + 0.18 * fade, 0, 0.8);
+        ctx.strokeStyle = rgba(n._brgb, 1);
+        ctx.lineWidth = sr > 60 ? 1.6 : 1;
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     }
 
     function drawEdges(alpha) {
@@ -367,6 +468,7 @@
       stats.edges = picks.size;
       if (!picks.size) return;
 
+      var zoom = cam.zoom;
       ctx.lineCap = 'round';
       picks.forEach(function (p) {
         var A = byId.get(p.sa), B = byId.get(p.sb);
@@ -398,8 +500,8 @@
         ctx.setLineDash([]);
 
         if (p.e.type === 'derives' || p.e.type === 'prerequisite') {
-          // 箭头贴着目标圆点边缘
-          var tr = (byId.get(p.sb)._r || 4) + 2;
+          // 箭头贴着目标圆的屏幕边缘
+          var tr = B._r * zoom + 2;
           var tx = off ? x2 - mx : dx, ty = off ? y2 - my : dy;
           var tl = Math.sqrt(tx * tx + ty * ty) || 1;
           tx /= tl; ty /= tl;
@@ -418,7 +520,7 @@
     }
 
     // 包含关系不画成线，但 hover / 选中时把祖先链点出来，弥补放大后失去的上下文
-    function drawChainHighlight(alpha) {
+    function drawChainHighlight() {
       var target = hoverId || selectedId;
       if (!target) return;
       var n = byId.get(target);
@@ -443,56 +545,68 @@
       ctx.globalAlpha = 1;
     }
 
-    function drawNodes(drawn, alpha) {
-      for (var i = 0; i < drawn.length; i++) {
-        var n = drawn[i];
+    // ③ 前景实心圆：当前尺度上最细的一层，不透明、带描边
+    function drawNodes(list, alpha) {
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i];
+        var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
         var a = alpha.get(n.id);
-        var sx = w2sx(n.x), sy = w2sy(n.y);
-        var r = n._r;
-
         ctx.globalAlpha = a;
         ctx.fillStyle = rgba(n._rgb, 1);
         ctx.beginPath();
-        ctx.arc(sx, sy, r, 0, 6.283185307);
+        ctx.arc(sx, sy, sr, 0, TAU);
         ctx.fill();
+        ctx.globalAlpha = clamp(a * 0.85, 0, 1);
+        ctx.strokeStyle = rgba(n._brgb, 1);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ③′ 强调环：掌握度 / 搜索命中 / hover-selected。单独一趟画在所有圆之上，
+    //      否则会被后画的兄弟圆盖掉一半。
+    function drawEmphasis(list, alpha) {
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i];
+        var isSel = n.id === selectedId, isHov = n.id === hoverId;
+        var isMatch = matchSet && matchSet.has(n.id);
+        if (!(isSel || isHov || isMatch || (n.kind === 'note' && n.mastery > 0))) continue;
+        var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
+        var a = alpha.get(n.id);
 
         // 掌握度用描边环表达：1..5 越粗越实，≤3 用虚线表示「还没吃透」
         if (n.kind === 'note' && n.mastery > 0) {
           var m = clamp(n.mastery, 1, 5);
+          ctx.globalAlpha = a;
           ctx.lineWidth = 1 + m * 0.75;
           ctx.strokeStyle = 'rgba(255,255,255,0.85)';
           if (m <= 3) ctx.setLineDash([2, 2]);
           ctx.beginPath();
-          ctx.arc(sx, sy, r + ctx.lineWidth * 0.7, 0, 6.283185307);
+          ctx.arc(sx, sy, sr + ctx.lineWidth * 0.7, 0, TAU);
           ctx.stroke();
           ctx.setLineDash([]);
         }
-
-        if (matchSet && matchSet.has(n.id)) {
+        if (isMatch) {
+          ctx.globalAlpha = a;
           ctx.lineWidth = 2;
           ctx.strokeStyle = 'rgba(227,179,65,0.95)';
           ctx.beginPath();
-          ctx.arc(sx, sy, r + 4, 0, 6.283185307);
+          ctx.arc(sx, sy, sr + 4, 0, TAU);
           ctx.stroke();
         }
-        if (n.id === selectedId || n.id === hoverId) {
-          ctx.lineWidth = n.id === selectedId ? 2 : 1.4;
-          ctx.strokeStyle = n.id === selectedId ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)';
+        if (isSel || isHov) {
+          ctx.globalAlpha = 1;
+          ctx.lineWidth = isSel ? 2 : 1.4;
+          ctx.strokeStyle = isSel ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)';
           ctx.beginPath();
-          ctx.arc(sx, sy, r + 2.5, 0, 6.283185307);
+          ctx.arc(sx, sy, sr + 2.5, 0, TAU);
           ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-
-        // 屏幕空间拾取网格：只收画得出来的
-        if (a > 0.05) {
-          var gx = Math.floor(sx / HIT_CELL), gy = Math.floor(sy / HIT_CELL);
-          var k = gx + ',' + gy;
-          var cell = hitGrid.get(k);
-          if (!cell) { cell = []; hitGrid.set(k, cell); }
-          cell.push(n);
         }
       }
+      ctx.globalAlpha = 1;
     }
 
     function drawLabels(drawn, alpha) {
@@ -531,17 +645,32 @@
       var occupied = new Map();
       var placed = 0;
       ctx.textBaseline = 'middle';
-      ctx.textAlign = 'left';
       for (var j = 0; j < cands.length; j++) {
         var m = cands[j];
-        var font = (m.depth <= 2 ? '600 13px ' : '12px ') +
-                   '-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif';
+        var font = (m.depth <= 2 ? '600 13px ' : '12px ') + FONT;
         var text = m.label || m.id;
         var wpx = measure(text, font) + 6;
         var hpx = 16;
-        var sx = w2sx(m.x) + m._r + 4, sy = w2sy(m.y);
-        var x0 = Math.floor(sx / LABEL_CELL), x1 = Math.floor((sx + wpx) / LABEL_CELL);
+        var sr = m._sr;
+        var cxs = w2sx(m.x), cys = w2sy(m.y);
+        // 大容器：标签居中压在圆内顶部（省名写在省的范围内，地图就这么干）；
+        // 小圆点：标签挂在右侧，免得盖住圆本身。
+        var inside = sr >= LABEL_INSIDE_PX;
+        var sx, sy, x0, x1;
+        if (inside) {
+          sx = cxs; sy = cys - sr + 10;
+          x0 = Math.floor((sx - wpx / 2) / LABEL_CELL);
+          x1 = Math.floor((sx + wpx / 2) / LABEL_CELL);
+        } else {
+          sx = cxs + sr + 4; sy = cys;
+          x0 = Math.floor(sx / LABEL_CELL);
+          x1 = Math.floor((sx + wpx) / LABEL_CELL);
+        }
         var y0 = Math.floor((sy - hpx / 2) / LABEL_CELL), y1 = Math.floor((sy + hpx / 2) / LABEL_CELL);
+        // 锚点落在屏幕外的标签（铺满视口停画的容器、圆心在屏外的大圆）既不该占
+        // LABEL_BUDGET，也不该进碰撞网格把真标签挤掉
+        var bx0 = inside ? sx - wpx / 2 : sx, bx1 = inside ? sx + wpx / 2 : sx + wpx;
+        if (bx1 < 0 || bx0 > W || sy + hpx / 2 < 0 || sy - hpx / 2 > H) continue;
         var rank = forcedRank(m);
         var clash = false;
         if (rank > 1) {
@@ -557,33 +686,31 @@
         }
         var al = clamp(alpha.get(m.id), 0, 1);
         ctx.font = font;
+        ctx.textAlign = inside ? 'center' : 'left';
         ctx.globalAlpha = al * 0.9;
         ctx.fillStyle = 'rgba(15,17,22,0.85)';
         ctx.fillText(text, sx + 1, sy + 1);
         ctx.globalAlpha = al;
         ctx.fillStyle = rank === 0 ? '#ffffff' : rank === 1 ? '#E3B341' : '#d6dbe4';
         ctx.fillText(text, sx, sy);
-        ctx.globalAlpha = 1;
         placed++;
       }
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'left';
       stats.labels = placed;
     }
 
+    // 拾取：线性扫上一帧真正画出来的圆，取「包含该点的最小圆」。
+    // 不能用固定边长的屏幕网格 —— packing 下圆的屏幕半径从 18px 到几百 px，
+    // 大圆的中心常常离鼠标好几个格子远。每帧至多几百个候选，扫一遍比建网格便宜。
     function hitTest(sx, sy) {
-      var gx = Math.floor(sx / HIT_CELL), gy = Math.floor(sy / HIT_CELL);
-      var best = null, bestD = 1e9;
-      for (var i = -1; i <= 1; i++) {
-        for (var j = -1; j <= 1; j++) {
-          var cell = hitGrid.get((gx + i) + ',' + (gy + j));
-          if (!cell) continue;
-          for (var k = 0; k < cell.length; k++) {
-            var n = cell[k];
-            var dx = w2sx(n.x) - sx, dy = w2sy(n.y) - sy;
-            var d = Math.sqrt(dx * dx + dy * dy);
-            var rr = n._r + 4;
-            if (d <= rr && d < bestD) { bestD = d; best = n; }
-          }
-        }
+      var best = null, bestR = Infinity;
+      for (var i = 0; i < lastDrawn.length; i++) {
+        var n = lastDrawn[i];
+        var dx = w2sx(n.x) - sx, dy = w2sy(n.y) - sy;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        var rr = Math.max(n._sr, 4) + 3;
+        if (d <= rr && rr < bestR) { bestR = rr; best = n; }
       }
       return best;
     }
@@ -592,7 +719,9 @@
       var n = byId.get(id);
       if (!n) return;
       mult = mult || 1.25;
-      var z = clamp(Math.max(cam.zoom, n._mz * mult), zMin, zMax);
+      // 两个下限：它自己得浮现（_mz × mult），而且得占满大半屏（0.7 × fit / r）——
+      // 后者是新几何带来的：一个 r 很大的文件夹光「浮现」远不够看清它。
+      var z = clamp(Math.max(cam.zoom, n._mz * mult, 0.7 * fitRadius() / n._r), zMin, zMax);
       tweenTo({ zoom: z, panX: W / 2 - n.x * z, panY: (H - FOOTER_H) / 2 - n.y * z },
               ms == null ? TRANSITION : ms);
     }
@@ -700,7 +829,8 @@
       hitTest: hitTest,
       enterAt: enterAt,
       alphaOf: function (id) { var n = byId.get(id); return n ? alphaOf(n) : 0; },
-      revealOf: function (id) { var n = byId.get(id); return n ? n.reveal : 0; },
+      // 兼容别名：payload 字段 reveal 已改名 r（世界半径）
+      revealOf: function (id) { var n = byId.get(id); return n ? n.r : 0; },
       minzoomOf: function (id) { var n = byId.get(id); return n ? n._mz : 0; },
       descOf: function (id) { var n = byId.get(id); return n ? n._d : 0; },
       visibleLayerOf: function (id) { var n = byId.get(id); return n ? visibleLayer(n) : 0; },
