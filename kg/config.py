@@ -57,6 +57,9 @@ DEFAULTS: dict = {
         "weak_edge_min_count": 2,
         "focus_edge_dim": 0.07,
         "hover_edge_dim": 0.75,
+        "edge_trim_clearance": 2,
+        "edge_marker_min_len": 20,
+        "edge_marker_tint": 0.55,
     },
     "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
@@ -135,6 +138,12 @@ def _validate(cfg: dict):
         v = lod.get(key)
         if not isinstance(v, (int, float)) or not 0 <= v <= 1:
             _fail(f"lod.{key} 必须在 [0, 1] 之间（0 = 完全不画无关连线，1 = 不压暗）")
+    for key in ("edge_trim_clearance", "edge_marker_min_len"):
+        v = lod.get(key)
+        if not isinstance(v, (int, float)) or v < 0:
+            _fail(f"lod.{key} 不能为负（它是屏幕 px；edge_marker_min_len 填 0 = 不做长度守卫）")
+    if not isinstance(lod.get("edge_marker_tint"), (int, float)) or not 0 <= lod["edge_marker_tint"] <= 1:
+        _fail("lod.edge_marker_tint 必须在 [0, 1] 之间（0 = 端点标记与连线同色，1 = 纯浅灰）")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")

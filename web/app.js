@@ -547,6 +547,7 @@
       shownEdges: R.stats.edges,
       focusEdges: R.stats.focusEdges,
       focusNeighbors: R.stats.focusNeighbors,
+      marks: R.stats.marks,
       shownLabels: R.stats.labels,
       selected: R.selected,
       hovered: R.hover,

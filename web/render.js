@@ -98,6 +98,13 @@
     // 会被 || 当成假值吃掉。
     var FOCUS_DIM = LOD.focus_edge_dim == null ? 0.07 : LOD.focus_edge_dim;
     var HOVER_DIM = LOD.hover_edge_dim == null ? 0.75 : LOD.hover_edge_dim;
+    // 端点标记。TRIM 是连线在两端圆边界处截断后留的间隙；MARK_MIN 是「短到不画标记」
+    // 的屏幕长度门槛；TINT 是标记向浅色提亮的比例 —— 必须提亮，因为 derives 的边色
+    // 和 Science and Tech 的节点色是同一个 hex，同色标记落在同色圆边上等于隐形。
+    var TRIM = LOD.edge_trim_clearance == null ? 2 : LOD.edge_trim_clearance;
+    var MARK_MIN = LOD.edge_marker_min_len == null ? 20 : LOD.edge_marker_min_len;
+    var MARK_TINT = LOD.edge_marker_tint == null ? 0.55 : LOD.edge_marker_tint;
+    var MARK_LIGHT = hexToRgb('#d6dbe4');
     var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
@@ -109,6 +116,16 @@
 
     var EDGE_RGB = {};
     Object.keys(THEME.edges || {}).forEach(function (k) { EDGE_RGB[k] = hexToRgb(THEME.edges[k]); });
+    // 端点标记的颜色表：边色向浅色混合 MARK_TINT。构建期算一次，绘制循环里只查表
+    var MARK_RGB = {};
+    Object.keys(EDGE_RGB).forEach(function (k) {
+      var c = EDGE_RGB[k];
+      MARK_RGB[k] = [
+        Math.round(c[0] + (MARK_LIGHT[0] - c[0]) * MARK_TINT),
+        Math.round(c[1] + (MARK_LIGHT[1] - c[1]) * MARK_TINT),
+        Math.round(c[2] + (MARK_LIGHT[2] - c[2]) * MARK_TINT)
+      ];
+    });
     // 邻居环的颜色。跟着 derives 的边色走（= CSS --accent），和白色的选中环同轨但
     // 更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
     // 命中环撞色。
@@ -212,11 +229,16 @@
     var hoverId = null, selectedId = null;
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
-    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0 };
+    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0 };
     // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
     // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
     // 只用于绘制与计数，不落盘、不参与布局。
     var hotNeighbors = new Set();
+    // 本帧要画的端点标记（源端圆点 / 目标端箭头）。drawEdges 只往这里塞任务不落笔：
+    // draw() 里 drawNodes(front) 排在 drawEdges 之后，就地画的话标记会被紧贴的邻圆
+    // 整个盖掉（packing 布局里圆是相切的）。真正落笔在 drawEdgeMarkers。
+    // k: 0 = 圆点，1 = 箭头；ux/uy = 箭头指向的单位向量；s = 尺寸；c/a = 颜色与不透明度
+    var markJobs = [];
     var lastDrawn = [];
     var textW = new Map();
     var ctx = canvas.getContext('2d');
@@ -371,9 +393,10 @@
     }
 
     // ── 绘制 ────────────────────────────────────────────────────────────
-    // 四趟：① 容器底图 → ② 语义边 → ③ 前景实心圆 → ④ 标签。
+    // 五趟：① 容器底图 → ② 语义边 → ③ 前景实心圆 → ④ 端点标记 → ⑤ 标签。
     // 边夹在底图和实心圆之间：压在底图之上才看得见，被实心圆盖住又正好形成
-    // 「线连到圆边上」的观感。强调环（掌握度/命中/选中）单独一趟，永远在最上面。
+    // 「线连到圆边上」的观感。标记必须排在实心圆之后（否则被相切邻圆盖掉）、
+    // 强调环之前（让选中白环压过箭头）。强调环（掌握度/命中/选中）单独一趟，永远在最上面。
     function draw() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#0f1116';
@@ -418,6 +441,7 @@
       drawEdges(alpha);
       drawChainHighlight();
       drawNodes(front, alpha);
+      drawEdgeMarkers();
       drawEmphasis(drawn, alpha);
       drawLabels(drawn, alpha);
 
@@ -484,6 +508,7 @@
       // 多条原始边可能塌到同一条代表边上 —— 用 Map 去重，顺便把 count 取最大。
       hotNeighbors.clear();
       stats.focusEdges = 0;
+      markJobs.length = 0;
       var selN = byId.get(selectedId), hovN = byId.get(hoverId);
       var picks = new Map();
       for (var i = 0; i < SEM.length; i++) {
@@ -543,7 +568,8 @@
         var hot = selN ? p.hs : p.hh;
         var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
         if (p.hs) stats.focusEdges++;
-        ctx.globalAlpha = clamp(p.a * dim, 0, 1);
+        var ea = clamp(p.a * dim, 0, 1);
+        ctx.globalAlpha = ea;
         ctx.strokeStyle = rgba(rgb, 1);
         ctx.lineWidth = hot ? lw + 0.8 : lw;
 
@@ -556,34 +582,87 @@
         var off = bidir ? 0.12 * dist * sign : 0;
         var mx = cx - dy / dist * off, my = cy + dx / dist * off;
 
-        ctx.setLineDash(p.e.type === 'contrast' ? [5, 4] : []);
-        ctx.beginPath();
-        if (off) { ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); }
-        else { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
-        ctx.stroke();
-        ctx.setLineDash([]);
+        // ── 两端截断 ────────────────────────────────────────────────────
+        // 圆心到圆心画的话，线的两头都插进圆里、又和圆同色，看不出「从哪个圆出发、
+        // 到哪个圆结束」。改成沿切向各退让「屏幕半径 + TRIM」，让线停在圆的边缘外侧。
+        // 退让方向：弯曲边取「圆心 → 控制点」，直边取「圆心 → 圆心」，取错标记会歪。
+        var ra = A._r * zoom + TRIM, rb = B._r * zoom + TRIM;
+        var sdx = off ? mx - x1 : dx, sdy = off ? my - y1 : dy;
+        var tdx = off ? x2 - mx : dx, tdy = off ? y2 - my : dy;
+        var sl = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
+        var tl = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+        sdx /= sl; sdy /= sl; tdx /= tl; tdy /= tl;
+        var ex1 = x1 + sdx * ra, ey1 = y1 + sdy * ra;
+        var ex2 = x2 - tdx * rb, ey2 = y2 - tdy * rb;
+        // 两圆贴死（或截断过了头）→ 屏幕上没有可见长度，整条不落笔。硬画的话
+        // moveTo/lineTo 会得到一条方向反掉的短线段，比不画更乱。
+        var gx = ex2 - ex1, gy = ey2 - ey1;
+        var glen = Math.sqrt(gx * gx + gy * gy);
 
-        if (p.e.type === 'derives' || p.e.type === 'prerequisite') {
-          // 箭头贴着目标圆的屏幕边缘
-          var tr = B._r * zoom + 2;
-          var tx = off ? x2 - mx : dx, ty = off ? y2 - my : dy;
-          var tl = Math.sqrt(tx * tx + ty * ty) || 1;
-          tx /= tl; ty /= tl;
-          var ax = x2 - tx * tr, ay = y2 - ty * tr;
-          var sz = clamp(3 + lw, 4, 8);
-          ctx.fillStyle = rgba(rgb, 1);
+        if (glen >= 0.5) {
+          ctx.setLineDash(p.e.type === 'contrast' ? [5, 4] : []);
           ctx.beginPath();
-          ctx.moveTo(ax, ay);
-          ctx.lineTo(ax - tx * sz - ty * sz * 0.5, ay - ty * sz + tx * sz * 0.5);
-          ctx.lineTo(ax - tx * sz + ty * sz * 0.5, ay - ty * sz - tx * sz * 0.5);
-          ctx.closePath();
-          ctx.fill();
+          ctx.moveTo(ex1, ey1);
+          if (off) ctx.quadraticCurveTo(mx, my, ex2, ey2);
+          else ctx.lineTo(ex2, ey2);
+          ctx.stroke();
+          ctx.setLineDash([]);
         }
+
+        // ── 端点标记任务（读作「• 出 ——— ▶ 入」）─────────────────────────
+        // 短于 MARK_MIN 就不画标记：密集簇里几十个小箭头糊成噪点，比没有更难读。
+        if (glen < MARK_MIN) return;
+        // 热边设 0.75 的地板值 —— 「我选中的链接」方向必须读得清；冷边完全继承连线
+        // 自己的 alpha，于是焦点模式下被压到 7% 的无关边不会冒出标记来添乱。
+        var ma = hot ? Math.max(ea, 0.75) : ea;
+        if (ma < 0.1) return;
+        var mrgb = MARK_RGB[p.e.type] || MARK_RGB.derives || rgb;
+        var dot = clamp(1.6 + lw * 0.5, 2, 4);
+        // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml
+        // 的字段说明），两端都只画点。id 是这个标记**附着的节点**，让标记清单自描述
+        // （控制台里能直接问「这个点贴在谁身上」，自动化验证也据此量几何）。
+        if (p.e.type === 'derives' || p.e.type === 'prerequisite') {
+          markJobs.push({ k: 1, x: ex2, y: ey2, ux: tdx, uy: tdy, id: B.id,
+                          s: clamp(5 + lw * 1.6, 7, 14), c: mrgb, a: ma });
+        } else {
+          markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: B.id,
+                          s: dot, c: mrgb, a: ma });
+        }
+        markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: A.id,
+                        s: dot, c: mrgb, a: ma });
       });
       ctx.globalAlpha = 1;
     }
 
-    // 包含关系不画成线，但 hover / 选中时把祖先链点出来，弥补放大后失去的上下文
+    // 端点标记落笔。单独一趟，排在 drawNodes 之后（理由见 markJobs 的声明处），
+    // 排在 drawEmphasis 之前 —— 让选中白环 / 邻居蓝环仍然压过标记，延续
+    // 「哪个是我选的」永远一目了然的优先级。
+    function drawEdgeMarkers() {
+      stats.marks = markJobs.length;
+      if (!markJobs.length) return;
+      for (var i = 0; i < markJobs.length; i++) {
+        var j = markJobs[i];
+        ctx.globalAlpha = j.a;
+        ctx.fillStyle = rgba(j.c, 1);
+        ctx.beginPath();
+        if (j.k) {
+          var s = j.s, ux = j.ux, uy = j.uy;
+          ctx.moveTo(j.x, j.y);
+          ctx.lineTo(j.x - ux * s - uy * s * 0.5, j.y - uy * s + ux * s * 0.5);
+          ctx.lineTo(j.x - ux * s + uy * s * 0.5, j.y - uy * s - ux * s * 0.5);
+          ctx.closePath();
+        } else {
+          ctx.arc(j.x, j.y, j.s, 0, TAU);
+        }
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 包含关系不画成线，但 hover / 选中时把祖先链点出来，弥补放大后失去的上下文。
+    // 样式刻意和链接线区分开：链接是**实线 + 端点标记**，这条是**灰色点线**、无端点
+    // 标记、也不带方向 —— 它表达的是「你在哪个文件夹/笔记里」（树），不是「谁链接
+    // 谁」（图）。两者都画成线，就一定会被误读成同一种关系。
     function drawChainHighlight() {
       var target = hoverId || selectedId;
       if (!target) return;
@@ -599,8 +678,10 @@
       if (pts.length < 2) return;
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = 'rgba(214,219,228,1)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.2;
+      ctx.lineCap = 'round';
+      // [1,4] + round 线帽 = 一串圆点。和 contrast 链接边的 [5,4] 长划虚线明显不同
+      ctx.setLineDash([1, 4]);
       ctx.beginPath();
       ctx.moveTo(pts[0][0], pts[0][1]);
       for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
@@ -917,6 +998,9 @@
       get zHome() { return homeZoom(); },
       get homeLayer() { return homeLayer(); },
       stats: stats,
+      // 端点标记的落笔清单（每帧在 drawEdges 里重建）。暴露出来只为自动化验证能直接
+      // 量「标记有没有落在圆外」这类几何不变式，不必在测试里复刻截断公式。
+      markJobs: markJobs,
       NODES: NODES, byId: byId, SEM: SEM,
       resize: resize,
       invalidate: invalidate,

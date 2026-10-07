@@ -178,7 +178,8 @@
     <div class="row"><span class="sw" style="background:#8B949E"></span>前置：source 是 target 的前置</div>
     <div class="row"><span class="sw" style="background:#4C8DFF"></span>引用：source 引用了 target</div>
     <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
-    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dashed rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只画出祖先链</div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg>链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</div>
+    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</div>
   </section>
   <section>
     <h4>节点（一律实心圆）</h4>

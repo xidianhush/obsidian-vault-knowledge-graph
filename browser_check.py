@@ -372,6 +372,13 @@ with sync_playwright() as p:
     check("no focus stats while nothing is selected",
           st0["focusEdges"] == 0 and st0["focusNeighbors"] == 0,
           "focusEdges=%s focusNeighbors=%s" % (st0["focusEdges"], st0["focusNeighbors"]))
+    # 每条边最多两个端点标记（源端一个 + 目标端一个），所以 marks <= 2*edges 是硬上界。
+    # 下界 marks > 0 才是这轮的重点：home 视图里必须有标记，否则「看不出线的头尾」
+    # 这个原始痛点根本没被解决。
+    check("endpoint markers are drawn in the home view", st0["marks"] > 0, str(st0["marks"]))
+    check("markers never exceed two per drawn edge",
+          st0["marks"] <= 2 * base_edges,
+          "%d marks / %d edges" % (st0["marks"], base_edges))
 
     # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
     # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
@@ -421,6 +428,13 @@ with sync_playwright() as p:
               s["focusEdges"] == tgt["rel"], "%d vs %d" % (s["focusEdges"], tgt["rel"]))
         check("focus rings at least one neighbour", s["focusNeighbors"] > 0,
               str(s["focusNeighbors"]))
+        # 这是本节最锋利的一条断言：上界用 focusEdges（相关边）而不是 shownEdges（全部边）。
+        # 无关边被压到 focus_edge_dim=0.07，标记的 alpha 门槛是 0.1 —— 0.07 过不去，
+        # 于是冷边一个标记都不该冒出来。上界写成 2*shownEdges 就退化成永真式了。
+        check("markers appear on related edges only (cold 7% edges stay bare)",
+              0 < s["marks"] <= 2 * s["focusEdges"],
+              "%d marks / %d related edges (%d drawn in total)"
+              % (s["marks"], s["focusEdges"], s["shownEdges"]))
         shot("09_focus")
         page.keyboard.press("Escape")
         page.wait_for_timeout(400)
@@ -435,6 +449,76 @@ with sync_playwright() as p:
     else:
         warns.append("no on-screen node carries a semantic edge -> focus test skipped")
         print("    !! nothing to focus on; skipping")
+
+    print("\n=== 7c. endpoint markers: geometry + config wiring ===")
+    # 端点标记的全部意义是「一眼看出线从哪个圆出发、进哪个圆」。所以这里直接量几何：
+    # 每个标记到它所附着圆心的屏幕距离，必须 >= 该圆的屏幕半径（留 TRIM 的间隙）。
+    # 截断公式一旦写反（ra 用了减号、或切向取反），标记就会掉进圆里被节点整个盖住 ——
+    # 那正是这轮要修的原始 bug，值得一条独立断言钉住。
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(900)
+    geo = page.evaluate("""() => {
+        const R = window.KG.renderer;
+        R.selected = null; R.hover = null; R.draw();
+        const cam = R.camera, z = cam.zoom;
+        const lod = (window.KG.data.meta || {}).lod || {};
+        const trim = lod.edge_trim_clearance;
+        const jobs = R.markJobs;
+        let inside = 0, checked = 0, arrows = 0, dots = 0, minGap = 1e9, maxGap = -1e9;
+        for (const j of jobs) {
+            if (j.k === 1) arrows++; else dots++;
+            // 标记自带它附着的节点 id，直接量那一个圆 —— 不用「找最近圆心」那种
+            // 猜法（packing 布局里大祖先圆的圆心常常比小圆自己的更近，会误判）。
+            const n = R.byId.get(j.id);
+            if (!n || !(n._r > 0)) continue;
+            checked++;
+            const dx = j.x - (n.x * z + cam.panX), dy = j.y - (n.y * z + cam.panY);
+            const gap = Math.sqrt(dx * dx + dy * dy) - n._r * z;  // 正 = 圆外
+            if (gap < minGap) minGap = gap;
+            if (gap > maxGap) maxGap = gap;
+            if (gap < -0.5) inside++;
+        }
+        return {marks: jobs.length, checked: checked, inside: inside, arrows: arrows,
+                dots: dots, minGap: Math.round(minGap * 100) / 100,
+                maxGap: Math.round(maxGap * 100) / 100, trim: trim,
+                minLen: lod.edge_marker_min_len, tint: lod.edge_marker_tint,
+                zoom: Math.round(z * 10000) / 10000};
+    }""")
+    print("    ", json.dumps(geo, ensure_ascii=False))
+    check("three marker knobs reached META.lod through build.py",
+          geo["trim"] is not None and geo["minLen"] is not None and geo["tint"] is not None,
+          "trim=%s minLen=%s tint=%s" % (geo["trim"], geo["minLen"], geo["tint"]))
+    check("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
+    check("every marker resolves to the node it is attached to",
+          geo["checked"] == geo["marks"], "%d of %d" % (geo["checked"], geo["marks"]))
+    check("no marker is buried inside its node circle",
+          geo["inside"] == 0, "%d of %d inside" % (geo["inside"], geo["checked"]))
+    # 截断把端点放在「屏幕半径 + TRIM」处，所以间隙应当**恒等于** TRIM（弯边的
+    # 退让方向取圆心→控制点，与弦方向略有夹角，会多出零点几 px 的余量）。
+    check("markers sit just outside the circle, by the configured clearance",
+          geo["minGap"] >= geo["trim"] - 0.75 and geo["maxGap"] <= geo["trim"] + 2.0,
+          "gap in [%s, %s] px vs trim=%s px" % (geo["minGap"], geo["maxGap"], geo["trim"]))
+    # 有向边（derives / prerequisite）目标端画箭头，源端画点；无向边两端都是点。
+    # 本库当前 92 条 derives、0 条 contrast —— 所以 home 视图里两种标记都该有。
+    check("both arrow heads and source dots are produced",
+          geo["arrows"] > 0 and geo["dots"] > 0,
+          "%d arrows / %d dots" % (geo["arrows"], geo["dots"]))
+
+    # 深入一层再看：MARK_MIN 守卫在小尺度下应该开始生效（短边不画标记），
+    # 于是 marks 会掉到 2*edges 以下。这条钉住「密集簇里不糊噪点」的设计意图。
+    page.evaluate("() => window.KG.renderer.zoomToDepth(6)")
+    page.wait_for_timeout(1200)
+    deep = page.evaluate(STATE)
+    print("    depth6: zoom=%.4f shownEdges=%d marks=%d"
+          % (deep["zoom"], deep["shownEdges"], deep["marks"]))
+    check("deep zoom still draws some markers", deep["marks"] > 0, str(deep["marks"]))
+    check("short edges are skipped by the min-length guard",
+          deep["marks"] < 2 * deep["shownEdges"],
+          "%d marks < %d (2 x %d edges)" % (deep["marks"], 2 * deep["shownEdges"],
+                                            deep["shownEdges"]))
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(900)
+
     print("\n=== 8. search ===")
     page.fill("#search", "微分方程")
     page.keyboard.press("Enter")
