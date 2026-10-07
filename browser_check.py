@@ -358,6 +358,83 @@ with sync_playwright() as p:
         warns.append("no node found under scan -> click test skipped")
         print("    !! no node hit; skipping")
 
+    print("\n=== 7b. focus mode: selecting an element filters edges + rings neighbours ===")
+    # 焦点模式的判据全在渲染器里（isFocusSide / hotNeighbors）。这一节只负责三件事：
+    # ① 用真实相机找一个**确实带语义边**的靶子 ② 走真实 page.mouse.click 验端到端
+    # ③ 钉住「无关连线是压暗而不是删除」这个设计决定（shownEdges 必须不变）。
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(900)
+    st0 = page.evaluate(STATE)
+    base_edges = st0["shownEdges"]
+    print("    home baseline: shownNodes=%d shownEdges=%d zoom=%.4f"
+          % (st0["shownNodes"], base_edges, st0["zoom"]))
+    check("focus test starts from a view that has edges", base_edges > 0, str(base_edges))
+    check("no focus stats while nothing is selected",
+          st0["focusEdges"] == 0 and st0["focusNeighbors"] == 0,
+          "focusEdges=%s focusNeighbors=%s" % (st0["focusEdges"], st0["focusNeighbors"]))
+
+    # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
+    # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
+    probe = page.evaluate("""() => {
+        const R = window.KG.renderer; const [W, H] = R.size();
+        const seen = new Set(); const out = [];
+        for (let y = H * 0.15; y < H * 0.85; y += 6) {
+            for (let x = W * 0.10; x < W * 0.90; x += 6) {
+                const n = R.hitTest(x, y);
+                if (!n || seen.has(n.id)) continue;
+                seen.add(n.id);
+                R.selected = n.id; R.draw();   // setter 只 invalidate，draw() 才立刻出真值
+                out.push({id: n.id, x: x, y: y, depth: n.depth, sr: Math.round(n._sr),
+                          rel: R.stats.focusEdges, nb: R.stats.focusNeighbors});
+            }
+        }
+        R.selected = null; R.draw();
+        return out;
+    }""")
+    print("    probed %d distinct on-screen nodes; %d of them carry a related edge"
+          % (len(probe), len([c for c in probe if c["rel"] > 0])))
+    # rel < base_edges 才看得出「无关的被压掉了」；nb > 0 才验得到邻居环
+    cand = [c for c in probe if 0 < c["rel"] < base_edges and c["nb"] > 0]
+    if not cand:
+        cand = [c for c in probe if 0 < c["rel"] < base_edges]
+        if cand:
+            warns.append("no on-screen node has an *external* semantic edge -> "
+                         "neighbour-ring assertion weakened")
+    if cand:
+        tgt = max(cand, key=lambda c: (c["nb"], -c["sr"]))
+        print("    target %s (depth=%d, sr=%dpx) rel=%d/%d nb=%d"
+              % (tgt["id"], tgt["depth"], tgt["sr"], tgt["rel"], base_edges, tgt["nb"]))
+        page.mouse.click(tgt["x"], tgt["y"])
+        page.wait_for_timeout(700)
+        s = page.evaluate(STATE)
+        print("    ", json.dumps({k: s[k] for k in
+                                 ("selected", "shownEdges", "focusEdges", "focusNeighbors")},
+                                ensure_ascii=False))
+        check("click selected the probed node", s["selected"] == tgt["id"],
+              "%s vs %s" % (s["selected"], tgt["id"]))
+        check("focus keeps every edge on canvas (dim, not delete)",
+              s["shownEdges"] == base_edges, "%d vs base %d" % (s["shownEdges"], base_edges))
+        check("focus marks some (not all) edges related",
+              0 < s["focusEdges"] < s["shownEdges"],
+              "%d of %d" % (s["focusEdges"], s["shownEdges"]))
+        check("real click agrees with the programmatic probe",
+              s["focusEdges"] == tgt["rel"], "%d vs %d" % (s["focusEdges"], tgt["rel"]))
+        check("focus rings at least one neighbour", s["focusNeighbors"] > 0,
+              str(s["focusNeighbors"]))
+        shot("09_focus")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
+        e = page.evaluate(STATE)
+        check("Escape drops the focus filter",
+              e["selected"] is None and e["focusEdges"] == 0 and e["focusNeighbors"] == 0,
+              json.dumps({k: e[k] for k in ("selected", "focusEdges", "focusNeighbors")},
+                         ensure_ascii=False))
+        check("Escape restores the full edge count", e["shownEdges"] == base_edges,
+              "%d vs %d" % (e["shownEdges"], base_edges))
+        shot("10_focus_off")
+    else:
+        warns.append("no on-screen node carries a semantic edge -> focus test skipped")
+        print("    !! nothing to focus on; skipping")
     print("\n=== 8. search ===")
     page.fill("#search", "微分方程")
     page.keyboard.press("Enter")

@@ -133,7 +133,13 @@
 
   let lastStats = '';
   function updateStats(stats) {
-    const text = '节点 ' + stats.nodes + ' · 关系 ' + stats.edges + ' · 标签 ' + stats.labels;
+    // 选中一个元素时把焦点读数亮出来：「相关的有几条 / 一共几条 · 相邻几个元素」。
+    // 没选中、或全都相关时保持原样 —— 读数不该在无事发生时也跟着变。
+    const rel = stats.focusEdges;
+    const edgeTxt = (R.selected && rel != null && rel < stats.edges)
+      ? '关系 ' + rel + '/' + stats.edges + ' · 相邻 ' + (stats.focusNeighbors || 0)
+      : '关系 ' + stats.edges;
+    const text = '节点 ' + stats.nodes + ' · ' + edgeTxt + ' · 标签 ' + stats.labels;
     if (text === lastStats) return;
     lastStats = text;
     $('footer').innerHTML = text +
@@ -539,6 +545,8 @@
       level: R.enterAt(R.camera.zoom),
       shownNodes: R.stats.nodes,
       shownEdges: R.stats.edges,
+      focusEdges: R.stats.focusEdges,
+      focusNeighbors: R.stats.focusNeighbors,
       shownLabels: R.stats.labels,
       selected: R.selected,
       hovered: R.hover,

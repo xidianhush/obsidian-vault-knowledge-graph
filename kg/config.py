@@ -50,7 +50,14 @@ DEFAULTS: dict = {
         "norm_root_radius": 1000.0,
         "start_angle": -90,
     },
-    "lod": {"min_px": 18, "label_alpha": 0.55, "fade_span": 1.35, "weak_edge_min_count": 2},
+    "lod": {
+        "min_px": 18,
+        "label_alpha": 0.55,
+        "fade_span": 1.35,
+        "weak_edge_min_count": 2,
+        "focus_edge_dim": 0.07,
+        "hover_edge_dim": 0.75,
+    },
     "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
@@ -124,6 +131,10 @@ def _validate(cfg: dict):
         _fail("lod.label_alpha 必须在 (0, 1] 之间（参与标签竞争所需的淡入进度）")
     if not isinstance(lod.get("fade_span"), (int, float)) or not lod["fade_span"] >= 1:
         _fail("lod.fade_span 必须是 ≥1 的倍率（1 = 硬切，不淡入）")
+    for key in ("focus_edge_dim", "hover_edge_dim"):
+        v = lod.get(key)
+        if not isinstance(v, (int, float)) or not 0 <= v <= 1:
+            _fail(f"lod.{key} 必须在 [0, 1] 之间（0 = 完全不画无关连线，1 = 不压暗）")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")

@@ -32,7 +32,7 @@ python build.py all       # scan + suggest + build
 
 ```
 python build.py verify      # 数据侧断言
-python browser_check.py     # 浏览器侧 53 项断言（Playwright + 本机 Chrome，自动截图）
+python browser_check.py     # 浏览器侧 62 项断言（Playwright + 本机 Chrome，自动截图）
 ```
 
 ---
@@ -140,6 +140,13 @@ schtasks /Create /TN "Knowledge Graph Auto Sync" /SC MINUTE /MO 30 /ST 00:07 /RL
   「各自祖先之间的一条边」，**线宽 = 被合并的原始链接数**。这就是跨层级链接的处理方式（§4）。
 - **包含关系不画成网状线**：嵌套圆布局本身就在表达包含。hover 或选中某节点时，
   才用**虚线**画出它的祖先链，并在侧栏顶部给出面包屑。
+- **焦点模式：选中即过滤连线。** 全部连线一起画太乱，所以单击选中一个节点后进入焦点模式：
+  只保留与它**或它内部子元素**相关的连线（链接出去、链接进来都算）并加粗，
+  其余连线压暗到 `lod.focus_edge_dim`（默认 7%，改成 0 即彻底不画）；
+  与它相连的其他元素圆周亮**蓝色光环**（`#4c8dff`，与搜索命中的黄环区分）。
+  无关节点**不**压暗也不隐藏 —— 圆是底图（地图上的「省」），压暗会摧毁方位感；
+  这也是与 Obsidian graph view / Cytoscape 常见配方的有意分歧。
+  `Esc` / 单击空白 / 双击空白退出焦点模式、恢复全部连线。
 
 ---
 
@@ -227,13 +234,13 @@ alpha   = smoothstep(minzoom/fade_span, minzoom, zoom)   # 在 fade_span 倍率�
 | 顶栏层级胶囊 1..10 | 跳到指定层 |
 | 拖拽 | 平移 |
 | 双击空白处 | 回到 home 视角（depth 1） |
-| 单击节点 | 右侧详情栏：面包屑、掌握度、入边、出边、标题清单 |
+| 单击节点 | 右侧详情栏：面包屑、掌握度、入边、出边、标题清单；**同时进入焦点模式**（§3：只留下与它相关的连线并加粗，其余压暗到近乎消失，相连元素亮蓝环） |
 | 悬停 | 气泡（标题、所属、掌握度、摘要）+ 画祖先链虚线 |
 | 搜索框 | 命中节点加黄色光晕，点结果直达并换层 |
 | 学科 / 掌握度下拉 | 过滤 |
 | 标签下拉 | 自动（默认，按屏幕密度竞争）／全部显示／只显示选中 |
 | 侧栏「在 Obsidian 打开」 | `obsidian://open?…` 跳回 Obsidian |
-| `Esc` | 取消选中 |
+| `Esc` | 取消选中并恢复全部连线 |
 
 **「我在笔记里加了个标题，会自动出现在图里吗？」会。** 标题层是每次构建时从正文实时解析的。
 重建方式见 §2。
@@ -298,7 +305,7 @@ knowledge-graph/
 ├── config.yaml            唯一维护入口：公开范围/缩放/权重/布局/LOD/配色
 ├── build.py               CLI：scan | suggest | build | verify | watch | all
 ├── verify.py              数据侧自动校验（断言式，无测试框架）
-├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，53 项断言 + 截图）
+├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，62 项断言 + 截图）
 ├── sync-graph.ps1         计划任务包装脚本（防重入 + UTF-8 + 日志裁剪）
 ├── kg/                    数据管道
 │   ├── config.py          配置加载与校验（非法配置给中文报错）
@@ -311,8 +318,8 @@ knowledge-graph/
 │   └── emit.py            输出 graph.json 与自包含单文件 HTML
 ├── web/                   前端源码（构建时全部内联进单文件）
 │   ├── template.html      骨架 + CSS（顶栏 / 侧栏 / 画布 / footer）
-│   ├── app.js             状态机、搜索过滤、侧栏、层级胶囊、事件绑定（551 行）
-│   └── render.js          Canvas2D 渲染器：相机、淡入淡出、四趟绘制、聚合边、拾取（882 行）
+│   ├── app.js             状态机、搜索过滤、侧栏、层级胶囊、事件绑定（559 行）
+│   └── render.js          Canvas2D 渲染器：相机、淡入淡出、四趟绘制、聚合边、拾取（964 行）
 ├── annotations.yaml       你的手工标注
 ├── candidates.yaml        候选边（待审核）
 ├── HANDOFF.md             交接文档：现状、实测数据、坑、待办、调参地图
@@ -408,12 +415,13 @@ knowledge-graph/
   聚合边在各层的端点都是该层可见节点
 - 标题父子指针完整；每篇笔记都有对应标题列表
 
-### `python browser_check.py`（浏览器侧，53 项断言）
+### `python browser_check.py`（浏览器侧，62 项断言）
 
 Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`，无需起服务器。
-覆盖：初始视角、逐层缩放扫描（节点/边/标签数）、标签三种模式、搜索命中、学科过滤、
-双击空白回 home、帧率（实测 58~63 fps）、20 格滚轮耗时（实测 1092 ms）、空白区兜底提示、
-侧栏详情、hover 气泡与图例、无 console error / pageerror。
+覆盖：初始视角、逐层缩放扫描（节点/边/标签数）、标签三种模式、**焦点模式**（选中后
+相关连线数 / 邻居环数 / Esc 归零——直接驱动真实渲染器读 `stats`，不复刻判据）、
+搜索命中、学科过滤、双击空白回 home、帧率（实测 58~63 fps）、20 格滚轮耗时（实测 1092 ms）、
+空白区兜底提示、侧栏详情、hover 气泡与图例、无 console error / pageerror。
 截图落在 `%TEMP%\kg_*.png`（可用 `KG_SHOT_DIR` 改），**改完视觉要自己看图**。
 
 ### 仍需在浏览器里人工确认

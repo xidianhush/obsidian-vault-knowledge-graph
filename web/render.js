@@ -94,6 +94,10 @@
     var LABEL_A = LOD.label_alpha == null ? 0.55 : LOD.label_alpha;
     var FADE = LOD.fade_span || 1.35;
     var WEAK = LOD.weak_edge_min_count || 2;
+    // 焦点模式的压暗系数。必须用 == null 而不是 ||：0（彻底不画无关连线）是合法值，
+    // 会被 || 当成假值吃掉。
+    var FOCUS_DIM = LOD.focus_edge_dim == null ? 0.07 : LOD.focus_edge_dim;
+    var HOVER_DIM = LOD.hover_edge_dim == null ? 0.75 : LOD.hover_edge_dim;
     var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
@@ -105,6 +109,10 @@
 
     var EDGE_RGB = {};
     Object.keys(THEME.edges || {}).forEach(function (k) { EDGE_RGB[k] = hexToRgb(THEME.edges[k]); });
+    // 邻居环的颜色。跟着 derives 的边色走（= CSS --accent），和白色的选中环同轨但
+    // 更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
+    // 命中环撞色。
+    var NB_RGB = EDGE_RGB.derives || hexToRgb('#4C8DFF');
     var FALLBACK_RGB = hexToRgb(THEME.fallback);
     var DOMAIN_RGB = {};
     Object.keys(THEME.domains || {}).forEach(function (k) { DOMAIN_RGB[k] = hexToRgb(THEME.domains[k]); });
@@ -204,7 +212,11 @@
     var hoverId = null, selectedId = null;
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
-    var stats = { nodes: 0, edges: 0, labels: 0 };
+    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0 };
+    // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
+    // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
+    // 只用于绘制与计数，不落盘、不参与布局。
+    var hotNeighbors = new Set();
     var lastDrawn = [];
     var textW = new Map();
     var ctx = canvas.getContext('2d');
@@ -331,6 +343,26 @@
       return L;
     }
 
+    // F 是 n 本身、或 n 的某个祖先吗？_chain[k] = n 在第 k+1 层的祖先 id，
+    // 且 j >= n.depth 时 _chain[j] = n.id，所以深度对不上时天然返回 false。
+    // 一次数组下标比较，比 _chain.indexOf 的线性扫还便宜 —— 焦点过滤每帧要对
+    // 每条原始边的两个端点各判一次，不能贵。
+    // 用它判「这条边与焦点相关吗」：拿**原始端点**问「焦点是它的本身或祖先吗」，
+    // 一条规则同时覆盖三种情况 —— 焦点就是端点自己、焦点是端点的祖先（如选中
+    // 一篇笔记而边挂在它的 heading 上）、焦点是聚合代表的后代（旧写法在这里漏判）。
+    function isFocusSide(n, F) {
+      return !!n && !!F && n._chain[F.depth - 1] === F.id;
+    }
+
+    // 未被 parent_dim 压暗的淡入进度。给强调环用：alphaOf 在 cam.zoom >= n._gate
+    // 时会乘 PARENT_DIM，而粗尺度下的邻居代表**几乎总是**这种「孩子全浮现了的
+    // 祖先」⇒ 直接读 alpha 会让环掉到两成浓度、基本看不见。同 pitfall 8
+    // （fillAlphaOf 与 alphaOf 不能共用），也同 label_alpha 那条注释讲的道理：
+    // 压暗只是降低视觉重量，不该顺带把强调藏掉。
+    function fadeInOf(n) {
+      return smoothstep(n._mz / FADE, n._mz, cam.zoom);
+    }
+
     function measure(s, font) {
       var k = font + '|' + s;
       var v = textW.get(k);
@@ -450,9 +482,13 @@
     function drawEdges(alpha) {
       // 每条原始语义边，按两端点「当前浮现的层级」取 min，再去 aggregates[L] 查代表边。
       // 多条原始边可能塌到同一条代表边上 —— 用 Map 去重，顺便把 count 取最大。
+      hotNeighbors.clear();
+      stats.focusEdges = 0;
+      var selN = byId.get(selectedId), hovN = byId.get(hoverId);
       var picks = new Map();
       for (var i = 0; i < SEM.length; i++) {
         var e = SEM[i];
+        // 注意：这里的 A/B 是**原始**端点，下面绘制循环里的 A/B 是聚合代表 —— 同名不同义
         var A = byId.get(e.s), B = byId.get(e.t);
         if (!A || !B) continue;
         var La = visibleLayer(A), Lb = visibleLayer(B);
@@ -466,11 +502,29 @@
         var aa = alpha.get(sa), ab = alpha.get(sb);
         if (!aa || !ab) continue;
         var key = sa + '\u0000' + sb + '\u0000' + e.type;
-        var prev = picks.get(key);
         var a = Math.min(aa, ab) * ((agg.count || 1) >= WEAK ? 1 : 0.45);
-        if (!prev || a > prev.a) picks.set(key, { e: agg, a: a, sa: sa, sb: sb });
+        // 焦点相关性只能在这一趟判：只有这里拿得到**原始**端点（代表端点已经沿祖先链
+        // 抬升过了，判不出「焦点是代表的后代」那种情况）。多条原始边会塌成同一条代表边，
+        // 所以标志要 OR 累积，不能被后来的覆盖。
+        var sF = isFocusSide(A, selN), tF = isFocusSide(B, selN);
+        var hs = !!(sF || tF);
+        var hh = !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
+        // sF === tF 说明两端都在焦点子树内 —— 这是焦点的**内部**边（比如同一篇笔记里
+        // 两个 heading 互链），对面没有「别的元素」，不该加邻居环。
+        if (hs && sF !== tF) hotNeighbors.add(sF ? sb : sa);
+        var prev = picks.get(key);
+        if (!prev) picks.set(key, { e: agg, a: a, sa: sa, sb: sb, hs: hs, hh: hh });
+        else {
+          if (a > prev.a) prev.a = a;
+          prev.hs = prev.hs || hs;
+          prev.hh = prev.hh || hh;
+        }
       }
+      // stats.edges 的含义不变：无关边是被**压暗**而不是被删除，落笔的代表边一条不少。
+      // focusEdges 才是「与焦点相关的有几条」。两个新计数都要写在早退之前，
+      // 否则空帧会留下上一帧的脏值。
       stats.edges = picks.size;
+      stats.focusNeighbors = hotNeighbors.size;
       if (!picks.size) return;
 
       var zoom = cam.zoom;
@@ -482,9 +536,14 @@
         var cnt = p.e.count || 1;
         var lw = Math.min(4, 0.6 + 1.8 * Math.log(1 + cnt) / Math.LN2);
         var rgb = EDGE_RGB[p.e.type] || EDGE_RGB.derives || [76, 141, 255];
-        var hot = hoverId && (p.sa === hoverId || p.sb === hoverId ||
-                              byId.get(hoverId) && (A._chain.indexOf(hoverId) >= 0 || B._chain.indexOf(hoverId) >= 0));
-        ctx.globalAlpha = clamp(p.a * (hot ? 1 : 0.75), 0, 1);
+        // 焦点过滤：有选中时由选中说了算（悬停让位 —— 否则鼠标扫过别的圆会把刚建立
+        // 起来的焦点视图搅乱）；没选中时退回悬停的软强调。无关边只是**压暗**，不删：
+        // 「位置稳定 + 上下文稳定」是这个渲染器的设计契约，硬删边会丢掉「这片区域
+        // 连得多密」的环境感知。
+        var hot = selN ? p.hs : p.hh;
+        var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
+        if (p.hs) stats.focusEdges++;
+        ctx.globalAlpha = clamp(p.a * dim, 0, 1);
         ctx.strokeStyle = rgba(rgb, 1);
         ctx.lineWidth = hot ? lw + 0.8 : lw;
 
@@ -578,7 +637,11 @@
         var n = list[i];
         var isSel = n.id === selectedId, isHov = n.id === hoverId;
         var isMatch = matchSet && matchSet.has(n.id);
-        if (!(isSel || isHov || isMatch || (n.kind === 'note' && n.mastery > 0))) continue;
+        // hotNeighbors 装的是**当前层级的代表**（drawEdges 就地收集），所以粗尺度下
+        // 被链接的 heading 还没浮现时，环会正确地画在它的祖先 note/folder 上 ——
+        // 和连线的端点层级天然一致，不会出现「线连到 A、环画在 B」。
+        var isNb = hotNeighbors.has(n.id) && !isSel;
+        if (!(isSel || isHov || isMatch || isNb || (n.kind === 'note' && n.mastery > 0))) continue;
         var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
         var a = alpha.get(n.id);
 
@@ -600,6 +663,17 @@
           ctx.strokeStyle = 'rgba(227,179,65,0.95)';
           ctx.beginPath();
           ctx.arc(sx, sy, sr + 4, 0, TAU);
+          ctx.stroke();
+        }
+        // 邻居环：画在选中/悬停环**之前**，同轨重叠时让白环压过蓝环，
+        // 「哪个是我选的」永远一目了然。比选中环细、比它淡。
+        // alpha 用 fadeInOf 而不是 a —— 见 fadeInOf 的注释（pitfall 8）。
+        if (isNb) {
+          ctx.globalAlpha = clamp(fadeInOf(n) * 0.85, 0, 1);
+          ctx.lineWidth = 1.4;
+          ctx.strokeStyle = rgba(NB_RGB, 1);
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr + 2.5, 0, TAU);
           ctx.stroke();
         }
         if (isSel || isHov) {
@@ -820,7 +894,15 @@
     canvas.addEventListener('dblclick', function (e) {
       var p = pos(e);
       var hit = hitTest(p[0], p[1]);
-      if (!hit) { resetView(); return; }
+      // 双击空白 = 回到默认视角，顺手清掉选中 —— 否则焦点过滤还挂着，用户会以为
+      // 「回到首页了怎么连线还是稀的」。和单击空白、Esc 的行为对齐。
+      if (!hit) {
+        selectedId = null;
+        invalidate();
+        if (hooks.onSelect) hooks.onSelect(null, null);
+        resetView();
+        return;
+      }
       selectedId = hit.id;
       focusOn(hit.id, 1.6, TRANSITION * 1.4);
       if (hooks.onSelect) hooks.onSelect(hit.id, hit);

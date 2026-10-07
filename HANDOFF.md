@@ -7,8 +7,10 @@
 
 ## 0. 一句话现状
 
-**布局重构（同心环 → circle packing）与用户的四条新要求都已实现并提交**，数据侧
-（`build.py verify`）与浏览器侧（`browser_check.py`，53 项断言）自动校验全绿，截图人眼复看过。
+**布局重构（同心环 → circle packing）与用户的四条新要求都已实现并提交**；其后的**焦点模式**
+（选中即过滤连线 + 邻居蓝环，见 §4 坑 19、§5 调参表、§8 回归基准）也已落地并提交（第10步）。
+数据侧（`build.py verify`）与浏览器侧
+（`browser_check.py`，62 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
 
 图现在是 **Canvas2D 自绘 + circle packing 嵌套圆 + 10 层深度轴 + per-node 连续淡入淡出**：
@@ -41,13 +43,15 @@ ec76210  第5步：文档重写 + 浏览器回归套件入仓
 a71a929  第 6 步：布局重构 —— 同心环 → circle packing（Python 侧）
 44a1c4f  第7步：渲染侧适配 circle packing —— 世界半径 + 四趟绘制 + wash 的 maxzoom
 2e1d0e9  第8步：浏览器回归套件适配 circle packing + 顶栏/hover 打磨
+51d338b  第9步：文档重写 —— README/HANDOFF 跟上 circle packing
 ```
 
 ```bash
 cd D:/obsidian_vault/knowledge-graph
-python build.py build        # 生成 dist/knowledge-graph.html（单文件，实测 8702 KB ≈ 8.5 MB）
+python build.py build        # 生成 dist/knowledge-graph.html（单文件，实测 8698 KB ≈ 8.5 MB；
+                             # 该值随 vault 内容漂移，不是固定不变量）
 python build.py verify       # 数据侧自动校验，应全绿
-python browser_check.py      # 浏览器侧 53 项断言 + 截图，应全绿
+python browser_check.py      # 浏览器侧 62 项断言 + 截图，应全绿
 python build.py watch        # 开发时挂上，改笔记/配置自动重建
 ```
 
@@ -125,9 +129,9 @@ knowledge-graph/
 ├── config.yaml          ← 唯一维护入口：公开范围 / zoom / weight / candidates / layout / lod / theme
 ├── build.py             CLI：scan | suggest | build | verify | watch | all   （303 行）
 ├── verify.py            数据侧自动校验（断言式，无测试框架）                   （460 行）
-├── browser_check.py     浏览器侧自动回归：53 项断言 + 截图                     （468 行）
+├── browser_check.py     浏览器侧自动回归：62 项断言 + 截图                     （545 行）
 ├── sync-graph.ps1       计划任务包装：防重入 lock + UTF-8 + 日志裁剪 400 行     （47 行）
-├── kg/config.py         配置加载与校验（非法配置给中文报错）                    （174 行）
+├── kg/config.py         配置加载与校验（非法配置给中文报错）                    （185 行）
 ├── kg/scan.py           白名单 glob 扫描（include/exclude/exclude_notes）       （93 行）
 ├── kg/parse.py          frontmatter / 标题树（跳过代码块）/ wiki 链接 / 摘要     （186 行）
 ├── kg/graph.py          层级树、语义边、按层聚合边、标题级链接                   （464 行）
@@ -136,9 +140,9 @@ knowledge-graph/
 │                        ↑ 开头 docstring 是布局的权威叙述，改布局前先读它
 ├── kg/ioutils.py        stdout UTF-8（`setup_stdout()`）                        （18 行）
 ├── kg/emit.py           输出 dist/graph.json 与自包含单文件 HTML                 （66 行）
-├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（206 行）
-├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定、window.KG     （551 行）
-├── web/render.js        Canvas2D 渲染器：相机、四趟绘制、聚合边、拾取、标签竞争   （882 行）
+├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（208 行）
+├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定、window.KG     （559 行）
+├── web/render.js        Canvas2D 渲染器：相机、四趟绘制、聚合边、拾取、标签竞争   （964 行）
 ├── annotations.yaml     用户手工标注（权重/掌握度/别名/手工边）—— **目前是空的**
 ├── candidates.yaml      候选边（待审核）
 ├── sync-graph.log/.lock 运行时产物，gitignore
@@ -162,11 +166,11 @@ knowledge-graph/
 ```
 文件夹 35 个 / 笔记 108 篇 / 标题 3339 个  →  共 3482 个节点
 深度轴 10 层（文件系统本身 5 层 + 标题层级）
-语义边 92 条 / 层级包含边 3476 条 / 图上 heading→heading 语义边 3024 条
+语义边 92 条（全是 derives）/ 层级包含边 3476 条 / 图上 heading→heading 语义边 64 条
 标题级链接 66 处命中（锚点未命中 12 处）
 布局根半径 layout_root_radius = 1000.0；标称视口半径 nominal_fit_radius = 427px
 home 停在第 1 层，home_zoom = 0.4612
-HTML 8702 KB
+HTML 8698 KB
 ```
 
 六个学科根的世界半径 `r`（**spread 16.22×**——这是自顶向下等比缩放 + `size_exponent` 0.5
@@ -229,7 +233,7 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | 帧率 | idle rAF 58~63 fps | |
 | 20 格滚轮 | 1092 ms | 含淡入淡出重绘 |
 | console error / pageerror | 0 | |
-| `browser_check.py` | **53 [ok] / 0 FAIL** | ALL BROWSER CHECKS PASSED |
+| `browser_check.py` | **62 [ok] / 0 FAIL** | ALL BROWSER CHECKS PASSED |
 
 `python build.py verify` → `✓ 全部自动校验通过`。其中最该盯的几条：
 3482 个节点里坐标重合的 355 对**全是父子关系**（独子链同心；非父子重合 0 对）；
@@ -366,6 +370,16 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
     `render.js` 为此有 `lastMouse` + `evalHover(px, py)`：`window` 的 `mousemove` 末尾与
     `draw()` 收尾各调一次，`mouseleave` 清空。改相机或改 `draw()` 时别把这两处调用摘掉。
 
+19. **强调环（选中白环 / 搜索黄环 / 邻居蓝环）的 alpha 不能读 `alphaOf`。** `alphaOf` 在
+    `cam.zoom >= n._gate` 时乘 `zoom.parent_dim`（0.22）——粗尺度下被强调的代表节点几乎总是
+    这种「已解锁、子圆已浮现」的祖先，环会跟着掉到约 19% 基本看不见（焦点模式的邻居环第一版
+    就死在这里）。正解是另写一个**未压暗**的淡入进度
+    `fadeInOf(n) = smoothstep(n._mz / fade_span, n._mz, cam.zoom)` 给环用；
+    `alphaOf` 函数体本身别动（§7）。同理，焦点模式判断「F 是 n 本身或 n 的祖先」用
+    `n._chain[F.depth - 1] === F.id`（O(1)，不需要预建邻接索引）；`_chain` 只含自己和**祖先**，
+    别拿它往下查后代——旧版 hover 高亮就是拿聚合端点往上查 `_chain`，漏判了
+    「焦点是聚合端点的后代」这一整类边。
+
 ---
 
 ## 5. 调参地图
@@ -391,6 +405,8 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | 淡入带宽 | `lod.fade_span`（1.35） | zoom 从 `minzoom/fade_span` 升到 `minzoom`，alpha 从 0 走到 1。滚轮每格 1.12 ⇒ 约 2.6 格淡完，不会突兀 |
 | 标签参与竞争的门槛 | `lod.label_alpha`（0.55） | 读的是**未被 `parent_dim` 压暗的**淡入进度（§4.8）。标签另受 24px 碰撞网格与每帧 400 条预算限制 |
 | 弱聚合边压暗阈值 | `lod.weak_edge_min_count`（2） | 聚合边 `count` 低于此值时压到 45% 不透明度（关系弱，别抢戏） |
+| 焦点模式无关连线压到多少 | `lod.focus_edge_dim`（0.07） | 选中节点后，与它（含其内部子元素）无关的连线压到此不透明度。**0 = 彻底不画**，1 = 不压暗。默认 7% 是有意留残影：保住「这片区域连得多密」的环境感知（Obsidian graph view 也是淡到约 10% 而非删掉） |
+| hover 时连线压到多少 | `lod.hover_edge_dim`（0.75） | 只轻微提亮、不过滤。hover 每帧重算（`evalHover`），相机 tween 时会连续换节点，做强过滤会频闪 |
 | 链接权重 | `weight.wiki_link` 1.0 / `heading_link_bonus` 0.5 / `embed_factor` 0.6 / `annotation_default` 3.0 | |
 | 边的来源优先级 | `precedence: [annotation, frontmatter, wiki]` | 靠前的先决定 `weight` / `mastery` |
 | 学科配色 / 边配色 | `theme.domains` / `theme.fallback` / `theme.edges` | 父子同色是刻意的（整条包含链继承学科色），别给子节点单独配色（§4.11） |
@@ -415,7 +431,8 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 
 **P0 — 已完成**：看图验收；两个改进需求（同步方案、实心圆/细线/跨层级链接淡入淡出）；
 **布局重构（同心环 → circle packing）+ 用户四条新要求**（同级内容多者圆更大 / 层级间大小
-有区分 / 子在父内且同色 / 地图式淡入淡出），Python 侧、渲染侧、浏览器回归套件都已适配。
+有区分 / 子在父内且同色 / 地图式淡入淡出）；**焦点模式**（选中即过滤连线 + 邻居蓝环），
+Python 侧、渲染侧、浏览器回归套件都已适配，并已提交（第10步）。
 
 **P1 — 让「掌握度/重要度」真正起作用**
 `annotations.yaml` 是空的，108 篇笔记 `mastery` 全是 0，暗色细边看不出来。
@@ -466,9 +483,9 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 ```bash
 python build.py build      # 笔记 108 / 文件夹 35 / 标题 3339 / 节点 3482
                            # 深度轴 10 / 语义边 92 / 包含边 3476 / 标题级链接 66（未命中 12）
-                           # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 8702 KB
+                           # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 8698 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过
-python browser_check.py    # 必须 53 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED
+python browser_check.py    # 必须 62 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED
 node --check web/app.js && node --check web/render.js   # 前端语法（一次只查一个文件）
 ```
 
@@ -488,6 +505,12 @@ KG.zHome                   // 0.4612   （home_fit 1.08）
 KG.renderer.setZoom(KG.zMin); KG.visible()
                            // 6 个学科根全部可见，**且它们的子圆也仍在画面里** ——
                            // 不再「只剩 6 个节点」，这正是 packing 与同心环的根本区别
+
+# 焦点模式基线（7b 小节自动断言；压暗不是删除，所以 home 的 shownEdges 不变）：
+#   home:                shownNodes 55 / shownEdges 24
+#   选中 Science and Tech/Electronic engineering/Electronic engineering basic
+#     → focusEdges 13 / focusNeighbors 10（顶栏显示「关系 13/24 · 相邻 10」）
+#   Esc 后 focusEdges / focusNeighbors 归零，shownEdges 仍 24
 ```
 
 改完视觉**必须重新截图并人眼看**：`python browser_check.py` 后 ReadMediaFile `%TEMP%\kg_0*.png`。
