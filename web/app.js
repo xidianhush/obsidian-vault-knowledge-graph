@@ -236,14 +236,18 @@
     return { out: out, inc: inc };
   }
 
-  function edgeListHtml(list, dir) {
+  function edgeListHtml(list, dir, selfId) {
     if (!list.length) return '<ul class="elist"><li style="color:#7e879a">—</li></ul>';
     list.sort((a, b) => (b.weight || 0) - (a.weight || 0));
     let html = '<ul class="elist">';
     list.slice(0, 60).forEach((e) => {
       const other = dir === 'in' ? e.s : e.t;
       const name = (NODE.get(other) || { label: other }).label;
-      html += '<li data-target="' + escapeHtml(other) + '">' +
+      // data-self 记录「这行边属于哪个元素的边列表」：点边行的语义是「我要看这条链接」，
+      // 需要把两端一起框进屏幕（fitPair），而不是只跳去目标。标题行（hlist）不写这个
+      // 属性，点击仍走旧的「跳转目标元素」语义
+      html += '<li data-target="' + escapeHtml(other) + '"' +
+        (selfId ? ' data-self="' + escapeHtml(selfId) + '"' : '') + '>' +
         '<span class="arrow">' + (dir === 'in' ? '←' : '→') + '</span>' +
         escapeHtml(name) +
         '<span class="tag" title="' +
@@ -325,8 +329,8 @@
       html += '<h3>状态：' + (d.metric_source === 'annotation' ? '来自 annotations.yaml'
         : d.metric_source === 'frontmatter' ? '来自笔记 frontmatter' : '默认（未手工标注）') + '</h3>';
     }
-    html += '<h3>入边 · 谁指向它（' + inc.length + '）</h3>' + edgeListHtml(inc, 'in');
-    html += '<h3>出边 · 它指向谁（' + out.length + '）</h3>' + edgeListHtml(out, 'out');
+    html += '<h3>入边 · 谁指向它（' + inc.length + '）</h3>' + edgeListHtml(inc, 'in', id);
+    html += '<h3>出边 · 它指向谁（' + out.length + '）</h3>' + edgeListHtml(out, 'out', id);
 
     if (isNote && heads.length) {
       heads.sort((a, b) => a.line - b.line);
@@ -355,7 +359,17 @@
       });
     });
     side.querySelectorAll('[data-target]').forEach((li) => {
-      li.addEventListener('click', () => select(li.dataset.target, true));
+      li.addEventListener('click', () => {
+        // 边行（带 data-self）：点击语义是「我要看这条链接」—— 选中目标但不单点跳视，
+        // 改为把链接两端一起框进屏幕（fitPair），让连接它们的箭头直接可见；
+        // 标题行（hlist，无 data-self）保持旧的「跳去目标元素」语义
+        if (li.dataset.self != null && !li.closest('.hlist')) {
+          select(li.dataset.target, false);
+          R.fitPair(li.dataset.self, li.dataset.target);
+        } else {
+          select(li.dataset.target, true);
+        }
+      });
     });
     side.querySelectorAll('[data-goto]').forEach((a) => {
       a.addEventListener('click', (evt) => {
@@ -548,6 +562,7 @@
       focusEdges: R.stats.focusEdges,
       focusNeighbors: R.stats.focusNeighbors,
       marks: R.stats.marks,
+      chips: R.stats.chips,
       shownLabels: R.stats.labels,
       selected: R.selected,
       hovered: R.hover,

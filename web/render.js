@@ -105,6 +105,9 @@
     var MARK_MIN = LOD.edge_marker_min_len == null ? 20 : LOD.edge_marker_min_len;
     var MARK_TINT = LOD.edge_marker_tint == null ? 0.55 : LOD.edge_marker_tint;
     var MARK_LIGHT = hexToRgb('#d6dbe4');
+    // 焦点链接的「屏外目标」chip 上限。选中元素的链接有一端在当前尺度屏外时，
+    // 连线止于视口边缘并挂一枚写着目标名的 chip；超出上限的折叠成右下角一枚「+k」
+    var CHIP_MAX = LOD.focus_offscreen_chips == null ? 8 : LOD.focus_offscreen_chips;
     var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
@@ -229,7 +232,7 @@
     var hoverId = null, selectedId = null;
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
-    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0 };
+    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0, chips: 0 };
     // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
     // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
     // 只用于绘制与计数，不落盘、不参与布局。
@@ -239,6 +242,10 @@
     // 整个盖掉（packing 布局里圆是相切的）。真正落笔在 drawEdgeMarkers。
     // k: 0 = 圆点，1 = 箭头；ux/uy = 箭头指向的单位向量；s = 尺寸；c/a = 颜色与不透明度
     var markJobs = [];
+    // 屏外目标 chip：焦点边被门挡掉后连线止于视口边缘，边缘处挂一枚写着屏外端点名字
+    // 的小标签。drawEdges / drawFocusEdges 只塞任务，真正落笔在 drawChips —— 屏幕空间
+    // 的 UI 覆盖层，排在所有世界内容之后。
+    var chipJobs = [];
     var lastDrawn = [];
     var textW = new Map();
     var ctx = canvas.getContext('2d');
@@ -393,7 +400,7 @@
     }
 
     // ── 绘制 ────────────────────────────────────────────────────────────
-    // 五趟：① 容器底图 → ② 语义边 → ③ 前景实心圆 → ④ 端点标记 → ⑤ 标签。
+    // 六趟：① 容器底图 → ② 语义边 → ③ 前景实心圆 → ④ 端点标记 → ⑤ 标签 → ⑥ 屏外 chip。
     // 边夹在底图和实心圆之间：压在底图之上才看得见，被实心圆盖住又正好形成
     // 「线连到圆边上」的观感。标记必须排在实心圆之后（否则被相切邻圆盖掉）、
     // 强调环之前（让选中白环压过箭头）。强调环（掌握度/命中/选中）单独一趟，永远在最上面。
@@ -444,6 +451,8 @@
       drawEdgeMarkers();
       drawEmphasis(drawn, alpha);
       drawLabels(drawn, alpha);
+      // ⑥ 屏外 chip：屏幕空间的 HUD 覆盖层，压在所有世界内容之上
+      drawChips();
 
       // 全空白兜底：packing 布局没有空心，但一路放大到某个分支的最深处再往旁边
       // 平移，视口里确实可能一个圆都不落笔（铺满视口的祖先停画、间隙里又没有更
@@ -509,23 +518,39 @@
       hotNeighbors.clear();
       stats.focusEdges = 0;
       markJobs.length = 0;
+      chipJobs.length = 0;
+      stats.chips = 0;
       var selN = byId.get(selectedId), hovN = byId.get(hoverId);
       var picks = new Map();
+      // 被三道门挡掉的焦点边。门只丢边不记录，要救的先记在这里，循环结束后交
+      // drawFocusEdges 补画（脏帧规则同 markJobs：每帧开头清空）
+      var droppedFocus = [];
       for (var i = 0; i < SEM.length; i++) {
         var e = SEM[i];
         // 注意：这里的 A/B 是**原始**端点，下面绘制循环里的 A/B 是聚合代表 —— 同名不同义
         var A = byId.get(e.s), B = byId.get(e.t);
         if (!A || !B) continue;
+        // 这条边与焦点相关吗：门只丢边，要救的先记下来
+        var hs0 = !!selN && (isFocusSide(A, selN) || isFocusSide(B, selN));
         var La = visibleLayer(A), Lb = visibleLayer(B);
         var L = Math.min(La, Lb);
         var m = aggIndex[L];
         if (!m) continue;
         var sa = A._chain[L - 1], sb = B._chain[L - 1];
-        if (!sa || !sb || sa === sb) continue;
+        if (!sa || !sb || sa === sb) {
+          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
+          continue;
+        }
         var agg = m.get(sa + '\u0000' + sb + '\u0000' + e.type);
-        if (!agg) continue;
+        if (!agg) {
+          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
+          continue;
+        }
         var aa = alpha.get(sa), ab = alpha.get(sb);
-        if (!aa || !ab) continue;
+        if (!aa || !ab) {
+          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
+          continue;
+        }
         var key = sa + '\u0000' + sb + '\u0000' + e.type;
         var a = Math.min(aa, ab) * ((agg.count || 1) >= WEAK ? 1 : 0.45);
         // 焦点相关性只能在这一趟判：只有这里拿得到**原始**端点（代表端点已经沿祖先链
@@ -549,6 +574,10 @@
       // focusEdges 才是「与焦点相关的有几条」。两个新计数都要写在早退之前，
       // 否则空帧会留下上一帧的脏值。
       stats.edges = picks.size;
+      // 被门挡掉的焦点边补画：必须排在早退之前 —— 全被门挡的帧（picks 为空）
+      // 正是用户「面板说有链接、画布却一条线都没有」的帧，最需要补画。
+      // 补画会往 hotNeighbors 加邻居，所以 focusNeighbors 要在补画之后计数。
+      if (selN && droppedFocus.length) drawFocusEdges(droppedFocus, alpha);
       stats.focusNeighbors = hotNeighbors.size;
       if (!picks.size) return;
 
@@ -655,6 +684,196 @@
           ctx.arc(j.x, j.y, j.s, 0, TAU);
         }
         ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 沿 parent 链向上找第一个「在屏且没铺满视口」的祖先：alpha.has 说明它过了本帧
+    // 视口裁剪与淡入门；sr < farCornerDist 说明它的边界还在屏内。铺满视口的 wash 不能
+    // 当锚点 —— 它的边界全在屏外，trim 到边界等于把端点放到屏外，等于没画（用户 z=28
+    // 的场景里 Science and Tech 根就是这种铺满屏的罩子）。整链都没有合格者时返回
+    // on:false，调用方按「这一端在屏外」处理。
+    function resolveAnchor(n, alpha) {
+      var cur = n;
+      while (cur) {
+        var sx = w2sx(cur.x), sy = w2sy(cur.y), sr = cur._r * cam.zoom;
+        if (alpha.has(cur.id) && sr < farCornerDist(sx, sy)) {
+          return { on: true, node: cur, sx: sx, sy: sy, sr: sr };
+        }
+        cur = cur.parent ? byId.get(cur.parent) : null;
+      }
+      return { on: false, node: n };
+    }
+
+    // 补画线段：两个在屏锚点之间的 trim 直线 + 两端标记。形状照抄 drawEdges 的截断与
+    // 标记几何（源端圆点 / 目标端箭头），区别只有两处：恒为直线（补画线是「方向线索」，
+    // 直比弯好读），标记走 markJobs 排队到 drawNodes 之后落笔 —— 就地画会被相切邻圆盖掉。
+    function drawFocusSegment(aA, aB, ea, lw, rgb, mrgb, type, dot) {
+      var dx = aB.sx - aA.sx, dy = aB.sy - aA.sy;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / dist, uy = dy / dist;
+      var r1 = aA.sr + TRIM, r2 = aB.sr + TRIM;
+      var ex1 = aA.sx + ux * r1, ey1 = aA.sy + uy * r1;
+      var ex2 = aB.sx - ux * r2, ey2 = aB.sy - uy * r2;
+      var glen = Math.sqrt((ex2 - ex1) * (ex2 - ex1) + (ey2 - ey1) * (ey2 - ey1));
+      if (glen >= 0.5) {
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = ea;
+        ctx.strokeStyle = rgba(rgb, 1);
+        ctx.lineWidth = lw;
+        ctx.setLineDash(type === 'contrast' ? [5, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(ex1, ey1);
+        ctx.lineTo(ex2, ey2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      if (glen < MARK_MIN) return;
+      var ma = Math.max(ea, 0.75);
+      var s = clamp(5 + lw * 1.6, 7, 14);
+      if (type === 'derives' || type === 'prerequisite') {
+        markJobs.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id, s: s, c: mrgb, a: ma });
+      } else {
+        markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id, s: dot, c: mrgb, a: ma });
+      }
+      markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id, s: dot, c: mrgb, a: ma });
+    }
+
+    // 被门挡掉的焦点边补画。三道门各有各的理由（同容器聚合、本层无聚合代表、端点不在屏），
+    // 但对用户来说都是「面板说有链接、画布没画」。于是焦点相关的边被门挡掉之后，降级成
+    // 「画在两端点的在屏代表之间」：
+    //   双端在屏   → 两个代表之间直线 + 端点标记（形状同普通边）；
+    //   一在一不在 → 线止于视口边缘、箭头落在边上指方向，边缘挂一枚写着屏外端点名的 chip；
+    //   双端屏外   → 只计数不画（两端都看不见的线是纯噪声）。
+    // 去重：同 (锚A, 锚B, type) 的多条原始边塌成一条线、count 累加；屏外端按原始 id 做键、
+    // 彼此不合并（各挂各的 chip）。
+    function drawFocusEdges(dropped, alpha) {
+      var selN = byId.get(selectedId);
+      var groups = new Map();
+      for (var i = 0; i < dropped.length; i++) {
+        var d = dropped[i];
+        var aA = resolveAnchor(d.A, alpha), aB = resolveAnchor(d.B, alpha);
+        var kA = aA.on ? aA.node.id : ' ' + d.A.id;
+        var kB = aB.on ? aB.node.id : ' ' + d.B.id;
+        var key = kA + '\u0000' + kB + '\u0000' + d.e.type;
+        var g = groups.get(key);
+        if (!g) {
+          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id };
+          groups.set(key, g);
+        }
+        g.count += 1;
+      }
+      groups.forEach(function (g) {
+        stats.focusEdges += 1;
+        var nA = byId.get(g.idA), nB = byId.get(g.idB);
+        var sF = isFocusSide(nA, selN), tF = isFocusSide(nB, selN);
+        if (sF !== tF) {
+          var nb = sF ? g.aB : g.aA;
+          if (nb.on) hotNeighbors.add(nb.node.id);
+        }
+        if (!g.aA.on && !g.aB.on) return;
+        if (g.aA.on && g.aB.on && g.aA.node.id === g.aB.node.id) return;
+        var rgb = EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255];
+        var mrgb = MARK_RGB[g.type] || MARK_RGB.derives || rgb;
+        var lw = Math.min(4, 0.6 + 1.8 * Math.log(1 + g.count) / Math.LN2) + 0.8;
+        var dot = clamp(1.6 + lw * 0.5, 2, 4);
+        if (g.aA.on && g.aB.on) {
+          var ea = clamp(Math.min(alpha.get(g.aA.node.id), alpha.get(g.aB.node.id)) *
+                         (g.count >= WEAK ? 1 : 0.45), 0, 1);
+          drawFocusSegment(g.aA, g.aB, ea, lw, rgb, mrgb, g.type, dot);
+          return;
+        }
+        // 一在一不在：S = 在屏锚点，T = 屏外原始端点。
+        // dir 从 S 中心指向 T 的屏幕投影（可能在屏外 —— 那正是方向线索）
+        var S = g.aA.on ? g.aA : g.aB;
+        var T = g.aA.on ? g.aB : g.aA;
+        var outgoing = g.aA.on;
+        var tx = w2sx(T.node.x), ty = w2sy(T.node.y);
+        var ddx = tx - S.sx, ddy = ty - S.sy;
+        var dl = Math.sqrt(ddx * ddx + ddy * ddy);
+        var ux = dl > 1e-6 ? ddx / dl : 1, uy = dl > 1e-6 ? ddy / dl : 0;
+        var Hc = H - FOOTER_H;
+        var tBest = Infinity;
+        if (ux > 1e-9) tBest = Math.min(tBest, (W - S.sx) / ux);
+        if (ux < -1e-9) tBest = Math.min(tBest, (0 - S.sx) / ux);
+        if (uy > 1e-9) tBest = Math.min(tBest, (Hc - S.sy) / uy);
+        if (uy < -1e-9) tBest = Math.min(tBest, (0 - S.sy) / uy);
+        if (!isFinite(tBest) || tBest <= 0) return;
+        var px = S.sx + ux * tBest, py = S.sy + uy * tBest;
+        var rS = S.sr + TRIM;
+        var ea2 = clamp(alpha.get(S.node.id) * (g.count >= WEAK ? 1 : 0.45), 0, 1);
+        var ma = Math.max(ea2, 0.75);
+        var as = clamp(5 + lw * 1.6, 7, 14);
+        if (tBest - rS >= 0.5) {
+          ctx.lineCap = 'round';
+          ctx.globalAlpha = ea2;
+          ctx.strokeStyle = rgba(rgb, 1);
+          ctx.lineWidth = lw;
+          ctx.setLineDash(g.type === 'contrast' ? [5, 4] : []);
+          ctx.beginPath();
+          ctx.moveTo(S.sx + ux * rS, S.sy + uy * rS);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+        }
+        // 箭头无论如何都落：视口边箭头是本帧唯一的方向线索。
+        // 出边：箭头在视口边朝外、圆点在在屏端圆边界；入边：圆点在视口边、箭头在在屏端圆边界朝它
+        if (outgoing) {
+          markJobs.push({ k: 1, x: px, y: py, ux: ux, uy: uy, id: T.node.id, s: as, c: mrgb, a: ma });
+          markJobs.push({ k: 0, x: S.sx + ux * rS, y: S.sy + uy * rS, ux: 0, uy: 0, id: S.node.id, s: dot, c: mrgb, a: ma });
+        } else {
+          markJobs.push({ k: 1, x: S.sx + ux * rS, y: S.sy + uy * rS, ux: -ux, uy: -uy, id: S.node.id, s: as, c: mrgb, a: ma });
+          markJobs.push({ k: 0, x: px, y: py, ux: 0, uy: 0, id: T.node.id, s: dot, c: mrgb, a: ma });
+        }
+        chipJobs.push({ px: px, py: py, dx: ux, dy: uy, id: T.node.id, count: g.count, text: chipLabel(T.node) });
+      });
+      if (chipJobs.length > CHIP_MAX) {
+        var over = chipJobs.length - CHIP_MAX;
+        chipJobs.length = CHIP_MAX;
+        chipJobs.push({ px: W - 12, py: H - FOOTER_H - 12, dx: 0, dy: 0,
+                        id: null, count: over, text: '+' + over, right: true });
+      }
+      stats.chips = chipJobs.length;
+    }
+
+    function chipLabel(n) {
+      var t = n.label || n.id;
+      return t.length > 18 ? t.slice(0, 18) + '…' : t;
+    }
+
+    // ⑥ 屏外 chip：屏幕空间 HUD 覆盖层（drawLabels 之后、最顶层）。每枚 chip 挂在线停住的
+    // 视口边缘、沿线的反方向内移 14px，读作「线指向这个标签」；折叠的「+k」钉在右下角。
+    // chip 只指示方向与名字，点击无行为 —— 导航是侧栏边行的事（点边行 fitPair 框住两端）。
+    function drawChips() {
+      if (!chipJobs.length) return;
+      var Hc = H - FOOTER_H;
+      ctx.font = '11px ' + FONT;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (var i = 0; i < chipJobs.length; i++) {
+        var j = chipJobs[i];
+        var w = measure(j.text, '11px ' + FONT) + 12;
+        var h = 18;
+        var x0, y0;
+        if (j.right) {
+          x0 = j.px - w; y0 = j.py - h;
+        } else {
+          x0 = clamp(j.px - j.dx * 14 - w / 2, 4, W - w - 4);
+          y0 = clamp(j.py - j.dy * 14 - h / 2, 4, Hc - h - 4);
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(22,27,34,0.92)';
+        ctx.strokeStyle = 'rgba(139,148,158,0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x0, y0, w, h, 4);
+        else ctx.rect(x0, y0, w, h);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#d6dbe4';
+        ctx.fillText(j.text, x0 + 6, y0 + h / 2 + 0.5);
       }
       ctx.globalAlpha = 1;
     }
@@ -901,6 +1120,23 @@
               ms == null ? TRANSITION : ms);
     }
 
+    // 框住链接两端：zoom 先取两端里较大的浮现 zoom ×1.15（保证两端都过了淡入门），
+    // 再用「两个包围圆一起进视口」封顶 —— 在屏优先于淡入。给侧栏边行点击用：
+    // 用户点一条边就是想亲眼看「这条链接连的是哪两个元素」，一次 tween 框住两端。
+    function fitPair(idA, idB, ms) {
+      var a = byId.get(idA), b = byId.get(idB);
+      if (!a || !b) return;
+      var minX = Math.min(a.x - a._r, b.x - b._r), maxX = Math.max(a.x + a._r, b.x + b._r);
+      var minY = Math.min(a.y - a._r, b.y - b._r), maxY = Math.max(a.y + a._r, b.y + b._r);
+      var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      var rx = (maxX - minX) / 2, ry = (maxY - minY) / 2;
+      var rr = Math.sqrt(rx * rx + ry * ry) || 1;
+      var z = clamp(Math.max(a._mz, b._mz) * 1.15, zMin, zMax);
+      z = clamp(Math.min(z, 0.9 * fitRadius() / rr), zMin, zMax);
+      tweenTo({ zoom: z, panX: W / 2 - cx * z, panY: (H - FOOTER_H) / 2 - cy * z },
+              ms == null ? TRANSITION : ms);
+    }
+
     function tweenTo(to, ms) {
       if (ms <= 0) { cam.zoom = to.zoom; cam.panX = to.panX; cam.panY = to.panY; invalidate(); return; }
       tween = { from: { zoom: cam.zoom, panX: cam.panX, panY: cam.panY }, to: to,
@@ -1001,6 +1237,7 @@
       // 端点标记的落笔清单（每帧在 drawEdges 里重建）。暴露出来只为自动化验证能直接
       // 量「标记有没有落在圆外」这类几何不变式，不必在测试里复刻截断公式。
       markJobs: markJobs,
+      chipJobs: chipJobs,
       NODES: NODES, byId: byId, SEM: SEM,
       resize: resize,
       invalidate: invalidate,
@@ -1020,6 +1257,7 @@
         tweenTo({ zoom: clamp(z, zMin, zMax), panX: W / 2, panY: (H - FOOTER_H) / 2 }, TRANSITION);
       },
       focusOn: focusOn,
+      fitPair: fitPair,
       tweenTo: tweenTo,
       resetView: resetView,
       get hover() { return hoverId; },

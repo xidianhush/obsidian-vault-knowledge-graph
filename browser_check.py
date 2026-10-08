@@ -519,6 +519,161 @@ with sync_playwright() as p:
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
 
+    print("\n=== 7d. off-screen focus target: viewport-edge arrow + name chip + fitPair ===")
+    # drawEdges 的三道门（同容器 / 聚合索引 / 在屏）会在某些缩放比挡掉焦点边，
+    # 挡掉之后画布上「这条链接指向谁」一度一个像素的线索都没有。这一轮补了两条后路：
+    # 一端屏外时连线止于视口边缘、挂箭头 + 写著屏外端点名字的 chip；侧栏边行点击
+    # 一次 tween 把链接两端一起框进视口（fitPair）。这里用真实相机钉住两条后路。
+    SEL_ID = ("Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统#分解信号/"
+              "连续时间傅里叶正反变换(CTFT)/连续时间非周期信号的傅利叶变换(表示)/"
+              "理解傅利叶变换&频谱密度的几何意义")
+    TGT_ID = ("Science and Tech/Mathematics Basic/Calculus#5 定积分/5.1 定积分的概念和性质/"
+              "5.1.2 定积分的定义(本质是求和的极限)")
+    have_pair = page.evaluate("""(ids) => {
+        const R = window.KG.renderer;
+        return !!R.byId.get(ids[0]) && !!R.byId.get(ids[1]) &&
+               R.SEM.some(e => (e.s === ids[0] && e.t === ids[1]) || (e.s === ids[1] && e.t === ids[0]));
+    }""", [SEL_ID, TGT_ID])
+    if not have_pair:
+        warns.append("fixture edge SEL->TGT missing from payload -> 7d skipped")
+        print("    !! fixture edge not found; skipping")
+    else:
+        # (a) 深缩放：选中圆在屏、链接目标屏外 -> 线止于视口边，箭头与 chip 都该在
+        a = page.evaluate("""(ids) => {
+            const R = window.KG.renderer;
+            R.selected = null;
+            R.focusOn(ids[0], 1.25, 0);
+            R.selected = ids[0]; R.draw();
+            const st = window.KG.state();
+            return {focusEdges: st.focusEdges, chips: st.chips,
+                    chipTexts: R.chipJobs.filter(j => j.id === ids[1]).map(j => j.text),
+                    edgeArrow: R.markJobs.some(j => j.k === 1 && j.id === ids[1]),
+                    selDot: R.markJobs.some(j => j.k === 0 && j.id === ids[0])};
+        }""", [SEL_ID, TGT_ID])
+        print("    ", json.dumps(a, ensure_ascii=False))
+        check("focus edge to an off-screen target still counts as drawn",
+              a["focusEdges"] >= 1, str(a["focusEdges"]))
+        check("off-screen target gets a name chip",
+              a["chips"] >= 1 and len(a["chipTexts"]) >= 1,
+              "chips=%s texts=%s" % (a["chips"], a["chipTexts"]))
+        check("chip carries the off-screen target's name",
+              bool(a["chipTexts"]) and a["chipTexts"][0].startswith("5.1.2 定积分的定义"),
+              str(a["chipTexts"][:1]))
+        check("viewport-edge arrow is tagged with the off-screen target", a["edgeArrow"])
+        check("on-screen end keeps its source dot", a["selDot"])
+        shot("11_chip")
+
+        # (b) +k 折叠：语义度 top-6 的 hub 各扫三档缩放，读真实 chipJobs。
+        # 不变式：chip 数永不超过 CHIP_MAX+1；只有超出 CHIP_MAX 时末项才是右锚的「+k」。
+        chip_max = page.evaluate(
+            "() => (((window.KG.data.meta || {}).lod || {}).focus_offscreen_chips) ?? 8")
+        probes = page.evaluate("""(mults) => {
+            const R = window.KG.renderer;
+            const deg = new Map();
+            for (const e of R.SEM) { deg.set(e.s, (deg.get(e.s) || 0) + 1); deg.set(e.t, (deg.get(e.t) || 0) + 1); }
+            const hubs = [...deg.entries()].sort((x, y) => y[1] - x[1]).slice(0, 6).map(x => x[0]);
+            const cs = R.centerScreen();
+            const out = [];
+            for (const id of hubs) {
+                const n = R.byId.get(id);
+                for (const m of mults) {
+                    const z = Math.min(n._mz * m, R.zMax);
+                    R.tweenTo({zoom: z, panX: cs[0] - n.x * z, panY: cs[1] - n.y * z}, 0);
+                    R.selected = id; R.draw();
+                    const jobs = R.chipJobs;
+                    const last = jobs.length ? jobs[jobs.length - 1] : null;
+                    out.push({id: id, mult: m, deg: deg.get(id), n: jobs.length,
+                              lastText: last ? last.text : null, lastRight: last ? !!last.right : false});
+                }
+            }
+            R.selected = null; R.draw();
+            return out;
+        }""", [1.3, 3, 8])
+        collapsed = [p for p in probes if p["n"] > chip_max]
+        print("    hub probes: %d combos, %d collapsed to +k (chip_max=%s)"
+              % (len(probes), len(collapsed), chip_max))
+        for p in probes[:6]:
+            print("      deg=%3d mult=%-4s -> chips=%2d last=%r"
+                  % (p["deg"], p["mult"], p["n"], p["lastText"]))
+        check("chip list never exceeds CHIP_MAX+1",
+              all(p["n"] <= chip_max + 1 for p in probes),
+              str(max(p["n"] for p in probes)))
+        check("overflow collapses into exactly one right-anchored +k chip",
+              all((p["n"] > chip_max) == p["lastRight"] for p in probes) and
+              all(p["lastText"].startswith("+") and p["lastText"][1:].isdigit()
+                  for p in probes if p["n"] > chip_max),
+              str(collapsed[:2]))
+        if not collapsed:
+            warns.append("no hub probe produced more than CHIP_MAX off-screen targets -> +k chip untested")
+
+        # (c) 侧栏边行点击：fitPair 一次 tween 把链接两端框进视口
+        page.evaluate("""(sel) => {
+            const R = window.KG.renderer;
+            R.selected = null;
+            R.focusOn(sel, 1.25, 0);
+            R.selected = sel; R.draw();
+        }""", SEL_ID)
+        page.wait_for_timeout(200)
+        pt = page.evaluate("""(sel) => {
+            const R = window.KG.renderer;
+            const n = R.byId.get(sel);
+            const cs = R.centerScreen();
+            const cv = document.getElementById('cv').getBoundingClientRect();
+            const offs = [[0, 0]];
+            for (let f = 0.2; f <= 0.95; f += 0.15)
+                for (let t = 0; t < 6.28; t += Math.PI / 6) offs.push([Math.cos(t) * f, Math.sin(t) * f]);
+            for (const o of offs) {
+                const x = cs[0] + o[0] * n._sr, y = cs[1] + o[1] * n._sr;
+                const h = R.hitTest(x, y);
+                if (h && h.id === sel) return {x: cv.left + x, y: cv.top + y};
+            }
+            return null;
+        }""", SEL_ID)
+        if not pt:
+            warns.append("no click point resolves to the fixture node -> fitPair test skipped")
+            print("    !! no click point; skipping")
+        else:
+            page.mouse.click(pt["x"], pt["y"])
+            page.wait_for_timeout(600)
+            check("real click selects the fixture node",
+                  page.evaluate(STATE)["selected"] == SEL_ID)
+            row = page.evaluate("""(ids) => {
+                const lis = [...document.querySelectorAll('#sidebar li')];
+                const li = lis.find(l => l.dataset.self === ids[0] && l.dataset.target === ids[1]);
+                if (!li) return {found: false, rows: lis.length};
+                li.click();
+                return {found: true, rows: lis.length};
+            }""", [SEL_ID, TGT_ID])
+            print("    sidebar edge rows=%d, fixture row found=%s" % (row["rows"], row["found"]))
+            check("sidebar lists the fixture edge as a clickable row", row["found"], str(row["rows"]))
+            page.wait_for_timeout(900)
+            fit = page.evaluate("""(ids) => {
+                const R = window.KG.renderer;
+                const cam = R.camera, z = cam.zoom;
+                const [W, H] = R.size();
+                const box = (id) => {
+                    const n = R.byId.get(id);
+                    const sx = n.x * z + cam.panX, sy = n.y * z + cam.panY, sr = n._r * z;
+                    return [sx - sr, sy - sr, sx + sr, sy + sr];
+                };
+                const inside = (q) => q[0] >= 0 && q[2] <= W && q[1] >= 0 && q[3] <= H - 46;
+                const st = window.KG.state();
+                return {selected: st.selected, focusEdges: st.focusEdges, marks: st.marks,
+                        okA: inside(box(ids[0])), okB: inside(box(ids[1]))};
+            }""", [SEL_ID, TGT_ID])
+            print("    ", json.dumps(fit, ensure_ascii=False))
+            check("clicking the edge row selects the link target",
+                  fit["selected"] == TGT_ID, str(fit["selected"]))
+            check("fitPair frames both link ends inside the viewport", fit["okA"] and fit["okB"])
+            check("the framed pair still draws its focus edge + markers",
+                  fit["focusEdges"] >= 1 and fit["marks"] > 0,
+                  "focusEdges=%s marks=%s" % (fit["focusEdges"], fit["marks"]))
+            shot("13_fitpair")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(900)
+
     print("\n=== 8. search ===")
     page.fill("#search", "微分方程")
     page.keyboard.press("Enter")

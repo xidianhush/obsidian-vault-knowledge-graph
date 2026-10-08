@@ -9,9 +9,11 @@
 
 **布局重构（同心环 → circle packing）与用户的四条新要求都已实现并提交**；其后的**焦点模式**
 （选中即过滤连线 + 邻居蓝环，见 §4 坑 19、§5 调参表、§8 回归基准）已落地并提交（第10步），
-**连线端点标记**（两端截断 + 源点/箭头，见 §4 坑 20）也已落地并提交（第11步）。
+**连线端点标记**（两端截断 + 源点/箭头，见 §4 坑 20）也已落地并提交（第11步），
+**屏外焦点边兜底**（视口边箭头/圆点 + 屏外端点名字 chip + 侧栏边行点击 fitPair 框住两端，
+见 §4 坑 21/22、§5 调参表、§8 回归基准）已落地并提交（第12步）。
 数据侧（`build.py verify`）与浏览器侧
-（`browser_check.py`，73 项断言）自动校验全绿，截图人眼复看过。
+（`browser_check.py`，84 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
 
 图现在是 **Canvas2D 自绘 + circle packing 嵌套圆 + 10 层深度轴 + per-node 连续淡入淡出**：
@@ -46,6 +48,8 @@ a71a929  第 6 步：布局重构 —— 同心环 → circle packing（Python �
 2e1d0e9  第8步：浏览器回归套件适配 circle packing + 顶栏/hover 打磨
 51d338b  第9步：文档重写 —— README/HANDOFF 跟上 circle packing
 e8a48a8  第10步：焦点模式 —— 选中即过滤连线，无关节点不压暗
+60f7b3c  第11步：连线端点标记 —— 这条线从谁到谁，一眼读得出来
+(本提交)  第12步：屏外焦点边兜底 —— 视口边箭头 + 名字 chip，侧栏边行点击框住两端
 ```
 
 ```bash
@@ -53,7 +57,7 @@ cd D:/obsidian_vault/knowledge-graph
 python build.py build        # 生成 dist/knowledge-graph.html（单文件，实测 8704 KB ≈ 8.5 MB；
                              # 该值随 vault 内容漂移，不是固定不变量）
 python build.py verify       # 数据侧自动校验，应全绿
-python browser_check.py      # 浏览器侧 73 项断言 + 截图，应全绿
+python browser_check.py      # 浏览器侧 84 项断言 + 截图，应全绿
 python build.py watch        # 开发时挂上，改笔记/配置自动重建
 ```
 
@@ -107,15 +111,17 @@ Kimi WebBridge（`http://127.0.0.1:10086`）作为备选保留，但它有两个
 
 ```js
 KG.data / KG.renderer / KG.camera          // 内联 payload、渲染器、相机
-KG.state()      // {zoom, level, shownNodes, shownEdges, shownLabels, selected, hovered, search, labelMode, filterSet, camera}
+KG.state()      // {zoom, level, shownNodes, shownEdges, shownLabels, selected, hovered, search,
+                //  labelMode, filterSet, camera, focusEdges, focusNeighbors, marks, chips}
 KG.visible()    // = renderer.stats
 KG.setLevel(n) / KG.zoomToDepth(n)          // 跳到第 n 层（1..10）
 KG.select(id) / KG.runSearch(q) / KG.applyFilters()
 KG.revealOf(id) / KG.alphaOf(id) / KG.enterAt(z)
 KG.zMin / KG.zMax / KG.zHome
 // renderer 上还有：NODES byId hitTest minzoomOf descOf visibleLayerOf
-//                   setZoom zoomBy focusOn tweenTo resetView
+//                   setZoom zoomBy focusOn fitPair tweenTo resetView
 //                   hover selected filterSet matchSet labelMode centerScreen size
+//                   markJobs chipJobs（排队未落笔的端点标记与屏外 chip，回归断言直接读）
 ```
 
 `KG.revealOf(id)` 现在是 **`r`（世界半径）的兼容别名**——payload 字段早已从 `reveal` 改名成
@@ -131,7 +137,7 @@ knowledge-graph/
 ├── config.yaml          ← 唯一维护入口：公开范围 / zoom / weight / candidates / layout / lod / theme
 ├── build.py             CLI：scan | suggest | build | verify | watch | all   （303 行）
 ├── verify.py            数据侧自动校验（断言式，无测试框架）                   （460 行）
-├── browser_check.py     浏览器侧自动回归：73 项断言 + 截图                     （629 行）
+├── browser_check.py     浏览器侧自动回归：84 项断言 + 截图                     （784 行）
 ├── sync-graph.ps1       计划任务包装：防重入 lock + UTF-8 + 日志裁剪 400 行     （47 行）
 ├── kg/config.py         配置加载与校验（非法配置给中文报错）                    （194 行）
 ├── kg/scan.py           白名单 glob 扫描（include/exclude/exclude_notes）       （93 行）
@@ -143,8 +149,8 @@ knowledge-graph/
 ├── kg/ioutils.py        stdout UTF-8（`setup_stdout()`）                        （18 行）
 ├── kg/emit.py           输出 dist/graph.json 与自包含单文件 HTML                 （66 行）
 ├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（209 行）
-├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定、window.KG     （560 行）
-├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、聚合边、端点标记、拾取、标签竞争（1047 行）
+├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定、window.KG     （575 行）
+├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取、标签竞争（1286 行）
 ├── annotations.yaml     用户手工标注（权重/掌握度/别名/手工边）—— **目前是空的**
 ├── candidates.yaml      候选边（待审核）
 ├── sync-graph.log/.lock 运行时产物，gitignore
@@ -237,8 +243,11 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | 端点标记（home） | marks 34 / edges 24 | 箭头 17 + 源点 17；每个标记到所附圆边的间隙恒为 2px（= `edge_trim_clearance`），落在圆内 0 个 |
 | 端点标记（焦点模式） | shownEdges 24 / focusEdges 13 / marks 24 | 冷边（压到 7%）不产生可见标记 |
 | 端点标记（depth 6） | zoom 7.4480 / shownEdges 4 / marks 6 | 6 < 2×4，短边被 `edge_marker_min_len` 挡掉 |
+| 屏外焦点边（深缩放选中 fixture） | focusEdges 1 / chips 1 | 线止于视口边、挂朝外箭头 + 选中圆边源点；chip 文 = 屏外目标标题截 18 字（`kg_11_chip.png`） |
+| 侧栏边行点击 | fitPair 一次 tween 框住两端 | 框住后 selected 切到对端、focusEdges ≥1 且 marks >0，连接箭头直接可见（`kg_13_fitpair.png`） |
+| chip 上限 | 18 组缩放×选中组合 chips ≤ CHIP_MAX+1 | 本数据单帧最多 3 枚 chip，`+k` 折叠未触发（warn 条件跳过，非失败） |
 | console error / pageerror | 0 | |
-| `browser_check.py` | **73 [ok] / 0 warn / 0 FAIL** | ALL BROWSER CHECKS PASSED |
+| `browser_check.py` | **84 [ok] / 2 warn / 0 FAIL** | ALL BROWSER CHECKS PASSED；2 条 warn 都是条件跳过（zoom 天花板处找不到空视口 → bug B 跳过；无 hub 产出超 CHIP_MAX 的屏外目标 → `+k` chip 未实测），不是失败 |
 
 `python build.py verify` → `✓ 全部自动校验通过`。其中最该盯的几条：
 3482 个节点里坐标重合的 355 对**全是父子关系**（独子链同心；非父子重合 0 对）；
@@ -267,6 +276,9 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
   （`kgv_B_focus.png`）。
 - **祖先链点线与链接实线不再混淆**：祖先链改成 `[1, 4]` 圆头点线，一眼能跟链接边分开；
   右下角图例也补了这两行的说明。
+- **屏外端点也有去向**：焦点边一端在屏外时，线止于视口边缘、挂箭头/圆点，旁边一枚写着
+  屏外端点名字的 chip（截 18 字）；点侧栏对应边行则一次动画把链接两端框进屏幕
+  （截图 `kg_11_chip.png` / `kg_13_fitpair.png`）。
 
 ---
 
@@ -372,7 +384,7 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 
 17. **半径是「相对父节点分到的份额」，不是「绝对内容量」——别拿跨分支的圆比大小。**
     深层两个叶子数相同的节点，半径可以差几倍，取决于各自路径上的累积缩放。这是有意为之：
-    用户要的是**包含关系**（文件夹 > 其内笔记 > 其内标题）与**同级相对大小**（同层里内容多的
+    用户要的是**包含关系**（文件夹 > 其内笔记 > 其内标题）与**同级相对大小**（同层内容多的
     更大），这两条都完整保留；跨分支比较绝对大小从来不是这张图的读法。
     如果你想把它「修」成半径 = f(叶子数) 的全局函数，先回去读 `kg/layout.py` 开头 docstring
     里那笔账：自底向上递推会让 10 层累积出 10⁵~10⁶ 倍半径比、要 100+ 格滚轮才走得完。
@@ -392,22 +404,48 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
     「焦点是聚合端点的后代」这一整类边。
 
 20. **箭头一直存在，「看不见」是四个原因叠加 —— 别再去加一个「显示箭头」的开关。**
-   用户报「看不出连线从哪到哪」时，`drawEdges` 里其实早就在画箭头了。它看不见是：
-   ① **边色 == 节点色**，`theme.edges.derives` 与 `theme.domains["Science and Tech"]`
+    用户报「看不出连线从哪到哪」时，`drawEdges` 里其实早就在画箭头了。它看不见是：
+    ① **边色 == 节点色**，`theme.edges.derives` 与 `theme.domains["Science and Tech"]`
       是同一个 `#4C8DFF`（`config.yaml:157` vs `:148`），箭头贴在圆边上等于隐形；
-   ② 线是**圆心到圆心**画的，两端都插进圆里，箭头正好落在被实心圆盖住的区段上
+    ② 线是**圆心到圆心**画的，两端都插进圆里，箭头正好落在被实心圆盖住的区段上
       （边那趟在节点那趟之前）；
-   ③ 箭头只有约 **5.4px**，还要再乘 0.45 的 alpha；
-   ④ 画在 `drawNodes` **之前**，packing 里圆是相切的，紧贴的邻圆能把它整个盖掉。
-   现在的解法对应四条：两端各截断 `lod.edge_trim_clearance` 像素（线不再进圆心）、
-   标记改用 `MARK_RGB`（边色向 `#d6dbe4` 混白 `lod.edge_marker_tint`，与节点色拉开）、
-   箭头尺寸跟线宽走并夹在 `[7,14]`、落笔单独一趟排在 `drawNodes` 之后。
-   顺带：短于 `lod.edge_marker_min_len` 的边**整条不画**（线也不画），
-   否则密集层会剩下一堆盖不住圆边的短箭头。
-   还有一处「虚线」误认：用户看到的虚线是 `drawChainHighlight` 的**祖先链**（包含关系），
-   不是链接边。它现在改成 `setLineDash([1, 4])` 的圆头点线，跟链接边彻底区分开；
-   另两处虚线（contrast `[5,4]`、mastery≤3 `[2,2]`）当前**零数据**——contrast 0 条、
-   108 篇笔记的 mastery 全是 0，所以永远看不到。
+    ③ 箭头只有约 **5.4px**，还要再乘 0.45 的 alpha；
+    ④ 画在 `drawNodes` **之前**，packing 里圆是相切的，紧贴的邻圆能把它整个盖掉。
+    现在的解法对应四条：两端各截断 `lod.edge_trim_clearance` 像素（线不再进圆心）、
+    标记改用 `MARK_RGB`（边色向 `#d6dbe4` 混白 `lod.edge_marker_tint`，与节点色拉开）、
+    箭头尺寸跟线宽走并夹在 `[7,14]`、落笔单独一趟排在 `drawNodes` 之后。
+    顺带：短于 `lod.edge_marker_min_len` 的边**整条不画**（线也不画），
+    否则密集层会剩下一堆盖不住圆边的短箭头。
+    还有一处「虚线」误认：用户看到的虚线是 `drawChainHighlight` 的**祖先链**（包含关系），
+    不是链接边。它现在改成 `setLineDash([1, 4])` 的圆头点线，跟链接边彻底区分开；
+    另两处虚线（contrast `[5,4]`、mastery≤3 `[2,2]`）当前**零数据**——contrast 0 条、
+    108 篇笔记的 mastery 全是 0，所以永远看不到。
+
+21. **「侧栏有这条边、画布却没有线」是三道门叠加 —— 别加「全部显示」开关。**
+    侧栏入边/出边列表读的是**原始边表**（app.js `edgesOf`），没有尺度概念；画布上这条链接
+    要在当前尺度画出来，得过 `drawEdges` 里的三道门：
+    ① **聚合门**：聚合后两端落在**同一个祖先圆**里（`sa === sb`，包含关系已由嵌套圆表达，线不画）；
+    ② **聚合索引门**：聚合索引在这一层**没有代表**；
+    ③ **在屏门**：任一端点当帧**不在屏上**（`alpha.get(sa)` / `alpha.get(sb)` 取不到——
+      `alpha` 只含本帧过了视口裁剪 + 淡入的节点）。
+    用户实测的死区正是三门叠加的三段：home 时 `sa === sb`（两端聚进同一祖先）；中等缩放时
+    选中圆还没淡入、箭头没有附着点；深缩放时目标必在屏外。
+    用户曾提议「选中后不管缩放比，把它自己和它全部子孙元素的出/入边箭头全显示」——驳回，
+    理由三条：屏外目标端的箭头**本身不可见**（指向虚空）；粗缩放比下选中圆还没淡入、
+    箭头**没有附着点**；子孙元素的全量边在粗尺度是几十上百条线 = 回到最初抱怨的「太乱了」。
+    正确的后路是坑 22 的兜底，而不是放宽三道门。
+
+22. **屏外焦点边兜底：视口边箭头 + 名字 chip + 侧栏边行 fitPair。**
+    焦点边一端在屏外时：连线**止于视口边缘**，止点挂箭头/圆点指示方向（箭头 = 屏外那一端
+    是被指向的，即屏外端 = target；圆点 = 屏外端 = source），另一端的标记照旧附着在屏内圆边；
+    止点旁再挂一枚写着**屏外端点名字**的 chip（`chipLabel` 截 18 字 + `…`）。
+    实现要点：`drawEdges` / `drawFocusEdges` 只往 `chipJobs` 排队，真正落笔在 `drawChips`
+    的**屏幕空间**趟（`drawLabels` 之后、最顶层，不参与世界坐标的遮挡关系）；chip 同时最多
+    `CHIP_MAX` 枚（读 `lod.focus_offscreen_chips`，缺省 8），超出截断并在右下角补一枚右锚的
+    `+k` 折叠 chip（定位避开 `FOOTER_H`）；**两端都在屏外时不画线也不挂 chip**（没有屏内附着点，
+    画出来也是指向虚空）。chip **不可点击**，`hitTest` 只认节点圆；导航走侧栏边行
+    （`li` 带 `data-self` / `data-target`，点击 → `R.fitPair(idA, idB)` 一次 tween 框住两端，
+    并把选中切到对端）。
 
 ---
 
@@ -435,6 +473,7 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | 标签参与竞争的门槛 | `lod.label_alpha`（0.55） | 读的是**未被 `parent_dim` 压暗的**淡入进度（§4.8）。标签另受 24px 碰撞网格与每帧 400 条预算限制 |
 | 弱聚合边压暗阈值 | `lod.weak_edge_min_count`（2） | 聚合边 `count` 低于此值时压到 45% 不透明度（关系弱，别抢戏） |
 | 焦点模式无关连线压到多少 | `lod.focus_edge_dim`（0.07） | 选中节点后，与它（含其内部子元素）无关的连线压到此不透明度。**0 = 彻底不画**，1 = 不压暗。默认 7% 是有意留残影：保住「这片区域连得多密」的环境感知（Obsidian graph view 也是淡到约 10% 而非删掉） |
+| 屏外端点名字 chip 最多挂几枚 | `lod.focus_offscreen_chips`（8） | 焦点边一端在屏外时，视口边止点旁挂写屏外端点名的 chip（§4.22）。超出截断、右下角折叠成一枚 `+k`；设 0 = 全部折叠成 `+k`（视口边箭头/圆点照旧） |
 | hover 时连线压到多少 | `lod.hover_edge_dim`（0.75） | 只轻微提亮、不过滤。hover 每帧重算（`evalHover`），相机 tween 时会连续换节点，做强过滤会频闪 |
 | **连线两端离圆边多远截断** | `lod.edge_trim_clearance`（2） | 屏幕像素。线不再画到圆心，两端各留这么宽的空隙，端点标记正好落在这里。0 = 线插进圆心（箭头会被圆盖掉，§4.20）。调大 → 线和标记离圆更远，短边更容易被 `edge_marker_min_len` 判死 |
 | **多短的边不画端点标记** | `lod.edge_marker_min_len`（20） | 屏幕像素。截断后剩余长度低于此值的边**整条不画**（线也一起不画），免得密集层剩一堆盖不住圆边的碎箭头。调小 → 深层标记更多更碎；调大 → 只有长边才有方向信息 |
@@ -462,6 +501,9 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 `MARK_LIGHT`（`#d6dbe4`）与 `MARK_RGB`（按 tint 预混好的标记色表）是硬编码的，
 换主题配色时要一起看。
 
+`CHIP_MAX` 同模式读 `lod.focus_offscreen_chips`（缺省 8）；折叠的 `+k` chip 右锚在
+`(W-12, H-FOOTER_H-12)`，即右下角、避开 footer 预留带——改 `FOOTER_H` 会连带挪它。
+
 ---
 
 ## 6. 待办清单（按建议顺序）
@@ -469,8 +511,9 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 **P0 — 已完成**：看图验收；两个改进需求（同步方案、实心圆/细线/跨层级链接淡入淡出）；
 **布局重构（同心环 → circle packing）+ 用户四条新要求**（同级内容多者圆更大 / 层级间大小
 有区分 / 子在父内且同色 / 地图式淡入淡出）；**焦点模式**（选中即过滤连线 + 邻居蓝环）；
-**连线端点标记**（两端截断 + 源点/箭头 + 标记提亮 + 祖先链改点线 + 图例说明），
-Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交（第10步、第11步）。
+**连线端点标记**（两端截断 + 源点/箭头 + 标记提亮 + 祖先链改点线 + 图例说明）；
+**屏外焦点边兜底**（视口边箭头/圆点 + 屏外端点名字 chip + 侧栏边行点击 fitPair 框住两端），
+Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交（第10步、第11步、第12步）。
 
 **P1 — 让「掌握度/重要度」真正起作用**
 `annotations.yaml` 是空的，108 篇笔记 `mastery` 全是 0，暗色细边看不出来。
@@ -523,7 +566,8 @@ python build.py build      # 笔记 108 / 文件夹 35 / 标题 3339 / 节点 34
                            # 深度轴 10 / 语义边 92 / 包含边 3476 / 标题级链接 66（未命中 12）
                            # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 8704 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过
-python browser_check.py    # 必须 73 [ok] / 0 warn / 0 FAIL / ALL BROWSER CHECKS PASSED
+python browser_check.py    # 必须 84 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED
+                           # （warn 只允许条件跳过，不允许失败）
 node --check web/app.js && node --check web/render.js   # 前端语法（一次只查一个文件）
 ```
 
@@ -554,6 +598,17 @@ KG.renderer.setZoom(KG.zMin); KG.visible()
 #   home:    marks 34 = 箭头 17 + 源点 17；每个标记到所附圆边间隙恒为 2px；圆内 0 个
 #   depth 6: zoom 7.4480 / shownEdges 4 / marks 6（< 2×4，短边被 min_len 挡掉）
 #   不变量：marks ≤ 2 × 画出的边数，且 minGap ≈ maxGap ≈ edge_trim_clearance
+
+# 屏外兜底基线（7d 小节自动断言，读 KG.renderer.chipJobs）：
+#   深缩放选中 fixture（SEL = 理解傅利叶变换&频谱密度的几何意义，
+#                       TGT = 5.1.2 定积分的定义(本质是求和的极限)）：
+#     focusEdges 1 / chips 1；线止视口边挂朝外箭头 + 选中圆边源点；
+#     chip 文以「5.1.2 定积分的定义」开头（chipLabel 截 18 字）
+#   侧栏出边行点击 → fitPair 一次 tween 框住两端（两个包围盒都在视口内），
+#     且 selected 切到 TGT、focusEdges ≥1 / marks >0
+#   18 组缩放×选中组合：chips ≤ CHIP_MAX+1、无折叠（本数据单帧最多 3 枚 chip，
+#     +k 分支 warn 条件跳过）
+#   不变量：chip 数 ≤ 当帧屏外端焦点边数；两端屏外的边不产线也不产 chip
 ```
 
 改完视觉**必须重新截图并人眼看**：`python browser_check.py` 后 ReadMediaFile `%TEMP%\kg_0*.png`。
