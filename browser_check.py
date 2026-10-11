@@ -524,20 +524,35 @@ with sync_playwright() as p:
     # 挡掉之后画布上「这条链接指向谁」一度一个像素的线索都没有。这一轮补了两条后路：
     # 一端屏外时连线止于视口边缘、挂箭头 + 写著屏外端点名字的 chip；侧栏边行点击
     # 一次 tween 把链接两端一起框进视口（fitPair）。这里用真实相机钉住两条后路。
-    SEL_ID = ("Science and Tech/Electronic engineering/Electronic engineering basic/信号与系统#分解信号/"
-              "连续时间傅里叶正反变换(CTFT)/连续时间非周期信号的傅利叶变换(表示)/"
-              "理解傅利叶变换&频谱密度的几何意义")
-    TGT_ID = ("Science and Tech/Mathematics Basic/Calculus#5 定积分/5.1 定积分的概念和性质/"
-              "5.1.2 定积分的定义(本质是求和的极限)")
-    have_pair = page.evaluate("""(ids) => {
+    # fixture 按**后缀**解析，不写完整路径：笔记一改名路径就失效，7d 会静默跳过
+    # （2026-10-10 用户把 信号与系统.md 改名成 LTI analysis.md 之后正是如此）。
+    # 后缀是稳定的语义锚点，改名不该让回归覆盖凭空少十几条断言。
+    SEL_TAIL = "理解傅利叶变换&频谱密度的几何意义"
+    TGT_TAIL = "5.1.2 定积分的定义(本质是求和的极限)"
+    pair = page.evaluate("""(tails) => {
         const R = window.KG.renderer;
-        return !!R.byId.get(ids[0]) && !!R.byId.get(ids[1]) &&
-               R.SEM.some(e => (e.s === ids[0] && e.t === ids[1]) || (e.s === ids[1] && e.t === ids[0]));
-    }""", [SEL_ID, TGT_ID])
-    if not have_pair:
+        const find = (t) => {
+            let best = null;
+            for (const [id, n] of R.byId) {
+                if (!(id.endsWith('/' + t) || id.endsWith('#' + t))) continue;
+                if (!best || n.depth < best.depth ||
+                    (n.depth === best.depth && n._r > best._r)) best = n;
+            }
+            return best;
+        };
+        const a = find(tails[0]), b = find(tails[1]);
+        if (!a || !b) return null;
+        const linked = R.SEM.some(e => (e.s === a.id && e.t === b.id) ||
+                                       (e.s === b.id && e.t === a.id));
+        return linked ? [a.id, b.id] : null;
+    }""", [SEL_TAIL, TGT_TAIL])
+    if not pair:
         warns.append("fixture edge SEL->TGT missing from payload -> 7d skipped")
         print("    !! fixture edge not found; skipping")
     else:
+        SEL_ID, TGT_ID = pair
+        print("    fixture resolved: SEL=…/%s  TGT=…/%s"
+              % (SEL_ID.split("/")[-1], TGT_ID.split("/")[-1]))
         # (a) 深缩放：选中圆在屏、链接目标屏外 -> 线止于视口边，箭头与 chip 都该在
         a = page.evaluate("""(ids) => {
             const R = window.KG.renderer;

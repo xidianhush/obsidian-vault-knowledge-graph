@@ -12,6 +12,8 @@
 **连线端点标记**（两端截断 + 源点/箭头，见 §4 坑 20）也已落地并提交（第11步），
 **屏外焦点边兜底**（视口边箭头/圆点 + 屏外端点名字 chip + 侧栏边行点击 fitPair 框住两端，
 见 §4 坑 21/22、§5 调参表、§8 回归基准）已落地并提交（第12步）。
+**标签字号绑屏幕半径 + 淡入淡出平滑**（见 §4 坑 23、§5 调参表）已落地，
+在工作区**待提交**（第13步）。
 数据侧（`build.py verify`）与浏览器侧
 （`browser_check.py`，84 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
@@ -49,7 +51,8 @@ a71a929  第 6 步：布局重构 —— 同心环 → circle packing（Python �
 51d338b  第9步：文档重写 —— README/HANDOFF 跟上 circle packing
 e8a48a8  第10步：焦点模式 —— 选中即过滤连线，无关节点不压暗
 60f7b3c  第11步：连线端点标记 —— 这条线从谁到谁，一眼读得出来
-(本提交)  第12步：屏外焦点边兜底 —— 视口边箭头 + 名字 chip，侧栏边行点击框住两端
+0c65afd  第12步：屏外焦点边兜底 —— 视口边箭头 + 名字 chip，侧栏边行点击框住两端
+(工作区)  第13步：标签字号绑屏幕半径 + 淡入淡出平滑 —— 字有大小层次，淡入不再跳变
 ```
 
 ```bash
@@ -227,12 +230,12 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 
 | 项 | 实测 | 备注 |
 |---|---|---|
-| home 初始视角 | zoom 0.4612 / level 1 / 节点 55 / 边 24 / 标签 26 | 画布非底色采样点 3936（判据 >50） |
-| 标签三模式 | auto 26 → off 0 → on >0 → 回 auto 26 | `on` 另受每帧 400 条预算限制 |
-| 20 格下滚到地板 | zoom 命中 `zMin` 0.4274 / level 1 | 6 个学科根全部可见，shownNodes 落在 40..120 |
-| 48 格上滚到顶 | zoom 66.3750 / level 10 / 节点 1 | zoom 与 level 全程单调，无 NaN |
+| home 初始视角 | zoom 0.4612 / level 1 / 节点 55 / 边 24 / 标签 27 | 画布非底色采样点 3936（判据 >50） |
+| 标签三模式 | auto 27 → off 0 → on 27 → 回 auto 27 | `on` 另受每帧 400 条预算限制 |
+| 20 格下滚到地板 | zoom 命中 `zMin` 0.4278 / level 1 | 6 个学科根全部可见（此刻 25 个标签），shownNodes 落在 40..120 |
+| 48 格上滚到顶 | zoom 66.1404 / level 10 / 节点 1 | zoom 与 level 全程单调，无 NaN |
 | 天花板中心 → 平移 (290,65) | shownNodes 1 → 0 | 兜底提示像素 [89,95,109]，与底色 [15,17,22] 可区分 |
-| 双击屏上最小圆 | zoom 1.0480 → 22.7850 | |
+| 双击屏上最小圆 | zoom 1.0880 → 23.7310 | |
 | 双击空白（先把视口拖出所有内容） | level 1 / zoom 0.4610 | vs `zHome` 0.4612，容差 2% |
 | 搜索「微分方程」 | 16 命中 | |
 | 学科过滤 | shownNodes 55 → 2 | 取消过滤后回到 55 |
@@ -447,6 +450,39 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
     （`li` 带 `data-self` / `data-target`，点击 → `R.fitPair(idA, idB)` 一次 tween 框住两端，
     并把选中切到对端）。
 
+23. **标签字号绑「屏幕半径」而不是绑 `depth`**（用户 2026-10-10 提的
+    「文字大小和层级绑定」需求最终是这样落地的）：
+    `depth` 是复合轴（`heading.depth = 笔记 depth + 标题级别`），而半径是内容驱动
+    （circle packing 按同级内容多少给面积），两者不成正比。反例：zoom 地板那 6 个
+    学科根同为 depth-1，世界半径却差 **16.22×**（Science and Tech 717.2 /
+    Medical and Health 44.2）——按 depth 分档会让铺满全屏的根和一枚 20px 小圆点
+    同字号。屏幕半径 `_sr` 才是既有的 LOD 轴（`minzoom`、圆内/圆外摆放、视口裁剪
+    都读它），且半径沿包含链严格递减 ⇒ 屏幕半径档位天然就是层级档位。
+    + 公式 `fs = round(clamp(F_MIN + (F_MAX-F_MIN)*ln(sr/min_px)/ln(ref/min_px), F_MIN, F_MAX))`
+      —— 对数插值才有尺度不变性（缩放是乘法，线性插值会让字号在中间段跳得太快）。
+    + **必须取整**：`measure()` 的缓存 key 是 font 字符串，不取整等于每帧每个标签
+      都新造一条缓存；而且 `browser_check.py:194` 要求三模式切回 auto 后
+      `shownLabels` 精确复现，亚像素字号会让碰撞网格的判定漂。
+    + 两条**宽度不变量**，缺一不可：① 圆内标签宽度 `<= 1.8*sr`，装不下就把
+      `inside` 翻成 false 挂圆外（判定时用最小字号试，避免大字号把能装下的挤出去）；
+      ② 圆外标签宽度 `<= lod.label_max_width`，超宽用 `clipLabel` 二分出最长前缀 + `…`。
+      完整名字不丢——tooltip 和搜索走的是 `m.name`，不受截断影响。
+    + `clipCache` 的 key 是 `(节点 id, font)`，同一节点在不同字号下各存一条，
+      上界是「同屏标签数 × 字号档位数」，有界不泄漏。
+    + `lod.label_smooth_dim` 只换了标签**落笔浓度**的读取路径（`fillAlphaOf`
+      替代 `alpha.get`），候选**排序**仍读 `alpha.get()`。这是有意的不对称：
+      排序要的是稳定的优先级，落笔要的是连续过渡。
+
+24. **回归套件的 fixture 不要写完整路径**（2026-10-10 踩到）：`browser_check.py` 的 7d/侧栏
+    用例原先把 SEL/TGT 硬编码成 `…/信号与系统#分解信号/…` 这样的**全路径**，
+    用户把笔记改名成 `LTI analysis.md` 之后路径失配，`have_pair` 为假 →
+    整段 7d 被当成「条件跳过」warn 掉，套件依旧 `ALL BROWSER CHECKS PASSED`，
+    **但屏外 chip / fitPair 那 12 条断言已经悄悄不再跑了**（`[ok]` 从 84 掉到 72，
+    这是唯一的可见信号）。现在改成按**后缀**解析：在 `R.byId` 里找 id 以
+    `/TAIL` 或 `#TAIL` 结尾的节点，再确认两端确实有语义边，解析不出来才 warn。
+    教训：**「warn 只允许条件跳过」这条规矩本身不够**，还得盯 `[ok]` 总数有没有掉 ——
+    条件跳过和覆盖丢失长得一模一样。
+
 ---
 
 ## 5. 调参地图
@@ -470,7 +506,11 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | 整体旋转 | `layout.start_angle`（-90） | 打包完再整体旋转的角度。**同输入必得同输出**是同步任务的硬要求，别引入随机性 |
 | **浮现早晚（最小屏幕半径）** | `lod.min_px`（18） | 一个圆值得被画出来所需的最小屏幕**半径**（不是间距）。它同时决定 `zMin`（最小学科根在 `zMin` 处恰好是 `min_px × zoom_out_floor`）与同屏圆数上界 `(视口半径/min_px)²`。调小 → 同屏更挤、缩放跨度整体拉长 |
 | 淡入带宽 | `lod.fade_span`（1.35） | zoom 从 `minzoom/fade_span` 升到 `minzoom`，alpha 从 0 走到 1。滚轮每格 1.12 ⇒ 约 2.6 格淡完，不会突兀 |
-| 标签参与竞争的门槛 | `lod.label_alpha`（0.55） | 读的是**未被 `parent_dim` 压暗的**淡入进度（§4.8）。标签另受 24px 碰撞网格与每帧 400 条预算限制 |
+| 标签参与竞争的门槛 | `lod.label_alpha`（0.12） | 读的是**未被 `parent_dim` 压暗的**淡入进度（§4.8）。门槛是「低于它完全不画」的**硬开关**：0.55 会让文字在 55% 不透明度处啪地弹出，0.12 才拿到真正的 0→1 淡入淡出（多出的 zoom 带宽仅 1.096×，约 +24 个候选，远低于预算）。标签另受 24px 碰撞网格与每帧 400 条预算限制 |
+| 标签字号下限/上限/参考半径 | `lod.label_font_min`（11）/ `label_font_max`（22）/ `label_font_ref`（300） | 字号绑**屏幕半径**而非 depth：`fs = round(min + (max−min) × ln(sr/min_px) / ln(ref/min_px))`，落点 18→11、40→14、100→17、≥300→22（§4.23）。**不要改成按 depth 分档** |
+| 浅层标签半粗门槛 | `lod.label_bold_depth`（2） | depth ≤ 此值的标签用 600 半粗。粗细是「类别」信号、字号是「尺度」信号，两者不冲突 |
+| 圆外标签最大宽度 | `lod.label_max_width`（180） | 缩到 `label_font_min` 还超宽就截断加 `…`（完整名字在 tooltip/搜索里）；圆内连下限字号都装不下的长名字自动改挂圆外再受本键收口（§4.23） |
+| 标签压暗是否走平滑版 | `lod.label_smooth_dim`（true） | true = 标签不透明度跟 `fillAlphaOf`（随最先浮现的孩子同步渐变）；false = 回到 `alphaOf` 的硬跳变（越过 `_gate` 时祖先标签从 ~1.0 瞬跳到 `parent_dim`）。**只换落笔浓度**：候选排序仍读 `alpha.get()` |
 | 弱聚合边压暗阈值 | `lod.weak_edge_min_count`（2） | 聚合边 `count` 低于此值时压到 45% 不透明度（关系弱，别抢戏） |
 | 焦点模式无关连线压到多少 | `lod.focus_edge_dim`（0.07） | 选中节点后，与它（含其内部子元素）无关的连线压到此不透明度。**0 = 彻底不画**，1 = 不压暗。默认 7% 是有意留残影：保住「这片区域连得多密」的环境感知（Obsidian graph view 也是淡到约 10% 而非删掉） |
 | 屏外端点名字 chip 最多挂几枚 | `lod.focus_offscreen_chips`（8） | 焦点边一端在屏外时，视口边止点旁挂写屏外端点名的 chip（§4.22）。超出截断、右下角折叠成一枚 `+k`；设 0 = 全部折叠成 `+k`（视口边箭头/圆点照旧） |
@@ -491,7 +531,8 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 | `LABEL_CELL` | 24 | 标签碰撞网格边长（屏幕像素） |
 | `LABEL_BUDGET` | 400 | 每帧最多考虑多少个标签候选 |
 | `CULL_MARGIN` | 32 | 视口外扩余量。裁剪必须**按半径外扩**：大圆的中心常常在屏幕外，圆本身却铺满整屏 |
-| `LABEL_INSIDE_PX` | 28 | 屏幕半径超过这个值的容器，标签压在圆内顶部而不是圆心 |
+| `LABEL_INSIDE_PX` | 28 | 屏幕半径超过这个值的容器，标签压在圆内顶部而不是圆心；亦是「圆内装不下就改挂圆外」的条件之一（§4 坑 23） |
+| `FONT` | 系统字体栈 | **字号不是常量**：由 `labelFontSize(sr)` + `fitFont` + `clipLabel` 三个函数按屏幕半径算出来（调参走 `lod.label_font_*`，见 §5）。行高 `hpx = fs + 4`；圆内摆放 `sy = cys - sr + fs*0.5 + 4`，任何字号下文字上边界都离圆描边 2px |
 
 旧表里的 `HIT_CELL` **已不存在**：拾取不再用网格，`hitTest` 就是对 `lastDrawn` 的线性扫描
 （同屏圆数被 `min_px` 钉成常数上界，最多一百多个，不需要空间索引）。
@@ -514,6 +555,13 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
 **连线端点标记**（两端截断 + 源点/箭头 + 标记提亮 + 祖先链改点线 + 图例说明）；
 **屏外焦点边兜底**（视口边箭头/圆点 + 屏外端点名字 chip + 侧栏边行点击 fitPair 框住两端），
 Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交（第10步、第11步、第12步）。
+
+**P0 — 已完成，待提交**：**标签字号绑屏幕半径 + 淡入淡出平滑**（§4 坑 23）
+—— 新增 6 个 `lod.label_*` 键（字号三键 / bold_depth / max_width / smooth_dim）
+并把 `label_alpha` 从 0.55 降到 0.12，观感不满意可以**全部在 `config.yaml` 里回退**，
+不用碰代码；渲染侧与浏览器回归套件都已适配（`verify` 全绿、`browser_check` 84 [ok] / 0 FAIL、
+截图已人眼复核）。同批还修了回归套件的 fixture：改成按后缀解析，笔记改名不再让 7d
+整段静默跳过（§4 坑 24）。待提交（第13步）。
 
 **P1 — 让「掌握度/重要度」真正起作用**
 `annotations.yaml` 是空的，108 篇笔记 `mastery` 全是 0，暗色细边看不出来。
@@ -556,6 +604,9 @@ Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交�
 - **不要在没跟用户确认的情况下改 `alphaOf` 的函数体**——那条淡入淡出曲线
   （`smoothstep(minzoom/fade_span, minzoom, zoom)`）用户已经人眼验收过，一字未改。
   要调观感先动 `lod.fade_span` / `zoom.parent_dim` 这些系数。
+  （2026-10-10 那轮只换了标签不透明度的**读取路径**：`lod.label_smooth_dim`
+  默认 true 时落笔浓度改读 `fillAlphaOf`，消除越 `_gate` 时 ~1.0 → parent_dim
+  的瞬跳；候选排序仍读 `alpha.get()`。`alphaOf` 函数体一字未动。）
 
 ---
 
@@ -567,7 +618,8 @@ python build.py build      # 笔记 108 / 文件夹 35 / 标题 3339 / 节点 34
                            # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 8704 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过
 python browser_check.py    # 必须 84 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED
-                           # （warn 只允许条件跳过，不允许失败）
+                           # （warn 只允许条件跳过，不允许失败；[ok] 数掉下去
+                           #   就说明有用例被跳过了 —— 见 §4 坑 24）
 node --check web/app.js && node --check web/render.js   # 前端语法（一次只查一个文件）
 ```
 
@@ -580,9 +632,9 @@ node --check web/app.js && node --check web/render.js   # 前端语法（一次�
 浏览器里再确认（数字应与 §3 的表一致）：
 
 ```js
-KG.state()                 // zoom 0.4612 / level 1 / shownNodes 55 / shownEdges 24 / shownLabels 26
-KG.zMin                    // 0.4274   （最小学科根决定 × zoom_out_floor 1.05）
-KG.zMax                    // 66.3753  （最挤节点 minzoom × zoom_in_ceiling 1.35）
+KG.state()                 // zoom 0.4612 / level 1 / shownNodes 55 / shownEdges 24 / shownLabels 27
+KG.zMin                    // 0.4278   （最小学科根决定 × zoom_out_floor 1.05）
+KG.zMax                    // 66.1404  （最挤节点 minzoom × zoom_in_ceiling 1.35）
 KG.zHome                   // 0.4612   （home_fit 1.08）
 KG.renderer.setZoom(KG.zMin); KG.visible()
                            // 6 个学科根全部可见，**且它们的子圆也仍在画面里** ——
