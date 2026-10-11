@@ -12,8 +12,7 @@
 **连线端点标记**（两端截断 + 源点/箭头，见 §4 坑 20）也已落地并提交（第11步），
 **屏外焦点边兜底**（视口边箭头/圆点 + 屏外端点名字 chip + 侧栏边行点击 fitPair 框住两端，
 见 §4 坑 21/22、§5 调参表、§8 回归基准）已落地并提交（第12步）。
-**标签字号绑屏幕半径 + 淡入淡出平滑**（见 §4 坑 23、§5 调参表）已落地，
-在工作区**待提交**（第13步）。
+**标签字号绑屏幕半径 + 淡入淡出平滑**（见 §4 坑 23、§5 调参表）已落地并提交（第13步）。
 数据侧（`build.py verify`）与浏览器侧
 （`browser_check.py`，84 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
@@ -52,7 +51,7 @@ a71a929  第 6 步：布局重构 —— 同心环 → circle packing（Python �
 e8a48a8  第10步：焦点模式 —— 选中即过滤连线，无关节点不压暗
 60f7b3c  第11步：连线端点标记 —— 这条线从谁到谁，一眼读得出来
 0c65afd  第12步：屏外焦点边兜底 —— 视口边箭头 + 名字 chip，侧栏边行点击框住两端
-(工作区)  第13步：标签字号绑屏幕半径 + 淡入淡出平滑 —— 字有大小层次，淡入不再跳变
+b528d2d  第13步：标签字号绑屏幕半径 + 淡入淡出平滑 —— 字有大小层次，淡入不再跳变
 ```
 
 ```bash
@@ -84,7 +83,7 @@ python build.py watch        # 开发时挂上，改笔记/配置自动重建
 | vault | `D:/obsidian_vault/hush-ob-bucket`（**不要修改里面的笔记**） |
 | 本项目 | `D:/obsidian_vault/knowledge-graph`（vault 同级，不在 vault 内） |
 | 已有计划任务 | `Quartz Site Auto Sync`：每 30 分钟，从 :24 起算（:24 / :54） |
-| 本项目计划任务 | `sync-graph.ps1`，每 30 分钟从 :07 起算（:07 / :37）——与上面那个错开 17 分钟避免撞车。**注册/取消命令给用户自己执行**（见 §7） |
+| 本项目计划任务 | `sync-graph.ps1`，每 30 分钟从 :07 起算（:07 / :37）——与上面那个错开 17 分钟避免撞车。**注册/取消命令给用户自己执行**（见 §7）。⚠️ `schtasks /Create` 默认带 `DisallowStartIfOnBatteries=true` + `StopIfGoingOnBatteries=true`：**笔记本只要在用电池，这个任务就一次都不会跑**（请求返回成功、进程根本不启动、日志不写、`上次结果` 仍是 0）——极难发现，注册后必须按 §4 坑 25 把这两条关掉 |
 
 ### 自动化看页面的正路（已换掉）
 
@@ -482,6 +481,34 @@ minzoom × `zoom_in_ceiling` 1.35）、`zHome = 0.4612`（`home_fit` 1.08）。�
     `/TAIL` 或 `#TAIL` 结尾的节点，再确认两端确实有语义边，解析不出来才 warn。
     教训：**「warn 只允许条件跳过」这条规矩本身不够**，还得盯 `[ok]` 总数有没有掉 ——
     条件跳过和覆盖丢失长得一模一样。
+
+25. **`schtasks /Create` 默认禁止在电池上运行计划任务**（2026-10-11 踩到，用户报的
+    「并没有后台每 30 分钟重建一次」的第二层根因）。默认写入的设置是
+    `DisallowStartIfOnBatteries=true` + `StopIfGoingOnBatteries=true`，
+    而用户是笔记本：只要在用电池，任务就**一次都不会跑**，症状极具欺骗性 ——
+
+    | 观察 | 表面读到的 |
+    |---|---|
+    | `schtasks /Run` 返回「成功: 已尝试运行」 | 以为跑了 |
+    | 任务属性 `上次结果: 0` | 以为是成功 |
+    | 其实：进程没起、lock 没建、日志没写、dist 没动 | 真正的信号 |
+    | 任务 XML `<Settings>` 里 `...OnBatteries=true`；`(Get-CimInstance Win32_Battery).BatteryStatus = 1` | 确诊 |
+
+    修法（PowerShell，**让用户自己执行**，见 §7）：改完有电池限制的这几条即可，
+    顺手打开「错过了就补跑」，笔记本合盖/睡眠错过的点不会再白丢：
+
+    ```powershell
+    $t = Get-ScheduledTask -TaskName "Knowledge Graph Auto Sync"
+    $t.Settings.DisallowStartIfOnBatteries = $false
+    $t.Settings.StopIfGoingOnBatteries     = $false
+    $t.Settings.StartWhenAvailable         = $true
+    $t | Set-ScheduledTask
+    ```
+
+    自查顺序（照抄就行）：`schtasks /Query /TN "..." /XML` 看 `<Settings>`，
+    或 `[xml](schtasks /Query /TN '...' /XML)` 后在 PowerShell 里读 `.Task.Settings`。
+    **`TaskScheduler/Operational` 事件日志在本机是关的**（`IsEnabled=False`），
+    别指望从它拿历史，只能靠「任务属性 + 进程 + lock + 日志时间戳」四个证据交叉判断。
 
 ---
 

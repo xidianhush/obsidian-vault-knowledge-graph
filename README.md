@@ -104,6 +104,11 @@ schtasks /Create /TN "Knowledge Graph Auto Sync" /SC MINUTE /MO 30 /ST 00:07 /RL
 > 为什么是 :07/:37：机器上已有的 `Quartz Site Auto Sync` 是每 30 分钟从 :24 起算（:24/:54），
 > 两个任务都遍历同一个 vault，错开 17 分钟避免撞车。
 
+> ⚠️ **注册完还要再做一步**：`/Create` 默认写入 `DisallowStartIfOnBatteries=true` +
+> `StopIfGoingOnBatteries=true`。笔记本只要在用电池，这条任务就**一次都不会跑**——
+> 而症状是 `/Run` 返回「已尝试运行」、属性里 `上次结果: 0`，看着像成功。
+> 注册后照「图谱没更新，怎么查」一节里的那段 PowerShell 把两条电池限制关掉。
+
 取消：`schtasks /Delete /TN "Knowledge Graph Auto Sync" /F`
 
 浏览器里已经打开着旧页面时，重建不会自动刷新——**重新双击一次 HTML 即可**（单文件，没有缓存问题）。
@@ -111,13 +116,24 @@ schtasks /Create /TN "Knowledge Graph Auto Sync" /SC MINUTE /MO 30 /ST 00:07 /RL
 ### 图谱没更新，怎么查
 
 页脚那个「生成于 …」读的是 `dist/graph.json` 里的 `meta.generated`，也就是**最后一次成功
-`build` 的时刻**，不是文件的修改时间。它停在过去，按这三步查（从外到内）：
+`build` 的时刻**，不是文件的修改时间。它停在过去，按这四步查（从外到内）：
 
 | 症状 | 查什么 | 怎么判断 |
 |---|---|---|
 | 页脚时间是几天前 | `schtasks /Query /TN "Knowledge Graph Auto Sync"` | 报「错误: 系统找不到指定的文件」= **计划任务从未注册**，所谓「后台每 30 分钟重建」根本没在跑。用上面那条 `/Create` 命令注册 |
+| 任务在，但**从来没跑过** | 任务 XML 的 `<Settings>`：`schtasks /Query /TN "Knowledge Graph Auto Sync" /XML` | 看到 `DisallowStartIfOnBatteries=true` 而机器正在**用电池**（笔记本）= 任务被电源条件挡住。`/Create` 默认就会写这两条，症状极像「跑成功了」：`/Run` 返回「已尝试运行」、属性里 `上次结果: 0`，但进程根本没起、日志一行不写。用下面那段 PowerShell 关掉 |
 | 任务在，日志却不动 | `sync-graph.log` 的最后几行 | 末行时间就是上次成功重建。看到 `skip` 说明 `sync-graph.lock` 残留（上一次被强杀/断电），把 lock 文件删掉即可 |
 | 日志是新的，页面还是旧的 | 浏览器 | 页面是双击那一刻读进内存的快照，重建不会热更新 —— 关掉标签页重新双击 `dist/knowledge-graph.html` |
+
+上表第二行那段修法（PowerShell 里跑一次即可，改完不用重建任务）：
+
+```powershell
+$t = Get-ScheduledTask -TaskName "Knowledge Graph Auto Sync"
+$t.Settings.DisallowStartIfOnBatteries = $false   # 电池上也要跑
+$t.Settings.StopIfGoingOnBatteries     = $false   # 拔电源也别中断
+$t.Settings.StartWhenAvailable         = $true    # 睡眠/关机错过的点，醒来补跑
+$t | Set-ScheduledTask
+```
 
 另一个常踩的：`python build.py` **不带子命令时默认只跑 `scan`，不写 `dist/`**。
 想更新图必须显式 `python build.py build`（子命令有 `scan` / `suggest` / `build` / `verify` /
