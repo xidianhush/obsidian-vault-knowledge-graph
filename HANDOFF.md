@@ -14,7 +14,7 @@
 见 §4 坑 21/22、§5 调参表、§8 回归基准）已落地并提交（第12步）。
 **标签字号绑屏幕半径 + 淡入淡出平滑**（见 §4 坑 23、§5 调参表）已落地并提交（第13步）。
 数据侧（`build.py verify`）与浏览器侧
-（`browser_check.py`，84 项断言）自动校验全绿，截图人眼复看过。
+（`browser_check.py`，108 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
 
 **紧跟其后是「公开范围统一成一份真源」这一轮**（见 §1「范围真源」、§2、§4 坑 26–30、§5）：
@@ -75,7 +75,7 @@ python build.py build        # 不出 --scope 时 = private：生成 dist/knowle
                              #   不是固定不变量）
 python build.py build --scope all    # 两份都建（public → dist/knowledge-graph.public.html，8452 KB）
 python build.py verify       # 数据侧自动校验，应全绿（--scope private 与 --scope public 都要绿）
-python browser_check.py      # 浏览器侧 84 项断言 + 截图，应全绿（默认查 private 那份 HTML；
+python browser_check.py      # 浏览器侧 108 项断言 + 截图，应全绿（默认查 private 那份 HTML；
                              #   想看 public 那份：KG_HTML=knowledge-graph.public.html …）
 python build.py watch        # 开发时挂上，改笔记/配置/范围定义自动重建
 ```
@@ -137,8 +137,10 @@ Kimi WebBridge（`http://127.0.0.1:10086`）作为备选保留，但它有两个
 
 ```js
 KG.data / KG.renderer / KG.camera          // 内联 payload、渲染器、相机
-KG.state()      // {zoom, level, shownNodes, shownEdges, shownLabels, selected, hovered, search,
-                //  labelMode, filterSet, camera, focusEdges, focusNeighbors, marks, chips}
+KG.state()      // {zoom, level, shownNodes, painted, shownEdges, shownLabels, selected, hovered,
+                //  search, labelMode, filterSet, camera, focusEdges, focusNeighbors, marks, chips}
+                //  ⚠️ 判「视口是不是空了」读 painted（真的落笔的节点数），不读 shownNodes
+                //     —— 后者只是候选集大小，可能非空而屏上什么都没有（§4 坑 33）
 KG.visible()    // = renderer.stats
 KG.setLevel(n) / KG.zoomToDepth(n)          // 跳到第 n 层（1..10）
 KG.select(id) / KG.runSearch(q) / KG.applyFilters()
@@ -146,13 +148,15 @@ KG.revealOf(id) / KG.alphaOf(id) / KG.enterAt(z)
 KG.zMin / KG.zMax / KG.zHome
 // renderer 上还有：NODES byId hitTest minzoomOf descOf visibleLayerOf
 //                   setZoom zoomBy focusOn fitPair tweenTo resetView
+//                   panBy(dx, dy) panStep(fast)（方向键平移走这两个；panStep 返回 [vx, vy]）
 //                   hover selected filterSet matchSet labelMode centerScreen size
 //                   markJobs chipJobs（排队未落笔的端点标记与屏外 chip，回归断言直接读）
 ```
 
 `KG.revealOf(id)` 现在是 **`r`（世界半径）的兼容别名**——payload 字段早已从 `reveal` 改名成
 `r`（`rings` 也改名成 `layers`），这个函数名留着只是为了不打断旧脚本，返回的就是 `n.r`。
-`KG.zMin / KG.zMax / KG.zHome` 照旧。
+`KG.zMin / KG.zMax / KG.zHome` 照旧，但**别再拿 `KG.zMin` / `KG.zMax` 当「可用缩放的上下限」**：
+它们现在是地标不是墙（见 §4 坑 32），滚轮可以越过它们。
 
 ---
 
@@ -164,7 +168,7 @@ knowledge-graph/
 │                          ⚠️ **公开范围不在这里**，去 vault 的 quartz-setup/public-scope.yaml 改
 ├── build.py             CLI：scan | suggest | build | verify | watch | scope（都吃 --scope/-s）（380 行）
 ├── verify.py            数据侧自动校验（断言式，无测试框架；含 scope 范围一致性断言）（483 行）
-├── browser_check.py     浏览器侧自动回归：84 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（804 行）
+├── browser_check.py     浏览器侧自动回归：108 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（1110 行）
 ├── sync-graph.ps1       计划任务包装：防重入 lock + python 检查 + UTF-8 + 日志裁剪 400 行；建本地的两份（`build --scope all`）（49 行）
 ├── kg/config.py         读 public-scope.yaml、解析各 scope、配置校验（中文报错） （325 行）
 ├── kg/scan.py           白名单 glob 扫描 + 落地名（remap）前缀重写               （118 行）
@@ -175,9 +179,9 @@ knowledge-graph/
 │                        ↑ 开头 docstring 是布局的权威叙述，改布局前先读它
 ├── kg/ioutils.py        stdout UTF-8（`setup_stdout()`）                        （18 行）
 ├── kg/emit.py           输出 graph.json 与自包含单文件 HTML                      （66 行）
-├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（209 行）
-├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定、window.KG     （575 行）
-├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取、标签竞争（1364 行）
+├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（211 行）
+├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定（含方向键/Home）、window.KG（588 行）
+├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取、标签竞争、键盘平移 `panBy`/`panStep`（1402 行）
 ├── annotations.yaml     用户手工标注（权重/掌握度/别名/手工边）—— **目前是空的**
 ├── candidates.yaml      候选边（待审核）
 ├── sync-graph.log/.lock 运行时产物，gitignore
@@ -270,6 +274,10 @@ Medical and Health                  44.56     ← zMin 由它决定
 `zMin = rootNeed × zoom_out_floor`、`zMax = maxMz × zoom_in_ceiling`），不依赖窗口尺寸 ——
 所以浏览器里的 `KG.zMin / KG.zMax` 与数据侧**同值**（0.4241 / 66.5753，实测命中）。
 只有 `KG.zHome` 会因为 `fitRadius()` 读真实视口而略有浮动（1440×900 下是 0.46116）。
+⚠️ **上面这组 `zMin` / `zMax` 是 2026-10-12 那批数据的读数**（vault 增删会让它漂；放开缩放
+之后重测是 **0.4493 / 68.8385**，见下面 browser 表的 `setZoom(zMin)` 行与 §8）。
+**但它们只是「地标」，不再是滚轮的夹取上下限** —— 滚轮过去就空、`Home` 回来，
+为什么放开、哪些地方还夹着、怎么找回，见 §4 坑 32。
 
 扫描侧（private）：vault 内 `.md` 共 134 篇、纳入 108、排除 26；文件夹 35 个，最大深度 5；
 笔记所在层 `{2:9, 3:40, 4:55, 5:4}`；`[[链接]]` 732 = 附件 646 + 笔记→笔记 42 + 自链接 43 +
@@ -285,15 +293,19 @@ Medical and Health                  44.56     ← zMin 由它决定
 所以 depth 6..10 不是固定的「h1..h5」，而是「笔记深度 + 标题级别」的连续展开——
 放在深层文件夹里的笔记，它的标题也自然更深。这比用户原话里那条固定 10 级列表更自洽。
 
-### 浏览器实测（2026-10-12 实跑 `browser_check.py`，1440×900）
+### 浏览器实测（`browser_check.py` 实跑，1440×900）
+
+主体是 2026-10-12 那次实跑；下面这几行 —— 地板那行（`setZoom(zMin)`）、**2b**、**3c**、
+**3d**、**5b** —— 是放开缩放上下限 + 加方向键平移之后重新跑出来的读数（**3d** 是本轮新增的
+「空白画布」整画布扫描，见 §4 坑 33）。
 
 | 项 | 实测 | 备注 |
 |---|---|---|
 | home 初始视角 | zoom 0.4610 / level 1 / 节点 57 / 边 23 / 标签 26 | 画布非底色采样点 3929（判据 >50） |
 | 标签三模式 | auto 26 → off 0 → on 26 → 回 auto 26 | `on` 另受每帧 400 条预算限制 |
-| 20 格下滚到地板 | zoom 命中 `zMin` 0.4241 / level 1 | 6 个学科根全部可见（此刻 25 个标签），shownNodes 54 落在 40..120 |
+| `setZoom(zMin)` 落到地板 | zoom 精确等于 `KG.zMin` 0.4493 / level 1 | **机制变了（本轮重测）**：以前是「往下滚 20 格」滚到地板，clamp 拆掉之后那样会一路滚过地板进空白，所以改成显式落点。判据不变：每个顶层学科都在画面上（6 个全部可见），shownNodes 54 落在 payload 自述的可读带 45..54 内 |
 | 48 格上滚到顶 | zoom 66.5750 / level 10 / 节点 3 | zoom 与 level 全程单调，无 NaN；第 42 格就到 level 10（7 个节点） |
-| 天花板处找空视口（bug B） | **本轮条件跳过**（warn） | 天花板中心 shownNodes=3、平移后仍有内容，找不到真正的空白视口，所以「空白处兜底提示」这一轮没测到；空白/双击兜底仍在 §10「双击空白」里间接覆盖 |
+| 天花板处找空视口（bug B） | **条件跳过**（warn，两份都跳） | 天花板中心 shownNodes=1（private）/ 2（public）、平移后仍有内容，找不到真正的空白视口。这项跳过已经**不再**是覆盖缺口：空视口由 2b（缩太远）、3c（放太大）与 **3d**（任何缩放 × 任何平移，36 组整画布探针）三段直接钉住，兜底提示也有专门断言 |
 | 双击屏上最小圆 | zoom 1.0680 → 23.1280 | fixture = DSP#4. Discrete-Time Systems（depth 5，sr 14px） |
 | 双击空白（先把视口拖出所有内容） | level 1 / zoom 0.4610 | vs `zHome` 0.4612，容差 2% |
 | 搜索「微分方程」 | 14 命中 | 首条「微分方程知识点 · 在《Calculus》h1」 |
@@ -308,14 +320,20 @@ Medical and Health                  44.56     ← zMin 由它决定
 | 屏外焦点边（深缩放选中 fixture） | focusEdges 1 / chips 1 | 线止于视口边、挂朝外箭头 + 选中圆边源点；chip 文 = 屏外目标标题截 18 字（`kg_11_chip.png`） |
 | 侧栏边行点击 | fitPair 一次 tween 框住两端 | 框住后 selected 切到对端、focusEdges 1 且 marks 2，连接箭头直接可见（`kg_13_fitpair.png`） |
 | chip 上限 | 18 组缩放×选中组合 chips ≤ CHIP_MAX+1 | 本轮探针最多单帧 1 枚 chip（max 读到 3）、0 组触发 `+k` 折叠（warn 条件跳过，非失败） |
+| 缩放地标：往下滚过地板（2b） | 29 格后 zoom 0.0168 / shownNodes 0 | 要越过 `zMin` 10 倍以上才真的整屏都空（世界半径 1000 的那个根是最后消失的）；空视口**不是死黑屏** —— 兜底提示确实落笔（中心带非背景像素 2329）。public 那份只需 19 格（它的 `zMin` 更低） |
+| 缩放地标：放到 maxzoom 停画（3c） | 空于 z=472.2（1024× home、**≈6.6× `zMax`**） | 放大侧也会空 —— 圆的屏幕半径 ≥ `farCornerDist` 就停画填充，**这条规则本来就有**，只是以前被 clamp 挡在门外；提示照画，`Home` 精确回到 `zHome` 0.461160。public 那份**更晚**（实测约 **26× `zMax`**）：空在哪一档取决于 payload 形状，别当常数（这一条以前写反过，说 public 更早、0.4× —— 错的）。⚠️ break 条件读的是 **`stats.painted == 0`**，**不是** `stats.nodes == 0` —— 公开那份在极端缩放下永远剩 1 个候选圆，按候选集判就永远等不到「空」（见 §4 坑 33） |
+| 空白画布兜底（3d） | 9 档缩放 × 4 种平移 = **36 组**，空白且无提示 **0 组** | 整画布探针 `CANVAS_LIT`（数遍全屏与背景色不同的像素）。修「画布全黑却没有提示」那个 bug 之前，它在 public 上能扫出违规组（z ≥ 5000 时 0 个非背景像素而兜底不画），修完 0 组。⚠️ 收尾用**瞬时**相机归位（`setZoom(zHome)` + 居中 + `draw()`），**不能**调 `resetView()` —— 那是 364ms 的 tween，下一段的 LOD 契约会在相机还在飞时取样 |
+| 方向键平移（5b） | ArrowRight panX 720.0 → 900.0（= `panStep` 180.0）、ArrowDown 106.75、Shift+ArrowRight 720.0（= 4×） | 缩放一点不动；选中 Projects 后按两次 ArrowLeft，sel 仍是 Projects、focusEdges 仍 1；再挪回来 `fx 1 → 1`、panX 1620.0 → 1620.0（**平移只动相机，从不改焦点状态**）；搜索框有焦点时方向键不平移；`panBy` 会取消在飞的 tween |
 | console error / pageerror | 0 | |
-| `browser_check.py` | **84 [ok] / 2 warn / 0 FAIL** | ALL BROWSER CHECKS PASSED；2 条 warn 都是条件跳过（zoom 天花板处找不到空视口 → bug B 跳过；无 hub 产出超 CHIP_MAX 的屏外目标 → `+k` chip 未实测），不是失败 |
+| `browser_check.py` | **108 [ok] / 2 warn / 0 FAIL**（private 与 public 两份都是 108） | ALL BROWSER CHECKS PASSED；2 条 warn 都是条件跳过（zoom 天花板处找不到空视口 → bug B 跳过；无 hub 产出超 CHIP_MAX 的屏外目标 → `+k` chip 未实测），不是失败 |
 
 （这张表是**跑一次就变**的快照：节点数、marks、搜索命中数都随 vault 内容漂移。
-要刷新就重跑 `python browser_check.py`，别把这里的数字当不变量。）
+要刷新就重跑 `python browser_check.py`，别把这里的数字当不变量。
+其中 `setZoom(zMin)` / 2b / 3c / **3d** / 5b 五行是**放开缩放上下限 + 加方向键平移**（3d 另加
+「无提示的空白画布」扫描）之后重测的，其余各行仍是 2026-10-12 那次快照。）
 
 `python build.py verify --scope private` 与 `--scope public` 都是 `✓ 全部自动校验通过`
-（2026-10-12 实跑）。其中最该盯的几条（private 那份）：
+（2026-10-12 实跑；2026-10-14 本轮重跑两份同样全绿）。其中最该盯的几条（private 那份）：
 3428 个节点里坐标重合的 351 对**全是父子关系**（独子链同心；非父子重合 0 对）；
 包含越界 0 个；父半径 < 子半径 × 1.5 的 0 个；6548 对兄弟圆重叠 0 对；
 `r` 沿包含链严格递减（违反 0 个）；340 条独子链的父子半径比精确落在 1.500；
@@ -327,7 +345,7 @@ Medical and Health                  44.56     ← zMin 由它决定
 > ⚠️ `browser_check.py` 与 `verify.py` 是**两件事**：上面这两组数字（数据侧 / 浏览器侧）
 > 各自跑各自的；改了 `web/*.js` 必须重建 dist 再跑浏览器侧，否则测的是旧 HTML。
 > 本轮两次都实跑过：`verify --scope private` / `--scope public` 全绿、
-> `browser_check.py` 84 [ok] / 2 warn / 0 FAIL。
+> `browser_check.py` **108 [ok] / 2 warn / 0 FAIL（两份都是 108）**。
 
 ### 截图人眼验收结论
 
@@ -339,8 +357,10 @@ Medical and Health                  44.56     ← zMin 由它决定
 - 语义边是细线，标签清晰不糊；hover 气泡 + 图例正常；侧栏详情的面包屑、入边、出边、
   标题清单都完整。
 - **顶栏在 1440px 下保持单行**，brand 不折行（宁可 `#readout` 折两行）。
-- 深层空白处有兜底提示：「此处没有内容 · 向下滚回到更粗的层级，或双击空白处回到默认视角」，
-  同时 tooltip 仍显示所在的「省」（有意为之，见 §4.10）。
+- **空视口两侧都有兜底**：缩太远、或放大撞上 maxzoom，都会画「此处没有内容 · 往回滚一点，
+  或按 Home / 双击空白回到默认视角」，同时 tooltip 仍显示所在的「省」（有意为之，见 §4.10）。
+  措辞改成「往回滚」是因为缩放上下限已经放开（§4 坑 32）—— 老文案只写「向下滚回到更粗的
+  层级」，缩太远那一侧方向正好是反的。
 - 边上的 `.tag` 悬浮说明同时给出**类型**与**来源**
   （`wiki` / `annotation` / `frontmatter` / `candidate` / `hierarchy` / `mixed`）。
 - **连线方向读得出来了**：线在两个圆的边界处截断，源端一个提亮圆点、目标端一个箭头
@@ -549,7 +569,8 @@ Medical and Health                  44.56     ← zMin 由它决定
     用户把笔记改名成 `LTI analysis.md` 之后路径失配，`have_pair` 为假 →
     整段 7d 被当成「条件跳过」warn 掉，套件依旧 `ALL BROWSER CHECKS PASSED`，
     **但屏外 chip / fitPair 那 12 条断言已经悄悄不再跑了**（`[ok]` 从 84 掉到 72，
-    这是唯一的可见信号）。现在改成按**后缀**解析：在 `R.byId` 里找 id 以
+    这是唯一的可见信号；那批的基准是 84，现在的基准是 108，见 §8）。
+    现在改成按**后缀**解析：在 `R.byId` 里找 id 以
     `/TAIL` 或 `#TAIL` 结尾的节点，再确认两端确实有语义边，解析不出来才 warn。
     教训：**「warn 只允许条件跳过」这条规矩本身不够**，还得盯 `[ok]` 总数有没有掉 ——
     条件跳过和覆盖丢失长得一模一样。
@@ -684,6 +705,84 @@ Medical and Health                  44.56     ← zMin 由它决定
     `browser_check.py` 现在也会在 `window.KG` 等不到时把收集到的 pageerror 原样打出来
     （以前只报一句 `wait_for_function` 超时，看不出所以然）。
 
+32. **`zMin` / `zMax` 是地标，不是墙 —— 别再给滚轮加回 `clamp`。**
+    这两个值原来就是 `zoomAt()` 的夹取上下限，现在那里只夹 `ZOOM_HARD_LO = 1e-6` /
+    `ZOOM_HARD_HI = 1e6`（常量在 `web/render.js:129`，夹取在 `zoomAt()`：
+    `web/render.js:335-336`）。那道护栏只负责拦住「任何 bug 把 zoom 推到 0 / Infinity
+    让画布静默失效」，**不是可用范围**。
+    **为什么要放开**：`zMin` / `zMax` 是构图结论（「最小那个顶层学科刚好看得见」
+    「最挤的节点舒服淡入」），不是内容边界；夹住的代价是用户「缩到想看的细节就到头了」，
+    而越界其实完全可恢复。放开之后缩过头**不是崩**，是画布渐渐清空 + 全空白兜底提示
+    （`web/render.js:532-544`）：`此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角`。
+    这句措辞是故意两个方向都管用的 —— 老文案只写「向下滚回到更粗的层级」，在**缩得太远**
+    那一侧方向是反的（这正是它被改掉的原因）。
+    * **仍然夹着的地方**（工具自己去某个地方，不该跑出地标）：`homeZoom()`（`web/render.js:275`）、
+      `focusOn()`（`:1209`）、`fitPair()`（`:1225-1226`）、`zoomToDepth()`（`:1370` —— 所以顶栏
+      层级胶囊和 `[` `]` 仍然落在地标内）。`zMin` / `zMax` 本身照旧由 payload 现算
+      （`:240-241`：`zMin = rootNeed × zoom_out_floor`、`zMax = maxMz × zoom_in_ceiling`），
+      并照旧作为 `KG.zMin` / `KG.zMax` 导出（`:1346`）。注意 **HUD 的层级读数与顶栏胶囊不是
+      直接读这两个值的**：它们走 `enterAt(zoom)`（`web/app.js:119`），层级由 zoom 单向派生。
+    * **两个方向都会空**。往小滚：圆的屏幕半径掉到 `lod.min_px` 以下，圆一个个淡出，
+      默认那份实测**要滚 29 格**才连世界半径 1000 的根也没了（公开那份 19 格，它的 `zMin` 更低）。
+      往大滚：撞上**本来就存在**的 maxzoom 规则（`web/render.js:504`：圆的屏幕半径
+      `>= farCornerDist(cx, cy)` 就停画填充，`farCornerDist` 在 `:553-559`），视口同样会空 ——
+      默认那份实测 **6.6–6.9× `zMax`**，公开那份**更晚**（实测约 **26× `zMax`**）。**空在哪一档取决于
+      payload 的形状，不是常数**，所以别把「几倍 zMax」「几格滚轮」写成断言，只能写「会空、提示会画、
+      能回来」。（这一条以前在文档里写反过：说公开那份更早、0.4× `zMax` —— 那是错的。）
+    * **找回手段三个**：`Home` 键（`web/app.js:521`）、双击空白、顶栏「重置」，三者都走
+      `R.resetView()` 回到 `zHome`。`browser_check.py` 的 3c 段直接断言 `Home` 精确恢复到
+      `meta["zHome"]`（容差 1e-6）—— 判据用「恢复到 zHome」而不是「比某个阈值大」，是因为
+      小视口下 `homeZoom()` 自己会被夹到 `zMin`，前者才是真契约。
+    * **`stats.focusEdges` 是屏幕空间的视觉计数，不是逻辑焦点集合 —— 别把 5b 的断言「收紧」回去。**
+      主绘制趟按视口裁剪圆（`web/render.js:493-494`），被三道门挡下的焦点边再由
+      `drawFocusEdges()` 按「解析到的在屏锚点」分组（`web/render.js:831-834`），
+      所以**平移本来就会改变这个数**（实测公开那份 2 → 1；这不是 bug，它数的就是屏幕上的东西）。
+      正因如此 5b 段断言的是「挪出去再挪回来，`focusEdges` 与相机逐位相同」，
+      **不是**「平移过程中计数不许变」—— 后者必然假红，改成它等于把这条覆盖废掉。
+      同理，方向键平移刻意**不碰** `selectedId` / `hoverId`（`panBy`，`web/render.js:1250-1270`）：
+      鼠标拖拽的抖动会被 `dragMoved > 5` 判成点击（`:1316`），选中就切到光标下的大父圆上、
+      焦点模式把想看的箭头一起滤掉 —— 方向键把「平移」与「点击」解耦，`panStep` 给的步长是
+      视口宽的 1/8（`Shift` = 半个视口，≈4×），由视口现算、与 zoom 无关（屏幕空间的距离）。
+
+33. **「画布全黑、却一个字的提示都没有」是兜底判据用错了量 —— 必须判 `stats.painted`，
+    不能判「候选集是否为空」（本轮实测找到并修掉的真 bug）。**
+    症状：放到很深时画布上 **0 个非背景像素**，而兜底提示一个字都不画 —— 用户看到的是一片
+    纯黑，没有任何解释。最刺眼的是 public 那份：本轮实测 z = 5000 / 30000 / 1e5 / 1e6 四档
+    全是 **`stats.nodes = 1`、`stats.painted = 0`**、整块画布只剩兜底提示那 2329 个像素
+    （private 那份同档位是 `nodes = 0`，所以只有公开那份会踩中）。
+    * **根因是几何判据错位。** 兜底原来判 `!wash.length && !front.length`，即「候选集是不是空」。
+      而候选集里可以有一个**圆心远在屏外、半径极大**的圆：它过了视口裁剪（裁剪按半径外扩，
+      `CULL_MARGIN` 就是为「圆心在屏外、圆本身却铺满整屏」留的），也过了 maxzoom 那道门
+      （坑 32：`sr >= farCornerDist(cx, cy)` 才停画 —— 而圆心离屏越远 `farCornerDist` 同样越大，
+      这个比值反而更容易过关）。放进来之后它的**填充**被 `fade` 压到看不见、**界线弧**又整条落在
+      画布之外。净效果：`stats.nodes ≥ 1`、画布上一个像素都没有、兜底不画。
+    * **为什么以前撞不上**：滚轮过去被 `zMin` / `zMax` 夹住，zoom 到不了这种极端。放开缩放
+      （坑 32）**不是**引入了这个 bug，是把它**暴露**了 —— 死局早就写在那里。
+    * **修法三件套**（都在 `web/render.js`）：
+      ① 新常量 **`PAINT_MIN = 0.02`**（`:49`）：「这一笔算不算画出来了」的最低不透明度。
+         低于它的落笔在 8 位画布上合成后与背景完全同值（≈0.2/255，四舍五入成 0），
+         肉眼与像素读回都看不见 —— 所以判「空」必须按这个门槛算，不能按「有没有发起绘制调用」。
+      ② 新函数 **`nearDist(sx, sy)`**（`:581-586`，圆心到**内容视口矩形最近点**的距离，圆心在
+         视口内则为 0）与既有的 `farCornerDist`（最远角）配对，把「这一笔到底会不会落在画布上」
+         变成可判定的几何：**圆盘穿过视口 ⟺ `near < sr`（填充可见）；
+         圆环穿过视口 ⟺ `near ≤ sr ≤ far`（界线可见）**。
+      ③ 新计数 **`stats.painted`**：每帧清零（`:526`），只在 `drawWash`（`:606-607`，填充看圆盘、
+         界线看圆环）与 `drawNodes`（`:1030`）里**同时**满足「alpha > `PAINT_MIN`」**且**
+         「几何上真的穿过视口」时才 +1；兜底改成 `if (!stats.painted)`（`:544`）。
+         `KG.state()` 也把它导出成 `painted` 了（`web/app.js:570-577`）。
+    * **`painted` 才是「屏上到底有没有东西」，`shownNodes` 只是候选集大小。** 断言、调试、
+      写文档都别再拿 `shownNodes == 0` 当「视口空了」的判据：public 那份在极端缩放下
+      `shownNodes` **恒为 1**（就是上面那个幽灵候选圆），拿它当判据的用例永远不会红。
+      `browser_check.py` 的 3c 段因此把 break 条件从 `stats.nodes == 0` 改成 `stats.painted == 0`
+      （见 §8 基线）。
+    * **回归覆盖**：新增 **3d** 段，9 档缩放（0.005 / 0.02 / 0.1 / 0.4612 / 3 / 30 / 1000 /
+      30000 / 1e5）× 4 种平移共 **36 组**，每组用整画布探针 `CANVAS_LIT`（数遍全屏与背景色
+      `#0f1116` 不同的像素）断言「**没有任何一组留下空白画布且没有提示**」。修之前它在 public
+      上扫得出违规组，修完 **0 组**（`nodes` 与 `painted` 一并读出来，方便一眼看出是哪一侧
+      骗了人）。**别把 3d 的收尾改回 `resetView()`**：那是 364ms 的 tween，而极端 zoom 下每帧要
+      栅格化半径上百万像素的圆弧、rAF 被拖住，tween 迟迟走不完 —— 测试要的是确定的起始状态，
+      不是动画（§8 基线有实测到的假红）。
+
 ---
 
 ## 5. 调参地图
@@ -699,8 +798,8 @@ Medical and Health                  44.56     ← zMin 由它决定
 | 滚轮手感 | `zoom.wheel_step`（1.12） | 一格的缩放倍率（以光标为锚点）。10 层走完约 45 格，调大则层级切换更粗 |
 | 换层/跳转动画时长 | `zoom.transition_ms`（260） | 点层级胶囊 / 搜索结果跳转的相机动画 |
 | 子节点浮现后父圆压暗到多少 | `zoom.parent_dim`（0.22） | 父圆填充是子圆的底色，调到 0.5 会把同色子圆整体压暗（§4.8） |
-| 缩到最外层的余量 | `zoom.zoom_out_floor`（1.05） | **必须 ≥ 1**。`zMin` 由最小那个学科根（Medical and Health，8 个叶子）决定，取 0.9 会让它在最外层只剩 16.2px < `min_px`，「缩到最外层看见全部 6 个学科」当场破掉。1.05 留 5% 余量抵消落盘时 `r` 只保留 4 位小数的舍入 |
-| 放大上界的余量 | `zoom.zoom_in_ceiling`（1.35） | 最挤节点完全浮现所需的 zoom × 此值 = `zMax` |
+| 缩到最外层的余量 | `zoom.zoom_out_floor`（1.05） | **必须 ≥ 1**。它把 `zMin` 定成「最小的那个顶层学科刚好看得见」的**地标**（不是滚轮下界，见 §4 坑 32），取 0.9 会让最小那个根在最外层只剩 16.2px < `min_px`，「缩到最外层看见全部 6 个学科」当场破掉。1.05 留 5% 余量抵消落盘时 `r` 只保留 4 位小数的舍入。也决定 2 号判定：地板处每个顶层学科都在画面上 |
+| 放大上界的余量 | `zoom.zoom_in_ceiling`（1.35） | 最挤节点完全浮现所需的 zoom × 此值 = `zMax`，即「最挤的节点舒服淡入」那个**地标**（不是滚轮上界，见 §4 坑 32）。调大 → 上界更松；调小 → 还没淡完就到头 |
 | 初始视图松紧 | `zoom.home_fit`（1.08） | 刚好装下全图的 zoom × 此值。**上限是 `layout.padding` = 1.12**，再大就会把 Science and Tech 裁出屏幕。1.08 时六个学科全部完整落在视口内（最小根 20.4px，最大根包围盒 411.7px / 视口半高 427px） |
 | **同级里的大小差** | `layout.size_exponent`（0.5） | 目标半径 ∝ 叶子数 ^ 此值。**0.5 是无标度不动点**（`√(ΣTᵢ²) = √(ΣLᵢ) = T_parent`），每层缩放退化成与分支数无关的常数 ≈0.85。调大 → 深层膨胀、根 spread 上升（0.6 时 16.2× → 28.3×，最小学科在 home 只剩 18.2px，贴着 `min_px` 没余量）；调小 → 深层急剧缩小、`zMax` 爆掉、缩放跨度拉长 |
 | **层级间的大小差** | `layout.level_ratio`（1.5） | 父圆半径 ≥ 最大子圆 × 此值。独子链打包出的包围圆就等于子圆自己，光靠 `padding` 只有 1.12×，肉眼分不出父子；1.5 才看得出（实测 340 条独子链的比值精确落在 1.500） |
@@ -736,6 +835,7 @@ Medical and Health                  44.56     ← zMin 由它决定
 | `LABEL_BUDGET` | 400 | 每帧最多考虑多少个标签候选 |
 | `CULL_MARGIN` | 32 | 视口外扩余量。裁剪必须**按半径外扩**：大圆的中心常常在屏幕外，圆本身却铺满整屏 |
 | `LABEL_INSIDE_PX` | 28 | 屏幕半径超过这个值的容器，标签压在圆内顶部而不是圆心；亦是「圆内装不下就改挂圆外」的条件之一（§4 坑 23） |
+| `PAINT_MIN` | 0.02 | 「这一笔算不算画出来了」的最低不透明度。低于它的落笔在 8 位画布上合成后与背景完全同值（≈0.2/255，四舍五入成 0），肉眼与像素读回都看不见。`stats.painted` 与全空白兜底提示都按它判 —— 所以**不能**改成「有没有发起过绘制调用」那种计数（§4 坑 33） |
 | `FONT` | 系统字体栈 | **字号不是常量**：由 `labelFontSize(sr)` + `fitFont` + `clipLabel` 三个函数按屏幕半径算出来（调参走 `lod.label_font_*`，见 §5）。行高 `hpx = fs + 4`；圆内摆放 `sy = cys - sr + fs*0.5 + 4`，任何字号下文字上边界都离圆描边 2px |
 
 旧表里的 `HIT_CELL` **已不存在**：拾取不再用网格，`hitTest` 就是对 `lastDrawn` 的线性扫描
@@ -748,6 +848,10 @@ Medical and Health                  44.56     ← zMin 由它决定
 
 `CHIP_MAX` 同模式读 `lod.focus_offscreen_chips`（缺省 8）；折叠的 `+k` chip 右锚在
 `(W-12, H-FOOTER_H-12)`，即右下角、避开 footer 预留带——改 `FOOTER_H` 会连带挪它。
+
+方向键平移**没有常量、也不读配置**：`panStep(fast)`（`web/render.js:1266-1270`）按视口现算 ——
+一步 = `max(40, W/8)` × `max(40, (H-FOOTER_H)/8)`，`Shift` 时换成半个视口（≈4×）。
+下限 40px 是给极小窗口兜底的，别删。理由见 §4 坑 32。
 
 ---
 
@@ -763,9 +867,14 @@ Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交�
 **P0 — 已完成并提交**：**标签字号绑屏幕半径 + 淡入淡出平滑**（§4 坑 23）
 —— 新增 6 个 `lod.label_*` 键（字号三键 / bold_depth / max_width / smooth_dim）
 并把 `label_alpha` 从 0.55 降到 0.12，观感不满意可以**全部在 `config.yaml` 里回退**，
-不用碰代码；渲染侧与浏览器回归套件都已适配（`verify` 全绿、`browser_check` 84 [ok] / 0 FAIL、
-截图已人眼复核）。同批还修了回归套件的 fixture：改成按后缀解析，笔记改名不再让 7d
-整段静默跳过（§4 坑 24）。已提交（第13步 `b528d2d`）。
+不用碰代码；渲染侧与浏览器回归套件都已适配（`verify` 全绿、`browser_check` 84 [ok] / 0 FAIL
+—— 那一批的基准；现在是 108 [ok] / 0 FAIL，见 §8；截图已人眼复核）。同批还修了回归套件的
+fixture：改成按后缀解析，笔记改名不再让 7d 整段静默跳过（§4 坑 24）。已提交（第13步 `b528d2d`）。
+
+**P0 — 已完成（本轮，未提交）**：**修掉「画布全黑却没有任何提示」这个真 bug** ——
+兜底判据从「候选集是否为空」改成 `stats.painted`，新增 `PAINT_MIN` 与 `nearDist`（见 §4 坑 33）；
+同时补上 3d 段「任何缩放 × 任何平移都不许留下无提示的空白」的 36 组整画布探针，
+并订正两条被写错的断言（§8）。断言基线 103 → **108**。
 
 **P1 — 让「掌握度/重要度」真正起作用**
 `annotations.yaml` 是空的，108 篇笔记 `mastery` 全是 0，暗色细边看不出来。
@@ -840,7 +949,7 @@ python build.py build      # private：笔记 108 / 文件夹 35 / 标题 3285 /
 python build.py build --scope all   # 再出一份 public：节点 3346 / 最深层 3437 条边 / HTML 8452 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过（--scope private 与 --scope public 都要绿）
 python build.py scope --scope public   # stdout 必须是一段能 ConvertFrom-Json 的 JSON（§4 坑 27）
-python browser_check.py    # 必须 84 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED
+python browser_check.py    # 必须 108 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED（两份都是 108）
                            # （warn 只允许条件跳过，不允许失败；[ok] 数掉下去
                            #   就说明有用例被跳过了 —— 见 §4 坑 24）
                            # 默认查 private 那份 HTML（dist/knowledge-graph.html）；
@@ -858,16 +967,51 @@ node --check web/app.js && node --check web/render.js   # 前端语法（一次�
 （残留 0 个），以及 depth=1 的根 == 该 scope 声明的目录（private 6 个 / public 3 个）。
 
 浏览器里再确认（下面的读数是**本次 `browser_check.py` 实跑**的记录，1440×900；会随 vault
-内容漂移，要刷新就重跑那个套件 —— 数据侧同一批参数见 §3）：
+内容漂移，要刷新就重跑那个套件 —— 数据侧同一批参数见 §3）。
+⚠️ 其中 `KG.zMin` / `KG.zMax` 与新增的「缩放地标的两侧」「方向键平移」两块是**放开缩放
+上下限 + 加方向键之后重测**的；节点数 / marks / 搜索命中那几行仍是更早一批数据，按 §3 的说法
+当作会漂移的快照读：
 
 ```js
 KG.state()                 // zoom 0.4610 / level 1 / shownNodes 57 / shownEdges 23 / shownLabels 26
-KG.zMin                    // 0.4241   （最小学科根决定 × zoom_out_floor 1.05；与数据侧同值）
-KG.zMax                    // 66.5753  （最挤节点 minzoom × zoom_in_ceiling 1.35）
+KG.zMin                    // 0.4493   （最小学科根决定 × zoom_out_floor 1.05；与数据侧同值；重测）
+KG.zMax                    // 68.8385  （最挤节点 minzoom × zoom_in_ceiling 1.35；重测）
 KG.zHome                   // 0.4612   （home_fit 1.08；这一项读真实视口，会小幅浮动）
 KG.renderer.setZoom(KG.zMin); KG.visible()
                            // 6 个学科根全部可见（shownNodes 54），**且它们的子圆也仍在画面里** ——
                            // 不再「只剩 6 个节点」，这正是 packing 与同心环的根本区别
+                           // ⚠️ 现在必须**显式** setZoom(zMin)：滚轮已经不被 clamp 夹住，
+                           //   「往下滚 20 格」会一路滚过地板进空白（2b 段钉的就是这件事）
+
+# 缩放地标的两侧（2b / 3c / 3d 小节自动断言，见 §4 坑 32 / 坑 33）：
+#   2b 往下滚：29 格后 zoom 0.0168 / shownNodes 0 —— `zMin` 被越过 10 倍以上才真的一屏全空；
+#      中心带非背景像素 2329 → 兜底提示真的落笔了，不是死黑屏
+#   3c 往大放：home z=0.461 → 空于 z=472.2（1024× home、≈6.6× zMax；public 那份更晚，约 26× zMax）
+#      → 提示照画；按 Home 后 zoom 0.461160 == zHome（容差 1e-6）
+#      ⚠️ break 条件读的是 **`stats.painted == 0`**，**不是** `stats.nodes == 0`：公开那份在
+#         极端缩放下永远剩 1 个「圆心远在屏外、半径极大」的候选圆，按候选集判就永远等不到
+#         「空」，这一整段会静默失效（见 §4 坑 33）。
+#   3d 任何缩放 × 任何平移都不许留下「空白且无提示」的画布：9 档缩放
+#      （0.005 / 0.02 / 0.1 / 0.4612 / 3 / 30 / 1000 / 30000 / 1e5）× 4 种平移
+#      （(0,0) / (600,400) / (-1200,-800) / (3000,-2500)）= **36 组**，每组读整画布探针
+#      `CANVAS_LIT`（数遍全屏与背景色 `#0f1116` 不同的像素），要求没有一组出现
+#      「非背景像素 < 500 且兜底提示没画」 → 实测 **0 组违规**（修那条 bug 之前扫得出）。
+#      ⚠️ 收尾必须**瞬时**把相机设回 home（`setZoom(zHome)` + `panX/panY` 居中 + `draw()`），
+#         **不能**调 `resetView()`：那是 364ms 的 tween，而极端 zoom 下每帧要栅格化半径上百
+#         万像素的圆弧、rAF 被拖住，tween 迟迟走不完，下一段（4. LOD 契约）就会在「相机还在
+#         飞」的中间态上取样（实测把节点的 `_sr` 读成 378442px 而实际该是 38px，于是挑错
+#         目标节点、整段假红）。测试要的是确定的起始状态，不是动画。
+#   不变量：越界不报错、空视口必画提示、Home 必能回到 zHome
+
+# 方向键平移基线（5b 小节自动断言，读 KG.renderer.camera.panX/panY）：
+#   ArrowRight panX 720.0 → 900.0（= panStep 180.0 = 1440/8）
+#   ArrowDown 106.75（= (900-46)/8）；Shift+ArrowRight 位移 720.0（= 半个视口，≈4×）
+#   全程 zoom 一点不动
+#   选中 Projects（focusEdges 1）后两次 ArrowLeft：sel 仍是 Projects、focusEdges 仍 1；
+#     再两次 ArrowRight 回原位：fx 1 → 1、panX 1620.0 → 1620.0
+#   搜索框有焦点时方向键不动相机；panBy 取消在飞的 tween（zoom 0.546328 → 0.546328）
+#   不变量：平移只动相机 —— 选中 / 焦点状态逐位不变。`focusEdges` 是屏幕空间计数，
+#           允许途中变化，只要求「挪出去再挪回来」完全复原（**别收紧成「途中不许变」**）
 
 # 焦点模式基线（7b 小节自动断言；压暗不是删除，所以 home 的 shownEdges 不变）：
 #   home:                shownNodes 57 / shownEdges 23 / marks 34
@@ -876,12 +1020,24 @@ KG.renderer.setZoom(KG.zMin); KG.visible()
 #   Esc 后 focusEdges / focusNeighbors 归零，shownEdges 仍 23
 
 # 端点标记基线（7c 小节自动断言，读 KG.renderer.markJobs）：
+#   开扫前必须 `renderer.selected = null` —— `drawFocusEdges` 会另外补画「被三道门挡下的
+#   焦点边」的标记，而比较用的 shownEdges 只算主绘制趟的代表边；带着上一节的选中开扫，
+#   就会出现「2 条边 6 个标记」这种假红（本轮实测踩到过）。这一段验的是普通边标记的几何，
+#   与选中无关，所以把选中清掉让输入集干净。
 #   home:    marks 34 = 箭头 17 + 源点 17；每个标记到所附圆边间隙恒为 2px；圆内 0 个
-#   depth 6: zoom 7.4880 / shownEdges 2 / marks 2（< 2×2，短边被 min_len 挡掉）
-#   —— 这一条以前只测 depth 6 一档，那是私有图的形状（公开图在 depth 6 只画得出
+#   zoom 阶梯（enter[L-1]×1.05 那一档，L=10..1；私有那份本次读数 = 画出的代表边数 / 标记数）：
+#     L=10 0/0 · L=9 3/2 · L=8 6/8 · **L=7 3/6** · L=6 4/8 · L=5 8/12 ·
+#     L=4 21/32 · L=3 36/42 · L=2 32/46 · L=1 24/36
+#   —— 以前只测 depth 6 一档，那是私有图的形状（公开图在 depth 6 只画得出
 #      一条 4px 的截断边，两道门槛都合理地压掉标记，marks=0）。现在改成沿 payload
-#      自己的 zoom 阶梯逐层扫 L=10..1，depth 6 仍是其中一档；不变量见下。
-#   不变量：marks ≤ 2 × 画出的边数，且 minGap ≈ maxGap ≈ edge_trim_clearance
+#      自己的 zoom 阶梯逐层扫 L=10..1；有 ≥2 条代表边在屏上的层另要求「有边带标记」。
+#   不变量（⚠️ 两条都别「收紧」回去）：
+#     ① **`marks <= 2*edges` 是硬不变式，`marks < 2*edges` 不是。** 每条画出的代表边可以
+#        两端各挂一个标记（源端圆点 + 目标端箭头），所以「3 条边 6 个标记」完全合法 ——
+#        实测 rung **L=7 就是 3/6**。写成严格小于会在正常数据上假红。
+#     ② `edge_marker_min_len` 守卫是否在生效，单独用「**阶梯上存在某档 marks < 2*edges**」
+#        证明（确实有短边被压掉）。守卫一旦被删，整条阶梯会顶满 2×edges，这条就红。
+#     ③ minGap ≈ maxGap ≈ edge_trim_clearance。
 
 # 屏外兜底基线（7d 小节自动断言，读 KG.renderer.chipJobs）：
 #   深缩放选中 fixture（SEL = 理解傅利叶变换&频谱密度的几何意义，

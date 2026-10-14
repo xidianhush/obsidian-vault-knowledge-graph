@@ -42,6 +42,11 @@
   var LABEL_BUDGET = 400;     // 每帧最多考虑多少个标签候选
   var CULL_MARGIN = 32;       // 视口外扩余量（屏幕像素）
   var LABEL_INSIDE_PX = 28;   // 屏幕半径超过这个值的容器，标签压在圆内顶部
+  // 「这一笔算不算画出来了」的最低不透明度。低于它的落笔在 8 位画布上合成后与背景
+  // 完全同值（≈0.2/255，四舍五入成 0），肉眼与像素都看不见 —— 判「视口是不是空的」
+  // 必须按这个门槛算，而不能按「候选集是否为空」，否则会出现「画布上一片漆黑、
+  // 却因为候选集非空而不画兜底提示」的死局（放开缩放后放大到极端就会撞上）。
+  var PAINT_MIN = 0.02;
   var TAU = 6.283185307179586;
   var FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif';
 
@@ -120,6 +125,13 @@
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
     var HOME_FIT = ZC.home_fit == null ? 1.08 : ZC.home_fit;
+    // zoom 的**硬护栏**：只为拦住「任何 bug 把 zoom 推到 0 / Infinity 让画布静默失效」，
+    // 不是可用范围。滚轮**不受**下面 zMin / zMax 限制 —— 那两个是地标：
+    //   zMin = 最小的顶层学科刚好看得见的那一档（缩到底能看见全部学科）
+    //   zMax = 最挤的节点舒服淡入的那一档
+    // 它们仍然被 HUD、层级胶囊、focusOn / fitPair / zoomToDepth 使用（工具自己去某个
+    // 地方时不该跑出地标范围），但不再夹住用户自己的滚轮。见 §「地标不是墙」。
+    var ZOOM_HARD_LO = 1e-6, ZOOM_HARD_HI = 1e6;
     var ENTER = LOD.enter || [];
     var MAXD = META.max_depth || ENTER.length || 1;
     // 虚拟根的世界半径（构建期落盘）。home 视角 = 让整个根正好铺满可视半径。
@@ -240,7 +252,10 @@
     var hoverId = null, selectedId = null;
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
-    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0, chips: 0 };
+    var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0, chips: 0,
+                  // painted = 真正按 PAINT_MIN 以上不透明度落了笔的节点数。nodes 是「候选
+                  // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
+                  painted: 0 };
     // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
     // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
     // 只用于绘制与计数，不落盘、不参与布局。
@@ -321,9 +336,12 @@
     function s2wx(sx) { return (sx - cam.panX) / cam.zoom; }
     function s2wy(sy) { return (sy - cam.panY) / cam.zoom; }
 
-    // 以屏幕点 (sx, sy) 为锚改缩放：该点下的世界坐标保持不动
+    // 以屏幕点 (sx, sy) 为锚改缩放：该点下的世界坐标保持不动。
+    // 这里**不**夹在 [zMin, zMax] 里 —— 那是地标不是墙：用户可以自由缩到比 zMin 更小
+    // （画面会渐渐清空，靠全空白兜底提示 + 双击/重置/Home 找回）或比 zMax 更大
+    // （只是圆变大、标签字号早已饱和）。只留 ZOOM_HARD 那道远离正常范围的护栏。
     function zoomAt(sx, sy, z) {
-      z = clamp(z, zMin, zMax);
+      z = clamp(z, ZOOM_HARD_LO, ZOOM_HARD_HI);
       var wx = s2wx(sx), wy = s2wy(sy);
       cam.zoom = z;
       cam.panX = sx - wx * z;
@@ -502,9 +520,10 @@
       front.sort(byDepth);
 
       lastDrawn = drawn;
-      // drawn 含「铺满视口而停画」的祖先（命中测试还要用它们），真正落笔的是
-      // wash + front，footer 与空白兜底都以落笔数为准
+      // drawn 含「铺满视口而停画」的祖先（命中测试还要用它们）；nodes 是候选集大小，
+      // painted 由下面几个绘制函数在**真的落笔**时累加，兜底提示按它判（见 PAINT_MIN）。
       stats.nodes = wash.length + front.length;
+      stats.painted = 0;
 
       drawWash(wash);
       drawEdges(alpha);
@@ -516,16 +535,22 @@
       // ⑥ 屏外 chip：屏幕空间的 HUD 覆盖层，压在所有世界内容之上
       drawChips();
 
-      // 全空白兜底：packing 布局没有空心，但一路放大到某个分支的最深处再往旁边
-      // 平移，视口里确实可能一个圆都不落笔（铺满视口的祖先停画、间隙里又没有更
-      // 细的圆）。地图软件在这种情况下会提示「此区域暂无详情」，这里照做。
-      if (!wash.length && !front.length) {
+      // 全空白兜底：地图软件在这种情况下会提示「此区域暂无详情」，这里照做。
+      // 判据用 stats.painted（真的按 PAINT_MIN 以上落了笔的节点数），**不能**用
+      // wash/front 是否为空：候选集非空但这些圆全在视口外、或落笔 alpha 低于
+      // PAINT_MIN 而合成后与背景同值时，画布上其实一无所有 —— 那时用候选集判定就会
+      // 出现「一片漆黑且没有任何提示」的死局。放开缩放之后放大到极端正好撞上这个坑
+      // （实测 public 在 z ≥ 5000 时 0 个非背景像素、stats.nodes 却是 1）。
+      if (!stats.painted) {
         ctx.globalAlpha = 1;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = '13px ' + FONT;
         ctx.fillStyle = 'rgba(126,135,154,0.9)';
-        ctx.fillText('此处没有内容 · 向下滚回到更粗的层级，或双击空白处回到默认视角',
+        // 措辞要两个方向都管用：放开缩放后「空视口」既可能是缩得太远（要往回滚、
+        // 即往上滚放大），也可能是放大到极端（连最小的圆都铺满视口 → maxzoom 停画，
+        // 要往下滚）。原来只写「向下滚」在缩太远时是反的。
+        ctx.fillText('此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角',
                      W / 2, (H - FOOTER_H) / 2);
         ctx.textAlign = 'left';
       }
@@ -545,6 +570,21 @@
       return Math.sqrt(dx * dx + dy * dy);
     }
 
+    // 圆心到内容视口矩形**最近**点的距离（圆心在视口内则为 0）。和 farCornerDist 配对，
+    // 就能精确回答「这一笔到底会不会落在画布上」：
+    //   圆盘穿过视口 ⟺ near < sr        → 填充可见
+    //   圆环穿过视口 ⟺ near ≤ sr ≤ far  → 界线可见
+    // 这个区分是必需的：一个圆心远在屏外、半径极大的 wash 圆，`sr < far` 那道 maxzoom 门
+    // 会放它过去（远处的 far 同样很大），但视口整个陷在它内部、填充又被 fade 压到看不见，
+    // 于是它的界线弧整条在画布之外 —— 只按「有没有发起绘制调用」计数就会误判成「画了东西」，
+    // 兜底提示就不画了，用户看到一片漆黑而没有任何解释（放开缩放后放大到极端即触发）。
+    function nearDist(sx, sy) {
+      var Hc = H - FOOTER_H;
+      var dx = sx < 0 ? -sx : (sx > W ? sx - W : 0);
+      var dy = sy < 0 ? -sy : (sy > Hc ? sy - Hc : 0);
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
     // ① 容器底图：同色压暗填充 + 一条清晰界线。地图里的省就是这样 —— 面很淡，
     //    界线很清楚，市画在它上面。
     function drawWash(list) {
@@ -554,9 +594,17 @@
         // maxzoom 淡出：圆接近铺满视口时让它平滑退场（fade 1→0），否则停画那一
         // 瞬会看到整屏亮度跳一下；也避免多层罩子叠成不透明色块
         var dFar = farCornerDist(sx, sy);
+        var dNear = nearDist(sx, sy);
         var fade = 1 - smoothstep(dFar * 0.7, dFar, sr);
         if (fade <= 0.004) continue;
         var fa = fillAlphaOf(n) * fade;
+        var sa = clamp(fa * 1.2 + 0.18 * fade, 0, 0.8);
+        // 只有**几何上真的穿过视口**的那一笔才算数：填充看圆盘（near < sr），界线看圆环
+        // （near ≤ sr ≤ dFar）。fade 刚好越过 0.004 这一档时两者都 ≈0，合成后与背景同值；
+        // 中心远在屏外的大圆则填充被跳过、界线整条在画布外 —— 两种都是「候选集里有、
+        // 屏幕上没有」，都不能让兜底提示闭嘴。
+        if ((fa > PAINT_MIN && dNear < sr) ||
+            (sa > PAINT_MIN && dNear <= sr && sr <= dFar)) stats.painted++;
         if (fa > 0.004) {
           ctx.globalAlpha = fa;
           ctx.fillStyle = rgba(n._rgb, 1);
@@ -564,7 +612,7 @@
           ctx.arc(sx, sy, sr, 0, TAU);
           ctx.fill();
         }
-        ctx.globalAlpha = clamp(fa * 1.2 + 0.18 * fade, 0, 0.8);
+        ctx.globalAlpha = sa;
         ctx.strokeStyle = rgba(n._brgb, 1);
         ctx.lineWidth = sr > 60 ? 1.6 : 1;
         ctx.beginPath();
@@ -977,6 +1025,9 @@
         var n = list[i];
         var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
         var a = alpha.get(n.id);
+        // 前景实心圆：不透明度够、而且圆盘真的穿过视口，才算屏幕上看得见。
+        // （只判 alpha 会被「中心远在屏外的大圆」骗到 —— 那种圆铺满画布却什么都没露出来）
+        if (a > PAINT_MIN && nearDist(sx, sy) < sr) stats.painted++;
         ctx.globalAlpha = a;
         ctx.fillStyle = rgba(n._rgb, 1);
         ctx.beginPath();
@@ -1234,6 +1285,28 @@
       return [e.clientX - r.left, e.clientY - r.top];
     }
 
+    // ── 程序化平移（键盘方向键走这里）────────────────────────────────────
+    // 语义与鼠标拖拽**完全一致**：取消进行中的 tween、挪相机、通知 onCamera。
+    // 刻意不碰 selectedId / hoverId —— 这正是它的用处：看远处的连线时不必点任何东西，
+    // 也就不会因为手抖把选中切到别的元素上、让焦点过滤把想看的箭头一起滤掉。
+    function panBy(dx, dy) {
+      if (!dx && !dy) return;
+      tween = null;
+      cam.panX += dx; cam.panY += dy;
+      invalidate();
+      if (hooks.onCamera) hooks.onCamera();
+    }
+
+    // 一「步」平移多少屏幕 px：由视口现算，缩放无关（屏幕空间里的距离）。
+    // 竖向用可视高度（扣掉页脚），横向用整宽 —— 本来就不同宽高比，各按各的算。
+    // fast（按住 Shift）= 半个视口，用来快速跨过很长的连线。
+    // 下限 40px 兜住极小窗口，免得一步挪不动。
+    function panStep(fast) {
+      var vx = fast ? 0.5 * W : Math.max(40, W / 8);
+      var vy = fast ? 0.5 * (H - FOOTER_H) : Math.max(40, (H - FOOTER_H) / 8);
+      return [vx, vy];
+    }
+
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
       tween = null;
@@ -1334,6 +1407,9 @@
         var z = (ENTER[L - 1] || zMax) * 1.05;
         tweenTo({ zoom: clamp(z, zMin, zMax), panX: W / 2, panY: (H - FOOTER_H) / 2 }, TRANSITION);
       },
+      // 键盘平移（方向键）。panBy 收屏幕 px 增量，panStep 给出「一步」有多远。
+      panBy: panBy,
+      panStep: panStep,
       focusOn: focusOn,
       fitPair: fitPair,
       tweenTo: tweenTo,

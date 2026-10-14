@@ -506,6 +506,19 @@
       }
       return;
     }
+    // 方向键平移画布。放在 input/select 守卫之后，所以搜索框里按方向键仍然是移动光标。
+    // 它不碰选中态 —— 这正是它存在的理由：看远处的连线时不必按住鼠标拖，也就不会因为
+    // 一次不到 5px 的抖动被判成点击、把选中切到别的大父圆上，让想看的箭头被焦点过滤掉。
+    const PAN = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const panDir = PAN[evt.key];
+    if (panDir) {
+      evt.preventDefault();                     // 别让浏览器把方向键当滚动/焦点移动
+      const [vx, vy] = R.panStep(evt.shiftKey);
+      R.panBy(panDir[0] * vx, panDir[1] * vy);
+      return;
+    }
+    // Home = 回到默认视角。自由缩放之后「缩丢了」变得可能，键盘操作时不该逼人去摸鼠标。
+    if (evt.key === 'Home') { evt.preventDefault(); R.resetView(); toast('已回到默认视角'); return; }
     if (evt.key === ']' || evt.key === '+' || evt.key === '=') stepLevel(1);
     else if (evt.key === '[' || evt.key === '-' || evt.key === '_') stepLevel(-1);
     else if (evt.key === 'Escape') { select(null); hideTooltip(); }
@@ -558,6 +571,10 @@
       zoom: Math.round(R.camera.zoom * 1000) / 1000,
       level: R.enterAt(R.camera.zoom),
       shownNodes: R.stats.nodes,
+      // 真正按 PAINT_MIN 以上不透明度落了笔、且几何上穿过视口的节点数。
+      // 判「视口是不是空的」要看它，不能看 shownNodes（那是候选集大小，可能含
+      // 中心远在屏外的大圆 —— 那种圆候选集里有、屏幕上什么都没有）。
+      painted: R.stats.painted,
       shownEdges: R.stats.edges,
       focusEdges: R.stats.focusEdges,
       focusNeighbors: R.stats.focusNeighbors,

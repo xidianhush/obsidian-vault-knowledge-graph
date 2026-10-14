@@ -142,6 +142,38 @@ FORCE_LABELS = """(ids) => {
     return n;
 }"""
 
+# 「空白兜底提示有没有落笔」的探针：不是取正中心**一个**像素 —— 提示是 textAlign:center
+# 的长文本，屏幕正中那一点很可能正好落在两个字之间的空隙里，单像素抽样会随机假阴性。
+# 改成扫过中心的一条横带（含 dpr 缩放），数有多少像素不是背景色。没画东西 → 0。
+HINT_PIXELS = """() => {
+    const cv = document.getElementById('cv'); const g = cv.getContext('2d');
+    const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
+    const band = Math.max(1, Math.round(28 * k));
+    const cy = Math.round((H - 46) / 2 * k);
+    const y0 = Math.max(0, Math.min(cv.height - band, cy - Math.round(band / 2)));
+    const d = g.getImageData(0, y0, cv.width, band).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i] !== 15 || d[i+1] !== 17 || d[i+2] !== 22) n++;
+    }
+    return n;
+}"""
+
+# 整块画布上非背景色的像素数 —— 「画布是不是肉眼全空」的直接度量，比统计量更硬
+# （stats.nodes 是候选集大小、stats.painted 是几何精确的落笔数，两者都只是代理）。
+# 读整块画布比较贵，所以只在 3d 那一段用。
+CANVAS_LIT = """() => {
+    const cv = document.getElementById('cv'); const g = cv.getContext('2d');
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i] !== 15 || d[i+1] !== 17 || d[i+2] !== 22) n++;
+    }
+    return {lit: n, shown: window.KG.renderer.stats.nodes,
+            painted: window.KG.renderer.stats.painted};
+}"""
+BG = [15, 17, 22]
+
 fails = []
 warns = []
 
@@ -261,17 +293,18 @@ with sync_playwright() as p:
     check("labels stay inside the per-frame budget", on <= 400, str(on))
     shot("01_home")
 
-    print("\n=== 2. wheel down x20 -> zoom floor, every top-level root on screen ===")
+    print("\n=== 2. the zoom floor landmark: land on zMin, every top-level root on screen ===")
     page.mouse.move(720, 430)
-    for _ in range(20):
-        page.mouse.wheel(0, 100)
-        page.wait_for_timeout(40)
+    # 地板现在**显式落到渲染器的地标 zMin 上**，而不是「往下滚 20 格」—— 滚轮的 clamp
+    # 已经拆掉（见 2b），滚 20 格会一路滚过 zMin 进到空白里。地标本身要钉住的行为没变：
+    # zMin = 最小的顶层学科刚好看得见的那一档，所以「每个顶层学科都在画面上」必须成立。
+    page.evaluate("() => window.KG.renderer.setZoom(window.KG.renderer.zMin)")
     page.wait_for_timeout(400)
     out = page.evaluate(STATE)
     # state().zoom 只保留 3 位小数，判边界必须读未舍入的相机值
     camz = page.evaluate("() => window.KG.renderer.camera.zoom")
     print("   ", json.dumps({k: out[k] for k in ("zoom", "level", "shownNodes", "shownEdges")}, ensure_ascii=False))
-    check("zoom hit floor", abs(camz - meta["zMin"]) < 1e-9,
+    check("setZoom(zMin) lands exactly on the landmark", abs(camz - meta["zMin"]) < 1e-9,
           "%.8f vs zMin %.8f" % (camz, meta["zMin"]))
     check("level == 1 at floor", out["level"] == 1, str(out["level"]))
     top = page.evaluate("""() => {
@@ -301,12 +334,43 @@ with sync_playwright() as p:
           out["shownLabels"] >= 1, str(out["shownLabels"]))
     shot("02_zmin")
 
+    print("\n=== 2b. the floor is a landmark, not a wall: the wheel may pass it into empty space ===")
+    # 需求：缩放上下限放开。滚轮不再被 clamp 到 zMin —— 一路往下滚要能滚过它，
+    # 画面随之清空，并且**不是死黑**：全空白兜底提示必须画出来。这条同时证明了
+    # 「放开」是真的，以及「放开之后缩丢了也不至于看到一片什么都没有的屏幕」。
+    # 不能写死次数：要缩到「连世界半径 1000 的根都淡出」需要 log(0.0133/zMin)/log(1.12)
+    # 约 30 格，而根是最后才消失的那个。所以滚到空为止（上限兜住）。
+    below, steps_down = None, 0
+    for _ in range(60):
+        page.mouse.wheel(0, 100)
+        page.wait_for_timeout(35)
+        steps_down += 1
+        st = page.evaluate(STATE)
+        below = page.evaluate("() => window.KG.renderer.camera.zoom")
+        if st["shownNodes"] == 0:
+            break
+    page.wait_for_timeout(400)
+    empty = page.evaluate(STATE)
+    print("    下滚 %d 格后 zoom=%.6f (zMin=%.6f)  shownNodes=%d"
+          % (steps_down, below, meta["zMin"], empty["shownNodes"]))
+    check("wheel goes below zMin (floor is a landmark, not a wall)",
+          below < meta["zMin"] * 0.999, "%.6f < %.6f?" % (below, meta["zMin"]))
+    check("zooming far enough past the floor empties the viewport", empty["shownNodes"] == 0,
+          str(empty["shownNodes"]))
+    hint_n = page.evaluate(HINT_PIXELS)
+    check("empty viewport still paints the fallback hint (not a dead black screen)",
+          hint_n > 50, "中心带非背景像素=%d" % hint_n)
+    check("no pageerror while roaming past the floor", not perr, "; ".join(perr[:2]))
+    # 回到地标，后面的段落都假设从这里开始往上滚
+    page.evaluate("() => window.KG.renderer.setZoom(window.KG.renderer.zMin)")
+    page.wait_for_timeout(300)
+
     # 到天花板要多少步，由这张图自己的缩放跨度算：log(zMax/zMin)/log(wheel_step)，再加
     # 3 步余量（clamp 与最后一步的取整）。私有图 157× = 45 步，公开图 338× = 52 步 ——
     # 写死 48 步只够前者，公开图第 48 步停在中途（45.7 vs zMax 66.9），看起来像 zoom 卡住了。
     up_steps = int(math.ceil(math.log(meta["zMax"] / meta["zMin"]) /
                              math.log(meta["wheelStep"]))) + 3
-    print("\n=== 3. wheel up x%d (span %.1fx) -> zoom/level monotonic, reach max_depth and ceiling ==="
+    print("\n=== 3. wheel up x%d (span %.1fx) -> zoom/level monotonic, reach max_depth and the ceiling landmark ==="
           % (up_steps, meta["zMax"] / meta["zMin"]))
     ups, prev_z, prev_lv, z_mono, lv_mono = [], 0.0, 0, True, True
     label_gap = []
@@ -337,7 +401,10 @@ with sync_playwright() as p:
     check("zoom monotonic increasing on wheel up", z_mono)
     check("level monotonic non-decreasing (direction lock)", lv_mono)
     check("reached max_depth %d" % meta["maxDepth"], prev_lv == meta["maxDepth"], str(prev_lv))
-    check("zoom hit ceiling", prev_z >= meta["zMax"] * 0.999, "%.4f vs zMax %.4f" % (prev_z, meta["zMax"]))
+    # 天花板也不再是墙：滚轮可以越过 zMax（多滚几格就超了）。这条只要求「可达且被越过」，
+    # zMax 仍然是地标 —— 深度层级（enterAt）与层级胶囊都还用它。
+    check("the ceiling landmark zMax is reached and passed (not a wall)",
+          prev_z >= meta["zMax"] * 0.999, "%.4f vs zMax %.4f" % (prev_z, meta["zMax"]))
     nanseen = [u for u in ups if any(v != v for v in u)]
     check("no NaN during %d wheel steps" % up_steps, not nanseen, str(nanseen[:2]))
     check("labels never all vanish while the renderer itself could place one (was 0 at every zoom before)",
@@ -350,16 +417,84 @@ with sync_playwright() as p:
     drift = pan_to_empty()
     print("    shownNodes at ceiling center=%d, empty after pan=%s" % (at_center, drift))
     if drift is None:
-        warns.append("no empty viewport found at the zoom ceiling -> bug B test skipped")
-        print("    !! no gap; skipping")
+        warns.append("no empty viewport found at the zoom ceiling -> bug B tested only via 2b/3c")
+        print("    !! no gap; skipping (2b 与 3c 已经用同一条兜底提示覆盖了空视口)")
     else:
-        px = page.evaluate("""() => {
-            const cv = document.getElementById('cv'); const g = cv.getContext('2d');
-            const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
-            const d = g.getImageData(Math.round(W/2*k), Math.round((H-46)/2*k), 1, 1).data;
-            return [d[0], d[1], d[2]]; }""")
-        check("hint text painted at screen center", px != [15, 17, 22], str(px))
+        hint_n = page.evaluate(HINT_PIXELS)
+        check("hint text painted at screen center", hint_n > 50, "中心带非背景像素=%d" % hint_n)
     shot("07_blank")
+
+    print("\n=== 3c. zooming in far past the ceiling: maxzoom hides everything, hint still shows ===")
+    # 放大侧放开之后会撞上另一条**本来就有**的规则（render.js 的 maxzoom）：圆的屏幕半径
+    # 超过「圆心到视口最远角」就停画，因为再画只是一层纯色罩。于是足够深的放大之后视口也会
+    # 空。这是设计如此（地图到最深一级也是这样），但放开之后它变得可达，所以必须钉住：
+    # 空得掉、不报错、且照样有兜底提示。
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(700)
+    z0 = page.evaluate("() => window.KG.renderer.camera.zoom")
+    empty_at = None
+    for i in range(18):
+        page.evaluate("() => window.KG.renderer.zoomBy(4)")
+        page.wait_for_timeout(90)
+        st = page.evaluate(STATE)
+        # 判据必须是 stats.painted（几何精确的落笔数），**不能**用 shownNodes：
+        # 那是候选集大小，会被「中心远在屏外、半径极大的圆」撑住 —— public 在 z=1e6 时
+        # shownNodes 恒为 1，而画布上其实一无所有、提示正常画着（见 3d 的说明）。
+        if st["painted"] == 0:
+            empty_at = page.evaluate("() => window.KG.renderer.camera.zoom")
+            break
+    print("    home z=%.3f -> 空于 z=%s（%s× home，%s× zMax）" % (
+        z0, ("%.1f" % empty_at) if empty_at else "未达到",
+        ("%.1f" % (empty_at / z0)) if empty_at else "-",
+        ("%.1f" % (empty_at / meta["zMax"])) if empty_at else "-"))
+    check("zooming in far enough does empty the viewport (maxzoom rule, pre-existing)",
+          empty_at is not None, str(empty_at))
+    if empty_at is not None:
+        hint_n2 = page.evaluate(HINT_PIXELS)
+        check("extreme zoom-in still paints the fallback hint",
+              hint_n2 > 50, "中心带非背景像素=%d" % hint_n2)
+    check("no pageerror at extreme zoom-in", not perr, "; ".join(perr[:2]))
+    # Home 必须能救回来 —— 这是放开缩放之后承诺的找回手段。
+    # 判据用「恢复到 zHome」而不是「比某个阈值大」：后者在小视口下会因为
+    # homeZoom 自身被 clamp 到 zMin 而变得脆弱，前者才是真正的契约。
+    page.keyboard.press("Home")
+    page.wait_for_timeout(900)
+    home_after = page.evaluate("() => window.KG.renderer.camera.zoom")
+    check("Home key recovers from the empty state back to the home view",
+          abs(home_after - meta["zHome"]) < 1e-6,
+          "%.6f vs zHome %.6f" % (home_after, meta["zHome"]))
+
+    print("\n=== 3d. no zoom/pan may leave a blank canvas without the hint ===")
+    # 这是 3c 的真正用途，也是放开缩放的前提条件：画布**肉眼全空**时必须有兜底提示。
+    # 曾经的判据是「候选集为空」（wash/front 是否为空），会被「中心远在屏外、半径极大的圆」
+    # 骗过 —— 它那道 maxzoom 门（sr < farCornerDist）会因为远处的 far 同样很大而放行，
+    # 填充被 fade 压到看不见、界线弧又整条在画布之外，于是画布上一无所有而兜底不画。
+    # 放开缩放之后放大到极端就能撞上（实测 public 在 z ≥ 5000 时 0 个非背景像素、
+    # stats.nodes 却是 1）。现在判据改成 stats.painted（按 PAINT_MIN 与 near/far 几何精确
+    # 判定的落笔数），这一段把「任何缩放 × 任何平移都不允许出现无提示的空白」扫一遍钉住。
+    probes = [0.005, 0.02, 0.1, 0.4612, 3, 30, 1000, 30000, 1e5]
+    pans = [(0, 0), (600, 400), (-1200, -800), (3000, -2500)]
+    blanks = []
+    for px, py in pans:
+        for z in probes:
+            page.evaluate("(a) => { const R = window.KG.renderer; R.camera.panX = a[0];"
+                          " R.camera.panY = a[1]; R.setZoom(a[2]); }", [px, py, z])
+            page.wait_for_timeout(45)
+            s = page.evaluate(CANVAS_LIT)
+            if s["lit"] < 500:
+                blanks.append((px, py, z, s["shown"], s["painted"], s["lit"]))
+    print("    扫了 %d 组（%d 缩放 × %d 平移），空白且无提示：%d 组"
+          % (len(probes) * len(pans), len(probes), len(pans), len(blanks)))
+    check("no zoom/pan combination leaves a blank canvas with no hint",
+          not blanks, str(blanks[:3]))
+    check("no pageerror during the zoom/pan sweep", not perr, "; ".join(perr[:2]))
+    # 收尾必须是**瞬时**归位，不能靠 resetView()：那是 364ms 的 tween，而极端 zoom 下
+    # 每一帧绘制极慢（要把半径上百万像素的圆弧栅格化），rAF 被拖住、tween 迟迟走不完，
+    # 后面的段落就会在「相机还在飞」的中间态上取样（实测把 _sr 读成 378442px 而实际
+    # 该是 38px，进而挑错目标节点）。测试要的是确定的起始状态，不是动画。
+    page.evaluate("""() => { const R = window.KG.renderer; const s = R.size();
+        R.setZoom(R.zHome); R.camera.panX = s[0] / 2; R.camera.panY = (s[1] - 46) / 2; R.draw(); }""")
+    page.wait_for_timeout(250)
 
     print("\n=== 4. LOD contract: zooming in on a node reveals its descendants ===")
     page.evaluate("() => window.KG.renderer.resetView()")
@@ -403,6 +538,145 @@ with sync_playwright() as p:
     print("    setLevel(4)=%d  ] -> %d  [ -> %d" % (a, b2, c2))
     check("] deepens", b2 > a, "%d->%d" % (a, b2))
     check("[ shallows", c2 < b2, "%d->%d" % (b2, c2))
+
+    print("\n=== 5b. arrow keys pan the camera — and must NOT disturb the selection ===")
+    # 用户报的问题：想看两个远处元素之间的箭头，而平移只能靠鼠标拖；拖的过程中一次不到
+    # 5px 的抖动会被判成点击（render.js 的 dragMoved > 5），于是选中切到别的大父圆上，
+    # 焦点模式立刻把想看的箭头滤掉。方向键平移把「平移」与「点击」解耦：panBy 不碰
+    # selectedId，所以这条断言要同时钉住「画面动了」和「选中一点没变」。
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(800)
+
+    def cam():
+        return page.evaluate("""() => { const R = window.KG.renderer;
+            return {x: R.camera.panX, y: R.camera.panY, sel: R.selected,
+                    fx: R.stats.focusEdges, z: R.camera.zoom}; }""")
+
+    step = page.evaluate("() => window.KG.renderer.panStep(false)")
+    step_fast = page.evaluate("() => window.KG.renderer.panStep(true)")
+    # 先钉住「鼠标拖拽平移仍然可用」—— 加方向键是**增加**一条通道，不是替换掉原来那条。
+    # 顺带验 render.js 的点击/拖拽阈值（dragMoved > 5）：拖了 120/80 px 之后不该被当成
+    # 点击去改选中，否则用户只是想把画面挪一挪就把焦点过滤换了一轮。
+    d0 = cam()
+    page.mouse.move(720, 430)
+    page.mouse.down()
+    page.mouse.move(840, 510, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(250)
+    d1 = cam()
+    print("    拖拽 (120,80): panX %.1f -> %.1f ; panY %.1f -> %.1f ; 选中 %s -> %s"
+          % (d0["x"], d1["x"], d0["y"], d1["y"], d0["sel"], d1["sel"]))
+    check("mouse drag still pans, by exactly the drag distance",
+          abs((d1["x"] - d0["x"]) - 120) < 1 and abs((d1["y"] - d0["y"]) - 80) < 1,
+          "dx=%.1f dy=%.1f" % (d1["x"] - d0["x"], d1["y"] - d0["y"]))
+    check("a real drag is not treated as a click (selection untouched)",
+          d1["sel"] == d0["sel"], "%s -> %s" % (d0["sel"], d1["sel"]))
+
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(800)
+    p0 = cam()
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(150)
+    p1 = cam()
+    print("    ArrowRight: panX %.1f -> %.1f (panStep %.1f)  zoom 不变=%s"
+          % (p0["x"], p1["x"], step[0], abs(p1["z"] - p0["z"]) < 1e-12))
+    check("ArrowRight pans right by exactly one panStep",
+          abs((p1["x"] - p0["x"]) - step[0]) < 0.5, "%.2f vs %.2f" % (p1["x"] - p0["x"], step[0]))
+    check("arrow panning does not change the zoom", abs(p1["z"] - p0["z"]) < 1e-12,
+          "%.6f -> %.6f" % (p0["z"], p1["z"]))
+
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(150)
+    p2 = cam()
+    check("ArrowDown pans down by exactly one panStep",
+          abs((p2["y"] - p1["y"]) - step[1]) < 0.5, "%.2f vs %.2f" % (p2["y"] - p1["y"], step[1]))
+
+    page.keyboard.down("Shift")
+    page.keyboard.press("ArrowRight")
+    page.keyboard.up("Shift")
+    page.wait_for_timeout(150)
+    p3 = cam()
+    print("    Shift+ArrowRight 位移 %.1f（期望 %.1f，≈4×普通）" % (p3["x"] - p2["x"], step_fast[0]))
+    check("Shift+Arrow pans about 4x further",
+          abs((p3["x"] - p2["x"]) - step_fast[0]) < 0.5, "%.2f vs %.2f" % (p3["x"] - p2["x"], step_fast[0]))
+
+    # 核心：选中之后平移，选中与焦点边数都必须纹丝不动。
+    # 必须挑一个**真的有连线**的节点：随便挑个孤立节点的话 focusEdges 恒为 0，
+    # 这条断言就退化成 0 == 0 的空转 —— 看起来有覆盖，其实什么都没验。
+    # 所以在页面里先搜一遍：谁能选出 >0 条焦点边就用谁，并把「确实有边」当前置条件。
+    pick = page.evaluate("""() => {
+        const R = window.KG.renderer;
+        const keep = R.selected;
+        const cand = R.NODES.filter(n => R.alphaOf(n.id) > 0.95);
+        let hit = null;
+        for (const n of cand) {
+            R.selected = n.id; R.draw();
+            if (R.stats.focusEdges > 0) { hit = {id: n.id, fx: R.stats.focusEdges}; break; }
+        }
+        R.selected = keep; R.draw();
+        return hit;
+    }""")
+    if not pick:
+        warns.append("no visible node with focus edges found -> 'pan keeps the arrow' check skipped")
+    else:
+        sel_id = pick["id"]
+        page.evaluate("(id) => { window.KG.renderer.selected = id; }", sel_id)
+        page.wait_for_timeout(400)
+        s0 = cam()
+        check("precondition: the picked node really has focus edges (else this test is vacuous)",
+              s0["fx"] > 0, "%s fx=%d" % (sel_id, s0["fx"]))
+        page.keyboard.press("ArrowLeft")
+        page.keyboard.press("ArrowLeft")
+        page.wait_for_timeout(300)
+        s1 = cam()
+        print("    选中 %s（%d 条焦点边）后按两次 ArrowLeft：sel %s -> %s ; focusEdges %d -> %d ; panX %.1f -> %.1f"
+              % (sel_id, s0["fx"], s0["sel"], s1["sel"], s0["fx"], s1["fx"], s0["x"], s1["x"]))
+        check("panning keeps the selection", s1["sel"] == s0["sel"] == sel_id,
+              "%s -> %s" % (s0["sel"], s1["sel"]))
+        check("panning actually moved the camera", abs(s1["x"] - s0["x"]) > 1,
+              "%.1f -> %.1f" % (s0["x"], s1["x"]))
+        check("the selected element still shows focus edges after panning",
+              s1["fx"] > 0, "%d -> %d" % (s0["fx"], s1["fx"]))
+        # 注意：**不能**断言 focusEdges 前后严格相等。它是屏幕空间的视觉计数：
+        # 主绘制趟按视口裁剪圆（render.js:493），被挡下的焦点边再由 drawFocusEdges 按
+        # 「解析到的在屏锚点」分组（render.js:832-834），所以平移会让分组自然合并/拆分，
+        # 计数本来就会变（实测 public 上 2 -> 1）。真正承诺的契约是「状态没被改动」——
+        # 挪出去再挪回来，画面必须回到逐位相同。这条既严格又不会因为屏内屏外而假红。
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(400)
+        back = cam()
+        check("panning away and back restores the same focus edge count and position "
+              "(panning only moves the camera, it never edits the focus state)",
+              back["fx"] == s0["fx"] and abs(back["x"] - s0["x"]) < 1,
+              "fx %d -> %d ; panX %.1f -> %.1f" % (s0["fx"], back["fx"], s0["x"], back["x"]))
+
+    # 搜索框里按方向键应该是移动光标，不是平移画布（app.js 的 input/select 守卫）
+    page.keyboard.press("/")
+    page.wait_for_timeout(200)
+    q0 = cam()
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(200)
+    q1 = cam()
+    check("arrows do not pan while the search box has focus",
+          abs(q1["x"] - q0["x"]) < 1e-9, "%.2f -> %.2f" % (q0["x"], q1["x"]))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+
+    # panBy 必须像拖拽一样取消进行中的 tween，否则两者会互相拉扯
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(800)
+    page.evaluate("() => window.KG.renderer.zoomToDepth(6)")
+    page.wait_for_timeout(60)
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(500)
+    tz1 = page.evaluate("() => window.KG.renderer.camera.zoom")
+    page.wait_for_timeout(500)
+    tz2 = page.evaluate("() => window.KG.renderer.camera.zoom")
+    check("panBy cancels an in-flight tween (zoom stops changing)",
+          abs(tz2 - tz1) < 1e-12, "%.6f -> %.6f" % (tz1, tz2))
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(700)
 
     print("\n=== 6. bug A regression: HUD must follow programmatic zoom ===")
     page.evaluate("() => window.KG.setLevel(4)")
@@ -605,6 +879,13 @@ with sync_playwright() as p:
     # 也有边被守卫压掉」—— 后者是 MARK_MIN 守卫唯一能被观测到的地方（只有一条边时，
     # marks 的 0 或 2 都说明不了守卫在不在）。
     rungs = []
+    # 扫之前必须清掉选中：焦点模式会让 drawFocusEdges 另外往 markJobs 里塞标记（它补画的是
+    # 被三道门挡下的焦点边），而下面比较用的 shownEdges 只算主绘制趟的代表边 —— 于是
+    # 「2 条边却 6 个标记」这种假红就出来了（实测 rung 9）。这一段验的是**普通边标记**的
+    # 几何，与选中无关，所以把选中清掉，让输入集干净。不清也行，那就得把 focusEdges 折算
+    # 进来，反而更容易错。
+    page.evaluate("() => { window.KG.renderer.selected = null; }")
+    page.wait_for_timeout(300)
     for L in range(meta["maxDepth"], 0, -1):
         page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
         page.wait_for_timeout(850)
@@ -617,11 +898,18 @@ with sync_playwright() as p:
     check("deep rungs still draw markers for the long edges",
           bool(deep_rungs) and all(m > 0 for _, _, _, m in deep_rungs),
           "rungs %s" % [(L, e, m) for L, _, e, m in deep_rungs])
-    check("short edges are skipped by the min-length guard, never more than two marks per edge",
-          bool(deep_rungs) and all(m < 2 * e for _, _, e, m in deep_rungs)
-          and all(m <= 2 * e for _, _, e, m in rungs),
-          "guarded %s ; all %s" % ([(L, m, 2 * e) for L, _, e, m in deep_rungs],
-                                   [(L, m, 2 * e) for L, _, e, m in rungs]))
+    # 硬不变式是 **≤** 2×edges：每条画出的代表边最多落两个标记（源端圆点 + 目标端箭头）。
+    # 不能写成严格 `<`：一条边上两个标记本来就是正常的，所以「三条边全长、共 6 个标记」
+    # 完全合法（实测 rung L=7 就是 3/6），严格小于会在正常数据上假红。
+    check("never more than two markers per drawn edge (hard invariant)",
+          all(m <= 2 * e for _, _, e, m in rungs),
+          "all %s" % [(L, m, 2 * e) for L, _, e, m in rungs])
+    # MARK_MIN 守卫是否真的在生效，用「阶梯上存在某档标记数严格少于 2×edges」来证明 ——
+    # 也就是确实有短边被压掉了。只要有边界够短，这一条就会亮；守卫一旦被删掉整条阶梯
+    # 都会顶满 2×edges，这条就红。
+    suppressed = [(L, e, m) for L, _, e, m in rungs if m < 2 * e]
+    check("the min-length guard really suppresses some markers somewhere on the ladder",
+          bool(suppressed), "rungs with marks < 2*edges: %s" % [(L, m, 2 * e) for L, e, m in suppressed])
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
 

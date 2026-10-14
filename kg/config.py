@@ -107,10 +107,12 @@ def _validate(cfg: dict):
     if not isinstance(zoom.get("wheel_step"), (int, float)) or zoom["wheel_step"] <= 1:
         _fail("zoom.wheel_step 必须大于 1（它是滚轮一格的缩放倍率）")
     if not isinstance(zoom.get("zoom_in_ceiling"), (int, float)) or zoom["zoom_in_ceiling"] <= 1:
-        _fail("zoom.zoom_in_ceiling 必须大于 1（它是顶层适配缩放的放大倍数上限）")
+        _fail("zoom.zoom_in_ceiling 必须大于 1（它决定 zMax 地标：最挤节点完全浮现那一档。"
+              "滚轮已不再被 zMax 夹住，但层级胶囊与 focusOn 的上界仍由它定）")
     if not isinstance(zoom.get("zoom_out_floor"), (int, float)) or zoom["zoom_out_floor"] < 1:
-        _fail("zoom.zoom_out_floor 必须 ≥ 1（zMin 由最小学科根决定，"
-              "小于 1 会让它在最外层跌破 lod.min_px，6 个学科就看不全了）")
+        _fail("zoom.zoom_out_floor 必须 ≥ 1（它决定 zMin 地标 = 最小学科根刚好完全浮现那一档。"
+              "小于 1 会让最小的学科根在这一档跌破 lod.min_px，「缩到这一档看得见全部学科」"
+              "这个地标含义就没了。注意滚轮本身已不再被 zMin 夹住，这条守的是地标值，不是滚轮）")
     if not isinstance(zoom.get("home_fit"), (int, float)) or zoom["home_fit"] <= 0:
         _fail("zoom.home_fit 必须是正数（初始视图相对「刚好装下全图」的放大倍数）")
     if zoom["transition_ms"] < 0:
