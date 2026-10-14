@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -142,8 +143,9 @@ def cmd_scan(cfg, args):
     fm_notes = [n.file.stem for n in parsed if n.frontmatter]
 
     print(f"\n配置：{cfg['config_path']}")
+    print(f"范围：{cfg['scope_file_path']}  →  scope {cfg['scope']}")
     print(f"Vault：{cfg['vault']}")
-    print(f"\n[公开范围]  vault 内 .md 共 {stats['vault_md_total']} 篇，"
+    print(f"\n[纳入范围]  vault 内 .md 共 {stats['vault_md_total']} 篇，"
           f"纳入 {stats['included']} 篇，排除 {stats['excluded']} 篇")
     print(f"[层级]      文件夹 {stats['folders']} 个，最大深度 {stats['max_depth']}")
     print(f"[深度分布]  笔记所在层：{stats['depth_histogram']}")
@@ -247,13 +249,14 @@ def cmd_watch(cfg, args):
                     except OSError:
                         pass
         for extra in (cfg["config_path"],
+                      cfg["scope_file_path"],
                       os.path.join(cfg["root"], cfg["annotations"]),
                       os.path.join(cfg["root"], cfg["candidates_file"])):
             if os.path.exists(extra):
                 state[extra] = os.path.getmtime(extra)
         return state
 
-    print("监听中（Ctrl+C 退出）：笔记 / config / annotations / candidates 任一改动即重建")
+    print("监听中（Ctrl+C 退出）：笔记 / config / 范围定义 / annotations / candidates 任一改动即重建")
     last = snapshot()
     cmd_build(cfg, args)
     try:
@@ -272,31 +275,105 @@ def cmd_watch(cfg, args):
     return 0
 
 
+def cmd_scope(cfg, args):
+    """把当前 scope 的镜像清单打成 JSON 打到 stdout —— 给 quartz-sync-task/sync.ps1 读。
+
+    所以这里只允许有一种输出：不要加任何「顺便打印」的人话。
+    想给人看范围概览用 python build.py scan。
+    """
+    info = cfg["scopes"][cfg["scope"]]
+    print(json.dumps({
+        "scope": cfg["scope"],
+        "vault": cfg["vault"],
+        "mirror": info["mirror"],
+        "include": info["include"],
+        "output": info["output"],
+        "publish_graph": info["publish_graph"],
+    }, ensure_ascii=False, indent=1))
+    return 0
+
+
 COMMANDS = {
     "scan": cmd_scan,
     "suggest": cmd_suggest,
     "build": cmd_build,
     "verify": cmd_verify,
     "watch": cmd_watch,
+    "scope": cmd_scope,
 }
 
 
+def _parse_args(argv):
+    """只解析 --scope/-s 与 --scope=xxx；其余非 - 开头的参数原样留给子命令。"""
+    scope = ""
+    positional = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--scope", "-s"):
+            scope = argv[i + 1] if i + 1 < len(argv) else ""
+            i += 2
+            continue
+        if a.startswith("--scope="):
+            scope = a.split("=", 1)[1]
+        elif not a.startswith("-"):
+            positional.append(a)
+        i += 1
+    return positional, scope
+
+
 def main(argv):
-    args = [a for a in argv[1:] if not a.startswith("-")]
+    args, scope_arg = _parse_args(argv[1:])
     command = args[0] if args else "scan"
     if command not in COMMANDS and command != "all":
         print(__doc__)
         return 2
     try:
-        cfg = config_mod.load()
+        names = config_mod.load()["scope_names"]
     except config_mod.ConfigError as exc:
         print(f"[配置错误] {exc}", file=sys.stderr)
         return 2
-    if command == "all":
-        cmd_scan(cfg, args)
-        cmd_suggest(cfg, args)
-        return cmd_build(cfg, args)
-    return COMMANDS[command](cfg, args)
+
+    if scope_arg == "all":
+        selected = list(names)
+    elif scope_arg:
+        if scope_arg not in names:
+            print(f"[配置错误] 未知的 scope「{scope_arg}」，可选：{', '.join(names)}",
+                  file=sys.stderr)
+            return 2
+        selected = [scope_arg]
+    else:
+        selected = [names[0]]          # 不指定时 = config.yaml 的 scopes 里的第一个
+
+    if command == "watch" and len(selected) > 1:
+        print("[配置错误] watch 一次只能盯一个 scope，请显式指定 --scope", file=sys.stderr)
+        return 2
+
+    code = 0
+    for name in selected:
+        try:
+            cfg = config_mod.load(scope=name)
+        except config_mod.ConfigError as exc:
+            print(f"[配置错误] {exc}", file=sys.stderr)
+            return 2
+        # scope 子命令的输出契约是「stdout 上只有 JSON」（同步脚本直接喂给 ConvertFrom-Json），
+        # 所以横幅必须让开；其余命令照常打。
+        if command != "scope":
+            print(f"\n{'=' * 70}\n"
+                  f"[scope {name}]  {cfg['output']['json']}  +  {cfg['output']['html']}\n"
+                  f"{'=' * 70}")
+        if command == "all":
+            cmd_scan(cfg, args)
+            if name == selected[0]:
+                cmd_suggest(cfg, args)
+            else:
+                print(f"（candidates.yaml 只有一份，跳过 suggest；要审这一份范围请跑 "
+                      f"python build.py suggest --scope {name}）")
+            rc = cmd_build(cfg, args)
+        else:
+            rc = COMMANDS[command](cfg, args)
+        code = code or rc
+    return code
 
 
 if __name__ == "__main__":

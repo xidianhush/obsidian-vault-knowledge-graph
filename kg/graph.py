@@ -31,8 +31,14 @@ class GraphBuilder:
     # ── 索引与链接解析 ───────────────────────────────────────────────────
     def _build_index(self):
         self.by_stem = defaultdict(list)
+        # 展示路径 ≠ 真实路径的笔记（scope 的 remap 改过前缀）：登记别名，
+        # 让按真实路径写的 [[Logs/Study log/xxx]] 仍然解析得到。
+        self.alias: dict[str, str] = {}
         for n in self.notes:
             self.by_stem[n.file.stem.lower()].append(n.file.id)
+            src = n.file.source_id
+            if src != n.file.id:
+                self.alias[src.lower()] = n.file.id
         for ids in self.by_stem.values():
             ids.sort()
 
@@ -45,9 +51,15 @@ class GraphBuilder:
             t = t[:-3]
         if t in self.by_id:
             return t
+        if t.lower() in self.alias:
+            return self.alias[t.lower()]
         if "/" in t:
             hits = [i for i in self.by_id if i == t or i.endswith("/" + t)]
-            return sorted(hits, key=len)[0] if hits else None
+            if hits:
+                return sorted(hits, key=len)[0]
+            low = t.lower()
+            aliased = [v for k, v in self.alias.items() if k == low or k.endswith("/" + low)]
+            return sorted(aliased, key=len)[0] if aliased else None
         hits = self.by_stem.get(t.lower())
         if not hits:
             return None

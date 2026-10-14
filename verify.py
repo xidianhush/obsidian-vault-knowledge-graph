@@ -76,6 +76,29 @@ def run(cfg, payload_path=None):
            "depth=1 上只有文件夹节点，没有笔记直接挂在根部", failures)
     print(f"         该层可见：{'、'.join(top_visible)}")
 
+    # ── 范围一致性：图上出现的东西必须都在这个 scope 声明的目录里 ────────
+    # 这是「一份真源」的验收标准：范围改了而图没跟上、或者图里漏出一个本该私有的
+    # 目录，都能在这里当场抓住。
+    print("\n[范围一致性] 节点与 scope 声明对齐")
+    scope_roots = list(cfg.get("roots") or [])
+    if not scope_roots:
+        _check(False, "scope 没有声明任何内容根目录", failures)
+    else:
+        _check(set(roots) == set(scope_roots),
+               f"depth=1 的 {len(roots)} 个根 == scope「{cfg['scope']}」声明的 {len(scope_roots)} 个"
+               f"目录（{'、'.join(sorted(scope_roots))}）", failures)
+        outside = sorted({n["id"].split("/")[0] for n in data["nodes"]} - set(scope_roots))
+        _check(not outside,
+               f"没有节点落在 scope 之外的目录里（越界 {len(outside)} 个）"
+               + (f"：{'、'.join(outside)}" if outside else ""), failures)
+        # remap 生效的证明：真实路径前缀不该以节点 id 的形式残留（如 public 里的 Logs/）
+        leftover = sorted({r["from"] for r in (cfg.get("remap") or [])
+                           if any(n["id"] == r["from"] or n["id"].startswith(r["from"] + "/")
+                                  for n in data["nodes"])})
+        _check(not leftover,
+               f"重写过的路径前缀没有残留成节点 id（残留 {len(leftover)} 个）"
+               + (f"：{'、'.join(leftover)}" if leftover else ""), failures)
+
     # ── 标准 3：最深层显示全部笔记 ──────────────────────────────────────
     print("\n[标准 3] 缩放到最深层 = 显示全部笔记")
     max_depth = meta["max_depth"]

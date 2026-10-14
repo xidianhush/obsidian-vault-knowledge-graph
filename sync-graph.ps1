@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 
 $root = "D:\obsidian_vault\knowledge-graph"
 $log  = "$root\sync-graph.log"
@@ -26,7 +26,9 @@ try {
   Set-Location $root
   # build.py 的输出含中文，不改输出编码会在日志里变成乱码
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-  $out  = & python build.py build 2>&1
+  # 两份都在这里构建：它们是本地产物（public 那份按当前设置只留本地，不上站）。
+  # 站点侧的 sync.ps1 只在自己真要发布图谱时才重复构建一次。
+  $out  = & python build.py build --scope all 2>&1
   $code = $LASTEXITCODE
   $tail = ($out | Select-Object -Last 4) -join " | "
   if ($code -eq 0) {

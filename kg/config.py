@@ -11,9 +11,16 @@ import yaml
 DEFAULTS: dict = {
     "vault": ".",
     "vault_name": "",
-    "include": ["**/*.md"],
+    # 范围三件套（include / exclude / exclude_notes）由 scope_file 解析而来，本文件不再手写。
+    # include 默认空列表是刻意的：真源缺失时必须报错，而不是静默退回某个默认范围。
+    "include": [],
     "exclude": [],
     "exclude_notes": [],
+    # 公开范围真源：vault 里的 quartz-setup/public-scope.yaml。
+    "scope_file": "",
+    # 要构建哪个 scope；留空 = scopes 里的第一个。scopes 决定有哪些 scope、各自输出到哪。
+    "scope": "",
+    "scopes": {},
     "attachment_ext": [
         "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "heic",
         "pdf", "mp4", "mov", "zip", "canvas", "drawio", "exe",
@@ -155,8 +162,111 @@ def _validate(cfg: dict):
             _fail(f"theme.edges.{name} 颜色格式应为 #RRGGBB，收到 {color!r}")
 
 
-def load(path: str = "config.yaml") -> dict:
-    """读取配置；path 相对于项目根目录（含本文件的上级目录）。"""
+SCOPE_SECTIONS = ("content", "assets")
+
+
+def _read_scope_file(path: str) -> dict:
+    """读取公开范围真源。任何问题都直接抛错 —— 范围定义坏掉时绝不能猜一个范围继续跑。"""
+    if not os.path.exists(path):
+        raise ConfigError(
+            f"找不到公开范围真源：{path}\n"
+            "（来自 config.yaml 的 scope_file，通常在 vault 的 quartz-setup/ 下）")
+    with open(path, "r", encoding="utf-8-sig") as fh:
+        doc = yaml.safe_load(fh) or {}
+    if not isinstance(doc, dict):
+        raise ConfigError(f"{path} 顶层必须是键值映射")
+    for section in SCOPE_SECTIONS:
+        value = doc.get(section)
+        if value is not None and not isinstance(value, list):
+            raise ConfigError(f"{path} 的 {section} 必须是列表")
+    return doc
+
+
+def _scope_entries(doc: dict, section: str, scope: str, path: str):
+    """挑出某个 scope 在某 section 下的条目 → [(vault 路径, 落地名, 是否资源)]。"""
+    out = []
+    for item in doc.get(section) or []:
+        if not isinstance(item, dict):
+            raise ConfigError(f"{path} 的 {section} 每项必须是键值映射，收到 {item!r}")
+        src = str(item.get("from") or "").strip().strip("/")
+        if not src:
+            raise ConfigError(f"{path} 的 {section} 里有缺 from 的条目")
+        names = item.get("scopes")
+        if not isinstance(names, list) or not names:
+            raise ConfigError(f"{path}: {src} 没写 scopes（至少要写 public 或 private）")
+        if scope not in names:
+            continue
+        # 没写 as 就用目录名落地 —— 和 robocopy 把 Logs/Study log 落到 content/Study log 一致
+        dest = str(item.get("as") or src.rsplit("/", 1)[-1]).strip().strip("/")
+        if not dest:
+            raise ConfigError(f"{path}: {src} 的 as 不能为空")
+        out.append((src, dest, section == "assets"))
+    return out
+
+
+def _resolve_scopes(cfg: dict, doc: dict, scope_path: str) -> dict:
+    declared = cfg["scopes"]
+    if not isinstance(declared, dict) or not declared:
+        raise ConfigError("config.yaml 的 scopes 不能为空（它决定有哪几个 scope、各自输出到哪）")
+
+    unknown = set()
+    for section in SCOPE_SECTIONS:
+        for item in doc.get(section) or []:
+            names = item.get("scopes") if isinstance(item, dict) else None
+            if isinstance(names, list):
+                unknown |= {str(s) for s in names if str(s) not in declared}
+    if unknown:
+        raise ConfigError(f"{scope_path} 用到了 config.yaml 未声明的 scope：{sorted(unknown)}")
+
+    vault = cfg["vault"]
+    scopes = {}
+    for name, spec in declared.items():
+        spec = spec if isinstance(spec, dict) else {}
+        entries = (_scope_entries(doc, "content", name, scope_path)
+                   + _scope_entries(doc, "assets", name, scope_path))
+        include, remap, mirror = [], [], []
+        seen = set()
+        for src, dest, is_asset in entries:
+            if not os.path.isdir(os.path.join(vault, src)):
+                raise ConfigError(f"{scope_path}: 目录不存在 —— {src}")
+            if dest in seen:
+                raise ConfigError(f"{scope_path}: {name} 的落地名重复：{dest}")
+            seen.add(dest)
+            mirror.append({"from": src, "to": dest})
+            if is_asset:
+                continue        # 资源只镜像，不进图谱
+            include.append(f"{src}/**")
+            if src != dest:
+                # vault 路径前缀 ≠ 落地名 → 图谱里也按落地名建根，避免多一层包装目录
+                remap.append({"from": src, "to": dest})
+        if not include:
+            raise ConfigError(f"{scope_path}: scope「{name}」没有命中任何内容目录")
+        output = dict(spec.get("output") or {})
+        output.setdefault("json", f"dist/graph.{name}.json")
+        output.setdefault("html", f"dist/knowledge-graph.{name}.html")
+        scopes[name] = {
+            "name": name,
+            "include": include,
+            "exclude": list(doc.get("exclude") or []),
+            "exclude_notes": list(doc.get("exclude_notes") or []),
+            "remap": remap,
+            "mirror": mirror,
+            # 这个 scope 在图上的顶层根名（= 落地名），供 verify 断言「没有越界的节点」
+            "roots": [dest for (_src, dest, is_asset) in entries if not is_asset],
+            # 图谱 HTML 要不要真的发到站点上（约 8 MB/次，见 public-scope.yaml 的说明）
+            "publish_graph": bool(doc.get("publish_graph", False)),
+            "output": output,
+        }
+    return scopes
+
+
+def load(path: str = "config.yaml", scope: str = "") -> dict:
+    """读取配置并解析公开范围；path 相对项目根目录（含本文件的上级目录）。
+
+    scope 留空时取 scopes 里的第一个。返回的 cfg 中 include / exclude / exclude_notes /
+    remap / output 已是「当前 scope」的值，所以 scan / layout / emit / verify 都不需要
+    知道 scope 的存在；全部 scope 的定义留在 cfg["scopes"] 里。
+    """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not os.path.isabs(path):
         path = os.path.join(root, path)
@@ -168,7 +278,6 @@ def load(path: str = "config.yaml") -> dict:
         raise ConfigError("config.yaml 顶层必须是键值映射")
 
     cfg = _deep_merge(DEFAULTS, raw)
-    _validate(cfg)
 
     vault = cfg["vault"]
     if not os.path.isabs(vault):
@@ -179,9 +288,31 @@ def load(path: str = "config.yaml") -> dict:
     cfg["vault"] = vault
     cfg["root"] = root
     cfg["config_path"] = path
+
+    scope_path = cfg["scope_file"]
+    if not scope_path:
+        raise ConfigError("config.yaml 缺少 scope_file —— 公开范围必须来自 vault 里的 "
+                          "quartz-setup/public-scope.yaml，不在这里另写一份")
+    if not os.path.isabs(scope_path):
+        scope_path = os.path.join(root, scope_path)
+    cfg["scope_file_path"] = os.path.normpath(scope_path)
+    cfg["scopes"] = _resolve_scopes(cfg, _read_scope_file(cfg["scope_file_path"]),
+                                    cfg["scope_file_path"])
+
+    want = scope or cfg["scope"] or next(iter(cfg["scopes"]))
+    if want not in cfg["scopes"]:
+        raise ConfigError(f"未知的 scope「{want}」，可选：{', '.join(cfg['scopes'])}")
+    active = cfg["scopes"][want]
+    cfg["scope"] = want
+    cfg["scope_names"] = list(cfg["scopes"])
+    for key in ("include", "exclude", "exclude_notes", "remap", "roots", "output",
+                "mirror", "publish_graph"):
+        cfg[key] = active[key]
+
     if not cfg["vault_name"]:
         cfg["vault_name"] = os.path.basename(vault)
     cfg["attachments"] = {"." + e.lower().lstrip(".") for e in cfg["attachment_ext"]}
+    _validate(cfg)
     return cfg
 
 

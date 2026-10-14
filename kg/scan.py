@@ -11,14 +11,21 @@ SKIP_DIRS = {".git", ".obsidian", ".trash", ".smtcmp_json_db", "node_modules", "
 
 @dataclass
 class NoteFile:
-    rel: str        # posix 风格，相对 vault 根，含 .md
+    rel: str        # 真实 vault 相对路径（posix，含 .md）—— 永不重写，obsidian:// 跳转靠它
     abs: str
     stem: str       # 文件名去掉 .md
-    parts: tuple    # 目录层级，如 ("Science and Tech", "Electronic engineering")
+    parts: tuple    # 展示用目录层级，如 ("Science and Tech", "Electronic engineering")
     depth: int      # 笔记所在深度：目录深度 + 1
+    display: str = ""   # 展示用相对路径（含 .md）。命中 scope 的 remap 时与 rel 不同
 
     @property
     def id(self) -> str:
+        d = self.display or self.rel
+        return d[:-3] if d.lower().endswith(".md") else d
+
+    @property
+    def source_id(self) -> str:
+        """重写前的真实 id —— 链接解析留作别名，避免 [[Logs/Study log/xxx]] 解析失败。"""
         return self.rel[:-3] if self.rel.lower().endswith(".md") else self.rel
 
 
@@ -35,13 +42,29 @@ def _match(rel: str, patterns) -> bool:
     return False
 
 
+def _remap_rel(rel: str, rules) -> str:
+    """按 scope 的 remap 把 vault 路径前缀换成落地名。
+
+    只影响展示（节点 id / 层级 / 标签），真实路径仍留在 NoteFile.rel 上。
+    长前缀优先，避免 Logs 与 Logs/Study log 同时声明时匹配错规则。
+    """
+    for rule in sorted(rules or [], key=lambda r: -len(str(r.get("from") or ""))):
+        src = str(rule.get("from") or "").strip("/")
+        dest = str(rule.get("to") or "").strip("/")
+        if not src or not dest:
+            continue
+        if rel == src or rel.startswith(src + "/"):
+            return dest + rel[len(src):]
+    return rel
+
+
 def scan(cfg: dict):
     """返回 (notes, stats)。notes 已按路径排序。"""
     vault = cfg["vault"]
     include, exclude = cfg["include"], cfg["exclude"]
     excluded_by_name = set(cfg["exclude_notes"])
+    remap = cfg.get("remap") or []
     notes: list[NoteFile] = []
-    skipped_dirs = 0
 
     for dirpath, dirnames, filenames in os.walk(vault):
         dirnames[:] = sorted(
@@ -57,15 +80,17 @@ def scan(cfg: dict):
             if _match(rel, exclude):
                 continue
             stem = name[:-3]
-            parts = tuple(rel.split("/")[:-1])
             if stem in excluded_by_name or rel in excluded_by_name or rel[:-3] in excluded_by_name:
                 continue
+            display = _remap_rel(rel, remap)
+            parts = tuple(display.split("/")[:-1])
             notes.append(NoteFile(
                 rel=rel,
                 abs=abs_path,
                 stem=stem,
                 parts=parts,
                 depth=len(parts) + 1,
+                display=display,
             ))
 
     total_md = 0

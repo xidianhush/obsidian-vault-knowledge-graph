@@ -1,33 +1,39 @@
-# 知识笔记语义缩放可视化系统 —— 唯一维护入口
+# 知识笔记语义缩放可视化系统 —— 构建与调参入口
 #
-# 想改「公开哪些文件夹和笔记」→ 只改 include / exclude / exclude_notes，然后：
-#   python build.py build
-# 不需要碰任何 Python 代码。
+# 想改「公开哪些文件夹和笔记」→ **不要改这里**，改 vault 里那份唯一真源：
+#   D:/obsidian_vault/hush-ob-bucket/quartz-setup/public-scope.yaml
+# 它同时决定：Quartz 站点镜像哪些目录、公开图谱扫哪些、私有图谱扫哪些。
+# 本文件只管「怎么画」和「画几份、各输出到哪」。
+#
+# 日常命令：
+#   python build.py build                 构建全部 scope（默认顺序里第一份是 private）
+#   python build.py build --scope public  只构建公开那份
+#   python build.py scope  --scope public 打印公开那份的镜像清单（JSON，给同步脚本读）
 
 vault: D:/obsidian_vault/hush-ob-bucket
 vault_name: hush-ob-bucket          # 供 obsidian:// 协议跳转使用
 page_title: Hush 的知识图谱
 
-# ── 公开范围 ────────────────────────────────────────────────────────────
-# 白名单：想公开哪个目录就加一行（按 vault 相对路径匹配，`**` 递归）
-include:
-  - "Science and Tech/**"
-  - "Economy and Finance/**"
-  - "Medical and Health/**"
-  - "Literature History Philosophy/**"
-  - "Interest/**"
-  - "Projects/**"
+# ── 范围真源 ────────────────────────────────────────────────────────────
+# 就是 vault 里 quartz-setup/public-scope.yaml。文件缺失或写坏会直接报错退出，
+# 不会静默退回某个默认范围 —— 范围这种东西猜错一次就是一次泄漏。
+scope_file: D:/obsidian_vault/hush-ob-bucket/quartz-setup/public-scope.yaml
 
-# 黑名单：优先级高于 include
-exclude:
-  - "**/private/**"
-  - "**/draft*"
-  - "**/*.excalidraw.md"
-  - "**/.trash/**"
-
-# 逐篇笔记排除：写笔记名（不带 .md）即可，也可以用相对路径
-exclude_notes: []
-#  - "半导体物理(大二下)"     # 例：与另两篇半导体笔记内容重复
+# ── 构建哪几份 ──────────────────────────────────────────────────────────
+# 这里的键就是 --scope 的合法取值。顺序有意义：不指定 --scope 时构建第一个。
+#   private  自留：6 个学科全量，只在本地，不上网。沿用旧文件名，
+#            双击 dist/knowledge-graph.html 的习惯不用改。
+#   public   与 Quartz 站点共用同一套公开范围；产物会被
+#            quartz-sync-task/sync.ps1 复制进站点 content/ 并发布。
+scopes:
+  private:
+    output:
+      json: dist/graph.json
+      html: dist/knowledge-graph.html
+  public:
+    output:
+      json: dist/graph.public.json
+      html: dist/knowledge-graph.public.html
 
 # 这些扩展名的 [[链接]] 一律视为附件，不进图
 attachment_ext: [png, jpg, jpeg, gif, svg, webp, bmp, heic, pdf, mp4, mov, zip, canvas, drawio, exe]
@@ -180,13 +186,10 @@ theme:
     "Literature History Philosophy": "#C08BFF"
     "Interest":                     "#E3B341"
     "Projects":                     "#39C5BB"
+    "Study log":                    "#F0883E"   # 公开 scope 的第三个根（vault 里的 Logs/Study log）
   fallback: "#8B949E"
   edges:
     prerequisite: "#8B949E"
     derives:      "#4C8DFF"
     contrast:     "#E3B341"
     contains:     "#30363D"
-
-output:
-  json: dist/graph.json
-  html: dist/knowledge-graph.html

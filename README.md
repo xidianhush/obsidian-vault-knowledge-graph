@@ -13,9 +13,17 @@
 所以包含关系画成嵌套圆布局（circle packing：子圆严格落在父圆内部，不画成一堆线），
 连接关系画成细线。
 
-产出是一个**单文件 HTML**（`dist/knowledge-graph.html`），双击就能在 Chrome 里打开，
-不需要服务器、不需要联网。**渲染是自绘的 Canvas2D，没有用任何第三方图形库**（早期版本用
-Cytoscape，已整体替换，原因见 `HANDOFF.md`）。
+产出是**单文件 HTML**，双击就能在 Chrome 里打开，不需要服务器、不需要联网。
+一共产出两份，按 scope 分（见 §1）：
+
+| scope | JSON | HTML | 说明 |
+|---|---|---|---|
+| `private`（默认） | `dist/graph.json` | `dist/knowledge-graph.html` | ★ 双击这个；**不上网** |
+| `public` | `dist/graph.public.json` | `dist/knowledge-graph.public.html` | 与 Quartz 站点共用同一套范围；是否上站见 §1 |
+
+`private` 那份**故意沿用旧文件名**：双击 `dist/knowledge-graph.html` 的习惯不用改。
+**渲染是自绘的 Canvas2D，没有用任何第三方图形库**（早期版本用 Cytoscape，已整体替换，
+原因见 `HANDOFF.md`）。
 
 ```
 python build.py scan      # 扫描 vault，打印纳入/排除与链接统计
@@ -24,7 +32,16 @@ python build.py build     # 生成 dist/graph.json 与单文件 HTML
 python build.py verify    # 跑自动校验（每次改动后都要跑）
 python build.py watch     # 笔记改动后自动重建（2 秒轮询，挂在旁边即可）
 python build.py all       # scan + suggest + build
+
+# 每条子命令都能带 --scope private|public|all（简写 -s）；不带 = scopes 里排第一的那份（private）
+python build.py build  --scope public     # 只建公开那份
+python build.py verify --scope public     # 只校验公开那份
+python build.py scope  --scope public     # 打印公开那份的镜像清单（stdout 上只有 JSON）
 ```
+
+`scope` 是喂给同步脚本的机器接口（`quartz-sync-task/sync.ps1` 把它直接交给
+`ConvertFrom-Json`），想给人看范围概览请用 `scan`。`build --scope all` 两份都建；
+`watch` 一次只能盯一份（`--scope all` 会被拒绝）。
 
 只用到一个第三方依赖：`PyYAML`（`pip install pyyaml`）。Python ≥ 3.9。
 
@@ -39,39 +56,89 @@ python browser_check.py     # 浏览器侧 84 项断言（Playwright + 本机 Ch
 
 ## 1. 改「公开哪些文件夹和笔记」
 
-**唯一入口是 `config.yaml`**，不需要碰 Python 代码：
+**唯一入口是 vault 里那份「公开范围真源」**，本项目只负责读它：
+
+```
+D:/obsidian_vault/hush-ob-bucket/quartz-setup/public-scope.yaml
+```
+
+它放在 vault 里（所以会被 obsidian-git 一起备份），**Quartz 站点镜像哪些目录、公开版图谱扫哪些、
+私有图谱扫哪些，三件事共用这一份** —— 以前那种「同步脚本里一份目录清单、`config.yaml` 里再一份
+`include`」的双份维护已经删掉了。想改范围就改这个文件，不用碰任何脚本或 Python 代码。
 
 ```yaml
-include:                        # 白名单：想公开哪个目录就加一行
-  - "Science and Tech/**"
-  - "Economy and Finance/**"
-  - "Medical and Health/**"
-  - "Literature History Philosophy/**"
-  - "Interest/**"
-  - "Projects/**"
+# content: 内容目录。scopes 决定它出现在哪几处：
+#   public  → 镜像进 quartz-site\content\，并且进公开版图谱
+#   private → 只进自留的私有图谱，站点完全看不到
+content:
+  - from: "Science and Tech"
+    scopes: [public, private]
+  - from: "Projects"
+    scopes: [public, private]
+  - from: "Logs/Study log"        # as 是落地名：站点上落 content\Study log\，
+    as: "Study log"               # 公开图谱里也直接以 Study log 为根（不套一层 Logs）
+    scopes: [public]
+  - from: "Economy and Finance"
+    scopes: [private]
+  # …Medical and Health / Literature History Philosophy / Interest 同理，都是 private
 
-exclude:                        # 黑名单，优先级高于 include
+assets:                           # 只镜像进站点、不进图谱（附件本来就不会变成节点）
+  - from: "Attachment"
+    scopes: [public]
+
+exclude:                          # 两份范围共用的黑名单，优先级高于 content / assets
   - "**/private/**"
-  - "**/draft*"                 # 文件名含 draft 的一律排除
+  - "**/.minimax/**"
+  - "**/draft*"                   # 文件名含 draft 的一律排除
   - "**/*.excalidraw.md"
+  - "**/.trash/**"
 
-exclude_notes: []               # 逐篇排除：写笔记名（不带 .md）或相对路径
+publish_graph: false              # 公开图谱 HTML 要不要真的发到站点上（理由见本节末尾）
+exclude_notes: []                 # 逐篇排除：写笔记名（不带 .md）或 vault 相对路径
 ```
 
-改完跑 `python build.py build`。想先确认范围对不对，跑 `python build.py scan`：
+`as:` 只改**落地名**（站点上的目录名、图谱里的根名），笔记的真实 vault 路径不变：图谱节点里的
+`path` 字段仍是 `Logs/Study log/…`，所以「在 Obsidian 打开」按钮照旧能用（`kg/scan.py` 做前缀
+重映射，`kg/graph.py` 的别名索引让按真实路径写的 `[[Logs/Study log/xxx]]` 仍然解析得到）。
+
+改完跑 `python build.py build`（或带上 `--scope public` / `--scope all`）。想先确认范围对不对，
+跑 `python build.py scan`（默认那份）或 `python build.py scan --scope public`：
 
 ```
-[公开范围]  vault 内 .md 共 134 篇，纳入 108 篇，排除 26 篇
+[纳入范围]  vault 内 .md 共 134 篇，纳入 108 篇，排除 26 篇     ← private（默认）
 [层级]      文件夹 35 个，最大深度 5
 [深度分布]  笔记所在层：{2: 9, 3: 40, 4: 55, 5: 4}
-[链接]      [[链接]] 总数 735
-  附件链接         ██████████████████████·· 652
-  笔记→笔记        █······················· 40
-  自链接           █······················· 42
+[链接]      [[链接]] 总数 732
+  附件链接         █████████████████████··· 646
+  笔记→笔记        █······················· 42
+  自链接          █······················· 43
   解析失败         ························ 1   ← [[My tech log]]，目标笔记不存在
+[标题]      共 3285 个，平均 30.4 个/篇
 ```
 
+同一份真源的 **public** 那份是：`.md` 纳入 89 篇（排除 45）、文件夹 23 个、标题 3234 个、
+附件链接 636 条。两份共用的 `exclude` 规则一致，差别只在 `content:` 里各条的 `scopes`。
+
 附件链接（指向 png/pdf 等）会被丢弃，不进图。
+
+**两份产物的区别**：`private` 是自留版（6 个学科目录全量，只在本地），`public` 与站点共用同一套
+范围（3 个顶层根：`Science and Tech`、`Projects`、`Study log`）—— 注意 `Logs/Study log` 只进
+public，所以 private 图里没有它。产物固定叫：
+
+| scope | JSON | HTML | 谁来建 |
+|---|---|---|---|
+| `private` | `dist/graph.json` | `dist/knowledge-graph.html` | `sync-graph.ps1`（每 30 分钟跑 `build --scope all`，两份本地产物都在这儿出） |
+| `public` | `dist/graph.public.json` | `dist/knowledge-graph.public.html` | 同上；另外站点侧 `quartz-sync-task\sync.ps1` 只在 `publish_graph: true` 时**再重建一次**并上站 |
+
+`private` 的那两个文件名是**故意不动的旧名字**：它是主人日常双击打开的那一份，
+换名字等于把使用习惯打断。所以读文档时别默认「`graph.json` = 全部」——它只含 private 范围。
+
+**public 那份会不会上网？** 由 `public-scope.yaml` 的 `publish_graph` 决定，**默认 `false`**：
+`quartz-sync-task/sync.ps1` 只有在它为 `true` 时才把 `knowledge-graph.public.html` 复制进站点
+`content/` 并发布到 https://xidianhush.github.io/knowledge-graph.html 。默认关闭是一笔算过的账：
+那份 HTML 约 8.2 MB，而站点仓库近 60 天实测 130 次提交（≈ 2.17 次/天），每次都提交一遍就是
+8.2 MB × 2.17 × 365 ≈ **6.5 GB/年**，而 GitHub 对仓库体积的建议上限约 1 GB、Pages 发布产物也
+约 1 GB —— 撑不住。所以默认只在本地产出，范围规则与站点完全一致。
 
 ---
 
@@ -81,19 +148,26 @@ exclude_notes: []               # 逐篇排除：写笔记名（不带 .md）或
 
 | 方式 | 命令 | 适用 |
 |---|---|---|
-| 手动 | `python build.py build` | 改完立刻看效果 |
+| 手动 | `python build.py build` | 改完立刻看效果（= private 那份；公开那份加 `--scope public`） |
 | 实时监听 | `python build.py watch` | 开发/整理笔记时挂在旁边，存盘即重建（2 秒轮询） |
 | 定时任务 | `sync-graph.ps1` | 平时后台每 30 分钟重建一次，无需开着终端 |
 
 `sync-graph.ps1` 是给 Windows 计划任务用的包装脚本，它做四件事：
 
 1. **防重入**：`sync-graph.lock` 存在且 2 小时内没结束就 skip（上一次还在遍历 vault）。
-2. **强制 UTF-8 输出编码**：`build.py` 输出含中文，不改会在日志里变乱码。
-3. **跑 `python build.py build`**，把输出最后 4 行 + exit code 追加进 `sync-graph.log`。
-4. **裁剪日志**：只保留最近 400 行。
+2. **确认 `python` 在 PATH 上**，否则写一行 `sync FAILED: python not on PATH` 并退出。
+3. **强制 UTF-8 输出编码**：`build.py` 输出含中文，不改会在日志里变乱码。
+4. **跑 `python build.py build --scope all`**（两份本地产物都在这儿出），把输出最后 4 行 +
+   exit code 追加进 `sync-graph.log`。
+5. **裁剪日志**：只保留最近 400 行。
 
 它**只重建 `dist/`，不碰 vault 里的任何笔记，也不做任何 git 操作**（vault 由 obsidian-git 自己备份）。
 `.log` / `.lock` 都在 `.gitignore` 里。
+
+> 💡 **为什么是 `--scope all`（两份都在这儿建）**：private 是自留的那份，public 是站点要用的
+> 那份，但两份都只是本地文件。站点侧的 `quartz-sync-task\sync.ps1` 平时只镜像笔记，
+> **只有在 `publish_graph: true` 时才会自己再建一次 public 并把它发上站**，
+> 免得两个计划任务各自把整张图重建一遍（见 §1 的体积账）。
 
 注册计划任务（**请自己确认后执行**，每 30 分钟一次，在 :07 和 :37 触发）：
 
@@ -123,6 +197,7 @@ schtasks /Create /TN "Knowledge Graph Auto Sync" /SC MINUTE /MO 30 /ST 00:07 /RL
 | 页脚时间是几天前 | `schtasks /Query /TN "Knowledge Graph Auto Sync"` | 报「错误: 系统找不到指定的文件」= **计划任务从未注册**，所谓「后台每 30 分钟重建」根本没在跑。用上面那条 `/Create` 命令注册 |
 | 任务在，但**从来没跑过** | 任务 XML 的 `<Settings>`：`schtasks /Query /TN "Knowledge Graph Auto Sync" /XML` | 看到 `DisallowStartIfOnBatteries=true` 而机器正在**用电池**（笔记本）= 任务被电源条件挡住。`/Create` 默认就会写这两条，症状极像「跑成功了」：`/Run` 返回「已尝试运行」、属性里 `上次结果: 0`，但进程根本没起、日志一行不写。用下面那段 PowerShell 关掉 |
 | 任务在，日志却不动 | `sync-graph.log` 的最后几行 | 末行时间就是上次成功重建。看到 `skip` 说明 `sync-graph.lock` 残留（上一次被强杀/断电），把 lock 文件删掉即可 |
+| 日志写 `sync FAILED: python not on PATH` | Python 安装 / 计划任务的环境 | 脚本第一件事就是确认 `python` 可执行；没装 Python 或 PATH 里没有，它直接退出、什么都不建 |
 | 日志是新的，页面还是旧的 | 浏览器 | 页面是双击那一刻读进内存的快照，重建不会热更新 —— 关掉标签页重新双击 `dist/knowledge-graph.html` |
 
 上表第二行那段修法（PowerShell 里跑一次即可，改完不用重建任务）：
@@ -137,7 +212,14 @@ $t | Set-ScheduledTask
 
 另一个常踩的：`python build.py` **不带子命令时默认只跑 `scan`，不写 `dist/`**。
 想更新图必须显式 `python build.py build`（子命令有 `scan` / `suggest` / `build` / `verify` /
-`watch` / `all`）。
+`watch` / `scope`，不带 `--scope` 时都是 private 那份）。
+
+> ⚠️ **改这两个 `.ps1` 时要留意编码**：`sync-graph.ps1` 和站点那边的
+> `quartz-sync-task\sync.ps1` 都必须存成**带 BOM 的 UTF-8**。Windows PowerShell 5.1 读没有 BOM 的
+> `.ps1` 会用系统 ANSI 代码页解码：非 ASCII 字节一旦落在**字符串字面量**里，引号配对就被打乱、
+> 直接解析失败（`字符串缺少终止符` / `缺少右"}"`，报错位置还会指到别处），而计划任务会静默停摆
+> ——日志一行不写。两个脚本现在都刻意把**消息写成英文**（中文只留在 `#` 注释里），
+> 所以就算 BOM 哪天被编辑器剥掉，最坏也只是注释变乱码、脚本照跑。新加日志消息请照样写英文。
 
 ---
 
@@ -149,7 +231,7 @@ $t | Set-ScheduledTask
 
 | 变量 | 含义 |
 |---|---|
-| **颜色** | 所属顶层学科（`theme.domains`，6 色 + 灰色 fallback） |
+| **颜色** | 所属顶层学科（`theme.domains`：private 的 6 个学科 + public 的第三个根 `Study log`，另有灰色 fallback） |
 | **大小** | 规模：目标半径 ∝ 子树叶子数 ^ 0.5，再自顶向下按 `min(装得下, 父子看得出差别)` 等比缩放 |
 | **白色描边** | 掌握度 1–5（越粗越实=越熟）；`0` = 未标注，只有暗色细边 |
 | **黄色光晕** | 搜索命中 |
@@ -164,10 +246,10 @@ $t | Set-ScheduledTask
 ### 边：只画「连接」，不画「包含」
 
 - **语义边（细线）**：前置 prerequisite（灰，带箭头）／引用 derives（蓝，带箭头）／
-  并列对比 contrast（橙虚线，无向，两端都只有圆点）。当前 92 条语义边**全是 derives** ——
+  并列对比 contrast（橙虚线，无向，两端都只有圆点）。当前 94 条语义边**全是 derives** ——
   prerequisite / contrast 还没有任何一条写进 `annotations.yaml`（§6.1）。
 - **heading → heading 的链接是真边**：`[[Calculus#二阶常系数非齐次微分方程的通解求解步骤]]`
-  会精确连到 Calculus 笔记里那个标题节点上（当前 66 处命中，12 处锚点未命中，见 §10）。
+  会精确连到 Calculus 笔记里那个标题节点上（private 那份当前 68 处命中，13 处锚点未命中，见 §10）。
 - **端点标记：线画在哪儿 = 从谁到谁。** 每条边在**两端各截断** `lod.edge_trim_clearance`
   像素（默认 2），线不再插进圆心里；短于 `lod.edge_marker_min_len`（默认 20 像素）的边
   整条不画（线也不画），免得密集层糊成一团。画得出来的边按 `•———▶` 收尾：
@@ -225,7 +307,7 @@ alpha   = smoothstep(minzoom/fade_span, minzoom, zoom)   # 在 fade_span 倍率�
 
 所以**淡入淡出是 per-node 的连续过程，不是 per-layer 的开关**。放大时深层节点从各自的
 位置逐个「长出来」；因为叶子半径随路径上的累积缩放而分散，浮现被摊开到十几格滚轮上
-（单格滚轮最大涌入 18%），不会齐刷刷弹出一片。
+（单格滚轮最大涌入 10%），不会齐刷刷弹出一片。
 
 父层节点由 `zoom.parent_dim`（0.22）压暗但保留，作为上下文。嵌套实心圆下**父圆填充就是
 子圆的「底色」**，压得不够狠会把子圆整体一起压暗；0.22 才留得住「省 = 浅色面、
@@ -271,8 +353,8 @@ fs = clamp(F_MIN + (F_MAX - F_MIN) × ln(sr / min_px) / ln(ref / min_px), F_MIN,
 另外 `depth ≤ lod.label_bold_depth`(2) 的标签加半粗（600）—— 粗细是「类别」信号，字号是「尺度」信号。
 
 **为什么绑屏幕半径而不绑 `depth`**：packing 布局下半径是内容驱动的（同级里内容多的圆更大），
-`depth` 只是树的层数，两者不成正比。最粗视图那 6 个学科根同为 depth-1，世界半径却差 **16.22×**
-（Science and Tech 717 / Medical and Health 44）；按 depth 分档会让铺满全屏的根和一枚 20px
+`depth` 只是树的层数，两者不成正比。最粗视图那 6 个学科根同为 depth-1，世界半径却差 **16.07×**
+（Science and Tech 716.1 / Medical and Health 44.6）；按 depth 分档会让铺满全屏的根和一枚 20px
 的小圆点同字号。屏幕半径本来就是这套 LOD 的度量轴（`minzoom`、圆内/圆外摆放、视口裁剪都读它），
 而 `r` 沿包含链严格递减 ⇒ **屏幕半径的大小关系天然就是层级的大小关系**。
 对数插值是因为缩放是乘法过程，线性插值会让字号在中间一段涨得太快。
@@ -401,16 +483,16 @@ candidates:
 
 ```
 knowledge-graph/
-├── config.yaml            唯一维护入口：公开范围/缩放/权重/布局/LOD/配色
-├── build.py               CLI：scan | suggest | build | verify | watch | all
+├── config.yaml            构建入口：scope_file / scopes（哪几份、各输出到哪）/ 缩放 / 权重 / 布局 / LOD / 配色
+├── build.py               CLI：scan | suggest | build | verify | watch | scope（都支持 --scope private|public|all）
 ├── verify.py              数据侧自动校验（断言式，无测试框架）
-├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，84 项断言 + 截图）
-├── sync-graph.ps1         计划任务包装脚本（防重入 + UTF-8 + 日志裁剪）
+├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，84 项断言 + 截图，默认查 private 那份）
+├── sync-graph.ps1         计划任务包装脚本（防重入 + python 检查 + UTF-8 + 日志裁剪；建本地两份 `--scope all`）
 ├── kg/                    数据管道
-│   ├── config.py          配置加载与校验（非法配置给中文报错）
-│   ├── scan.py            白名单 glob 扫描
+│   ├── config.py          配置加载与校验（读 public-scope.yaml、解析各 scope；非法配置给中文报错）
+│   ├── scan.py            白名单 glob 扫描 + 落地名（remap）重写
 │   ├── parse.py           frontmatter / 标题树（跳过代码块）/ wiki 链接 / 摘要
-│   ├── graph.py           层级树、语义边、按层聚合边、标题级链接
+│   ├── graph.py           层级树、语义边、按层聚合边、标题级链接、重映射路径的别名索引
 │   ├── candidates.py      候选边挖掘（3 条启发式）
 │   ├── layout.py          circle packing 布局 + 世界半径 r / minzoom
 │   ├── ioutils.py         stdout UTF-8
@@ -418,16 +500,19 @@ knowledge-graph/
 ├── web/                   前端源码（构建时全部内联进单文件）
 │   ├── template.html      骨架 + CSS（顶栏 / 侧栏 / 画布 / footer）
 │   ├── app.js             状态机、搜索过滤、侧栏、层级胶囊、事件绑定（575 行）
-│   └── render.js          Canvas2D 渲染器：相机、淡入淡出、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取（1286 行）
+│   └── render.js          Canvas2D 渲染器：相机、淡入淡出、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取（1364 行）
 ├── annotations.yaml       你的手工标注
 ├── candidates.yaml        候选边（待审核）
 ├── HANDOFF.md             交接文档：现状、实测数据、坑、待办、调参地图
 └── dist/                  构建产物（gitignore）
-    ├── graph.json         中间产物，调试用
-    └── knowledge-graph.html  ★ 双击打开（约 8.5 MB）
+    ├── graph.json                private 的中间产物，调试用（约 10.2 MB）
+    ├── knowledge-graph.html      ★ 双击打开（约 8.62 MB）
+    ├── graph.public.json         public 的中间产物（约 10.0 MB）
+    └── knowledge-graph.public.html  public 那份（约 8.45 MB；上不上站见 §1）
 ```
 
-数据流：vault → `kg/*` → `graph.json` → 内联进单文件 HTML → Canvas2D 自绘。
+数据流：vault →（按 `public-scope.yaml` 的 scope 取范围）→ `kg/*` → `graph.json` →
+内联进单文件 HTML → Canvas2D 自绘。
 
 ---
 
@@ -435,16 +520,17 @@ knowledge-graph/
 
 1. **单文件必须全内联。** Chrome 在 `file://` 下禁止 `fetch`/XHR 读本地文件，
    HTML 一旦去 fetch `graph.json`，双击打开必然失败。数据与全部 JS/CSS 都内联。
-   代价是 8.5 MB，但换来「双击即用」。
+   代价是约 8.62 MB，但换来「双击即用」。
 
 2. **坐标一次算定，缩放只改可见性。** `layout.py` 用 circle packing：深度 = 嵌套层数，
    规模 = 圆半径，子圆严格落在父圆内部、兄弟圆互不相交。半径分两步定 —— 目标半径
    ∝ 子树叶子数 ^ `layout.size_exponent`(0.5)，再自顶向下按 `min(装得下, 父子看得出差别)`
-   等比缩放。六个学科根的世界半径 `r` 依次是
-   717.20 / 171.99 / 89.82 / 74.99 / 69.92 / 44.22，spread 16.22×；
+   等比缩放。private 那份的六个学科根世界半径 `r` 依次是
+   716.12 / 173.30 / 90.51 / 75.56 / 70.46 / 44.56，spread 16.07×；
    `layout.norm_root_radius`(1000) 把坐标量级钉住，JSON 体积可控、
    zMin/zMax 不随 vault 增长而漂移。渲染期**不做任何布局计算**，所以缩放时节点永不跳动。
    `verify.py` 断言「切层前后坐标零漂移」。
+   （这些数值随笔记增删漂移，不是不变量；`verify` 的输出才是当前读数。）
 
 3. **布局必须与地图同构，`minzoom` 才能直接照搬。** 地图把细节编码成**尺度**：放大后同一块
    地物变大、露出更多细节。同心环把深度编码成**半径**，两者不同构 —— 那个模型里半径只能
@@ -477,7 +563,7 @@ knowledge-graph/
    任何半径、任何 `angle_power` 都改不了；packing 下这 939 个节点**不会被同时要求浮现** ——
    它们分散在各自的父圆里，只有放大到对应父圆时才出现。同理，同心环时代所有叶子半径相同
    ⇒ minzoom 相同 ⇒ 叶子会在同一格滚轮里齐刷刷弹出（单格涌入 66%），packing 下叶子半径
-   随路径累积缩放而分散，单格最大涌入降到 18%。
+   随路径累积缩放而分散，单格最大涌入降到 10%。
 
 7. **`<canvas>` 是替换元素**，CSS 必须写 `width:100%; height:100%`，
    同时 JS 里设 `canvas.width/height` 为设备像素，两者缺一就会模糊或尺寸错位。
@@ -505,37 +591,59 @@ knowledge-graph/
 
 ### `python build.py verify`（数据侧）
 
+不带 `--scope` 时校验 private 那份（`dist/graph.json`）；`--scope public` 校验公开那份。
+两份都全绿。当前 private 的读数（数字随笔记增删漂移，下面这组是当下实测值）：
+
 - 深度轴 10 层，每层节点/边数与 `levels` 一致
 - 所有边两端都存在；附件没有被当成节点；链接解析统计完整
+- **节点与 scope 声明对齐**：depth=1 的根 == 该 scope 声明的目录（private 6 个 / public 3 个）；
+  越界节点 0 个；**重写过的路径前缀没有残留成节点 id**（残留 0 个）
 - **每个节点都完整落在父节点圆内**（越界 0 个）
-- **父节点半径 ≥ 孩子的 1.5 倍**（不足 0 个）；**6639 对兄弟圆互不相交**（重叠 0 对）；
-  343 条独子链的父子半径比精确落在 1.500
+- **父节点半径 ≥ 孩子的 1.5 倍**（不足 0 个）；**6548 对兄弟圆互不相交**（重叠 0 对）；
+  340 条独子链的父子半径比精确落在 1.500
 - **`r` 沿包含链严格递减** —— 子节点不会比祖先先出现（违反 0 个）
-- 坐标：3482 个节点里重合的 355 对**全是父子关系**（独子链同心），非父子重合 0 对；
+- 坐标：3428 个节点里重合的 351 对**全是父子关系**（独子链同心），非父子重合 0 对；
   **切层前后坐标零漂移**
-- 缩放区间 [0.4274, 66.3753] 非空；`enter` 沿深度单调不减，放到最大（z = 66.375）时
-  最深层已解锁（`enter[10]` = 35.329）
+- 缩放区间 [0.4241, 66.5753] 非空；`enter` 沿深度单调不减，放到最大（z = 66.575）时
+  最深层已解锁（`enter[10]` = 35.629）
 - `home_layer` = 1 是 `home_zoom` = 0.4612 下已解锁的最深一层
-- 3741 条聚合边的 `minlayer` 都等于它首次出现的层级（不符 0 条）；
+- 3700 条聚合边的 `minlayer` 都等于它首次出现的层级（不符 0 条）；
   聚合边在各层的端点都是该层可见节点
 - 标题父子指针完整；每篇笔记都有对应标题列表
+- 规模读数（private）：3428 个节点 = 35 文件夹 + 108 笔记 + 3285 标题；
+  3516 条边 = 3422 条包含边 + 94 条语义边；68 处标题级链接（锚点未命中 13 处）
+
+### `python build.py verify --scope public`（数据侧，公开那份）
+
+公开那份的对应读数：**3346 个节点** = 23 文件夹 + 89 笔记 + 3234 标题；最深层 3437 条边
+（含 94 条语义边，与 private 相同——语义边来自 `annotations.yaml`，两份范围共用）。
 
 ### `python browser_check.py`（浏览器侧，84 项断言）
 
 Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`，无需起服务器。
+默认查 private 那份（`dist/knowledge-graph.html`）；两份共用 `web/*.js`，只是 payload 不同，
+所以想看公开那份跑同一套契约：
+
+```bash
+KG_HTML=knowledge-graph.public.html python browser_check.py
+```
+
 覆盖：初始视角、逐层缩放扫描（节点/边/标签数）、标签三种模式、**焦点模式**（选中后
 相关连线数 / 邻居环数 / Esc 归零——直接驱动真实渲染器读 `stats`，不复刻判据）、
 **端点标记**（三个新键确实透传到 `META.lod`；标记数 >0 且 ≤ 2×画出边数；每个标记都能
 解析回它附着的那个节点；没有一个落在圆内；圆外间隙正好等于 `edge_trim_clearance`；
-箭头与圆点都产出了；深放到 depth 6 仍有标记、且短边被最小长度门槛挡掉）、
+箭头与圆点都产出了；沿 payload 自己的 zoom 阶梯（10 层）逐层扫，每层验「每条边至多两个
+标记」，有 ≥2 条代表边在屏上的层再要求「有边带标记、也有边被最小长度门槛挡掉」）、
 **屏外焦点边兜底**（选中后相关链接一端在屏外时：连线止于视口边、止点挂箭头/圆点、
 旁边挂写屏外端点名的 chip；18 组缩放×选中组合里 chip 数从不超上限+1；侧栏边行点击
 一次动画框住链接两端）、
-搜索命中、学科过滤、双击空白回 home、帧率（实测 58~63 fps）、20 格滚轮耗时（实测 1099 ms）、
+搜索命中、学科过滤、双击空白回 home、帧率（实测 62 fps）、20 格滚轮耗时（实测 1098 ms）、
 空白区兜底提示、侧栏详情、hover 气泡与图例、无 console error / pageerror。
 截图落在 `%TEMP%\kg_*.png`（可用 `KG_SHOT_DIR` 改），**改完视觉要自己看图**。
 深缩放那几段用例的 fixture 节点是按**后缀**在图里现查的，不写完整路径 —— 笔记改名不会让
 整段用例静默跳过（真跳过了，唯一信号是 `[ok]` 总数从 84 掉下来，所以每次都要看这个数）。
+两份的实际条数：**private 84**、**public 85** —— 后者多出来的那条是条件性断言（只有在公开
+那份的地板上才找得到空视口，`bug B` 那段因此会被执行而不是跳过）。
 
 ### 仍需在浏览器里人工确认
 
@@ -543,7 +651,7 @@ Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`�
 - [ ] 标签的**字号阶梯**是否舒服：最粗视图的学科名够不够大、深层 11px 标题够不够读、
       长标题截断得是否体面（`lod.label_font_min` / `label_font_max` / `label_font_ref` /
       `label_bold_depth` / `label_max_width`）
-- [ ] 深层（标题 3339 个）拥挤时的可读性
+- [ ] 深层（标题 3285 个）拥挤时的可读性
 - [ ] 1920×1080 100% 缩放下界面是否舒适
 
 ---
@@ -557,7 +665,7 @@ Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`�
 - **落在无内容处会显示兜底提示**「此处没有内容 · 向下滚回到更粗的层级，或双击空白处
   回到默认视角」，**同时 tooltip 仍显示所在的「省」** —— 命中测试有意保留已停画的祖先，
   点空隙就是选中所在的那个区域，和地图上空白海域也标省名是一回事，别去「修」它。
-- **独子链会出现父子同心**（坐标重合的 355 对全是这种），靠 `level_ratio` 1.5 的半径差
+- **独子链会出现父子同心**（坐标重合的 351 对全是这种），靠 `level_ratio` 1.5 的半径差
   + `mixWhite(0.4)` 描边区分，不会塌成看不出的靶环。
 - **半径不是「绝对内容量」的函数，而是「相对父节点分到的份额」**：深层同叶子数的两个节点
   半径可以差几倍，取决于各自路径上的累积缩放。这是有意为之 —— 这张图要保证的是
@@ -577,14 +685,17 @@ Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`�
 
 以下是数据侧仍然存在的限制：
 
-- **12 处 `[[笔记#标题]]` 锚点未命中**：锚点文本与标题不完全一致
+- **13 处 `[[笔记#标题]]` 锚点未命中**：锚点文本与标题不完全一致
   （Obsidian 的锚点匹配更宽松）。放宽逻辑在 `kg/graph.py` 的 `_normalize_heading()`。
 - **中文不分词**，所以「自动发现前置知识」只覆盖英文术语与 LaTeX 符号。
 - **正文 `[[链接]]` 的方向语义天然模糊**（A 链接到 B 可能是依赖，也可能只是"另见"），
   统一记作 `derives`。要精确语义请写进 `annotations.yaml`。
 - **掌握度描边目前看不到效果**：`annotations.yaml` 里还没标 mastery，
   108 篇笔记全是 0（暗色细边）。这不是功能缺失。
-- `quartz-setup/` 里那份公开范围定义（junction `Study/`、`Tech/`）已经失效，本项目没有改它。
+- **范围真源坏掉时本项目会直接报错退出**（缺文件、缺 `from`、`scopes` 写错、引用未声明的
+  scope、目录不存在、同一 scope 里落地名重复……都会给出中文错误信息），**不会静默退回某个
+  默认范围** —— 范围这种东西猜错一次就是一次泄漏。`quartz-setup/public-scope.yaml` 就是
+  现在唯一的那份定义，站点与图谱共用它。
 
 ---
 

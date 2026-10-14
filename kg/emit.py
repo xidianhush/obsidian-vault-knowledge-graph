@@ -37,8 +37,25 @@ def build_html(cfg, payload, quiet=False):
     root = cfg["root"]
     template = _read(os.path.join(root, "web", "template.html"))
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    # 数据是塞进 <script type="application/json"> 的，必须转义掉能提前闭合标签的序列
-    data = data.replace("</", "<\\/").replace("<!--", "<\\!--")
+    # 数据是塞进 <script type="application/json"> 的，必须让 JSON 里**一个 < 都不出现**：
+    #   * "</" 会提前闭合 <script> 元素；
+    #   * "<!--" 会让 HTML 分词器进入 script-data-escaped 状态。
+    # 早先这里用的是 JS 字面量那套写法 "\\/" / "<\\!--" —— 但这是 JSON，不是 JS：
+    # JSON 只认 \" \\ \/ \b \f \n \r \t \uXXXX，"<\\!--" 里的 \! 是**非法转义**，
+    # 浏览器 JSON.parse 直接抛 SyntaxError，整个页面初始化失败、画布全空（连作者
+    # 姓名都不显示），而且构建侧毫无察觉 —— 笔记正文里只要出现一次 "<!--" 就必中
+    # （实测：Science and Tech/Mathematics Basic 下三篇笔记的 excerpt 里就有）。
+    # 统一换成 \u003c：合法 JSON、解析回来仍是 "<"，上面两个坑一起堵掉。
+    data = data.replace("<", "\\u003c")
+    # 构建期自证：转义之后再解析一遍，确保内联进 HTML 的仍是合法 JSON。
+    # 挡的正是「转义写错 → 页面白屏、构建却报成功」这类静默失败：翻遍 dist 和日志
+    # 都看不出问题，只有双击打开才发现是空的。宁可构建直接失败。
+    try:
+        json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise EmitError(
+            f"内联数据在转义之后不是合法 JSON（{exc}）—— 页面的 JSON.parse 会抛错、"
+            "画布全空。检查 build_html 里的 < 转义。")
 
     parts = (
         ("/*__RENDER__*/", os.path.join(root, "web", "render.js")),

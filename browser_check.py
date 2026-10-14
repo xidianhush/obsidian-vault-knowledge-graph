@@ -10,8 +10,21 @@ plus regressions for the three bugs found by hand:
 Usage: pip install playwright, then `python browser_check.py` after a build.
 Drives the installed Chrome (channel="chrome"); screenshots go to %TEMP%
 (or $KG_SHOT_DIR) as kg_*.png for eyeballing.
+
+Which build to check: $KG_HTML (a filename under dist/). Defaults to the private
+one, knowledge-graph.html. Both scopes share web/*.js, so the public build gets
+the same contract checked with a different payload:
+    KG_HTML=knowledge-graph.public.html python browser_check.py
+
+Every expectation has to hold for any scope, so none of them may encode one
+graph's shape (how many top-level roots there are, how many nodes a zoom floor
+happens to show, how many wheel steps it takes to reach the ceiling). Where an
+expectation needs a number, it is derived from the payload the HTML carries
+(meta.lod / meta.zoom, node radii) or asked of the renderer through its own API
+(state(), alphaOf(), matchSet, zoomToDepth) rather than written down here.
 """
 import json
+import math
 import os
 import sys
 import tempfile
@@ -21,7 +34,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-HTML = os.path.join(ROOT, "dist", "knowledge-graph.html")
+HTML = os.path.join(ROOT, "dist", os.environ.get("KG_HTML", "knowledge-graph.html"))
 URL = "file:///" + HTML.replace("\\", "/")
 SHOT = os.path.join(os.environ.get("KG_SHOT_DIR", tempfile.gettempdir()), "kg_%s.png")
 
@@ -95,6 +108,39 @@ SCREEN_CENTER = """() => {
     const s = window.KG.renderer.centerScreen();
     return {x: c.left + s[0], y: c.top + s[1]};
 }"""
+# 屏内（alpha > 0 且圆与视口相交）的节点 id，可选屏幕半径下限。地板处的
+# 「必须画出来的圆」与标签判据的候选集都从这里取，判据全是 payload 自己的数
+# （r × zoom 对 min_px / fade_span）。CULL 取得比渲染器宽（200 vs 32）：多算只会
+# 让候选集更保守，不会漏算；这里也刻意不碰 maxzoom 停画那一档 —— 地板处整张图都
+# 铺得下（floor = max(r) × zoom_out_floor 那一档），没有圆会被停画。
+ON_SCREEN = """(minSr) => {
+    const R = window.KG.renderer;
+    const [W, H] = R.size(), z = R.camera.zoom, cam = R.camera;
+    const CULL = 200, FOOTER = 46;
+    const out = [];
+    for (const n of R.NODES) {
+        const sr = n.r * z, cx = n.x * z + cam.panX, cy = n.y * z + cam.panY;
+        if (sr < minSr) continue;
+        if (cx + sr < -CULL || cx - sr > W + CULL || cy + sr < -CULL || cy - sr > H + CULL) continue;
+        if (R.alphaOf(n.id) <= 0) continue;
+        out.push(n.id);
+    }
+    return out;
+}"""
+# bug C 的判据要用「渲染器自己放得下标签吗」，而不是「屏幕上有几个圆」。深缩放到祖先圆
+# 内部时，圆内摆放的标签锚点（圆顶）整条都在屏幕外 —— 那种帧一个标签都不该有。把候选集
+# 塞进 matchSet（渲染器自带的「绕过 label_alpha 门槛」入口，rank 也提到最前），让它自己
+# 走完锚点、字号、碰撞那一整套。不在测试里复刻 drawLabels 的判据 —— 复刻的判据一旦和
+# 实现漂移就会假绿（本文件既有风格）。用完把 matchSet 还回 null。
+FORCE_LABELS = """(ids) => {
+    const R = window.KG.renderer;
+    R.matchSet = new Set(ids);
+    R.draw();
+    const n = R.stats.labels;
+    R.matchSet = null;
+    R.draw();
+    return n;
+}"""
 
 fails = []
 warns = []
@@ -132,7 +178,22 @@ with sync_playwright() as p:
     page.on("console", lambda m: cerr.append(m.text[:400]) if m.type == "error" else None)
 
     page.goto(URL)
-    page.wait_for_function("() => window.KG && window.KG.state && window.KG.renderer", timeout=60000)
+    try:
+        page.wait_for_function("() => window.KG && window.KG.state && window.KG.renderer", timeout=60000)
+    except Exception:
+        # 页面根本没起来。这类静默失败最典型的是「内联 JSON 里有非法转义 → JSON.parse
+        # 抛错 → 整个脚本没跑完 → 画布全空」：构建侧毫无察觉，双击打开只看到白屏。
+        # 如果这里只把 wait_for_function 的超时抛出去，看日志的人根本不知道发生了什么，
+        # 所以把 browser 侧已经收集到的报错原样打出来再退出。
+        print("!! window.KG 在 60 秒内没有建立 —— 页面脚本没能完成初始化")
+        for e in perr[:5]:
+            print("   pageerror:", e)
+        for c in cerr[:5]:
+            print("   console error:", c)
+        if not perr and not cerr:
+            print("   （没有任何 pageerror / console error：检查 HTML 是否被截断）")
+        b.close()
+        sys.exit(1)
     page.wait_for_timeout(1500)
 
     print("=== 1. load ===")
@@ -154,6 +215,11 @@ with sync_playwright() as p:
         maxDepth: window.KG.data.meta.max_depth,
         enter: window.KG.data.meta.lod.enter,
         homeLayer: window.KG.data.meta.lod.home_layer,
+        // 下面三个是「这张图自己的形状」：地板/天花板的可见带、滚轮一步的倍率
+        // 都由它们推出来，测试里不再出现私有图的绝对数。
+        minPx: window.KG.data.meta.lod.min_px,
+        fade: window.KG.data.meta.lod.fade_span,
+        wheelStep: window.KG.data.meta.zoom.wheel_step,
         zMin: window.KG.zMin, zMax: window.KG.zMax, zHome: window.KG.zHome,
         nodeCount: window.KG.data.nodes.length})""")
     print("   ", json.dumps(meta, ensure_ascii=False)[:420])
@@ -195,7 +261,7 @@ with sync_playwright() as p:
     check("labels stay inside the per-frame budget", on <= 400, str(on))
     shot("01_home")
 
-    print("\n=== 2. wheel down x20 -> zoom floor, the 6 top disciplines all on screen ===")
+    print("\n=== 2. wheel down x20 -> zoom floor, every top-level root on screen ===")
     page.mouse.move(720, 430)
     for _ in range(20):
         page.mouse.wheel(0, 100)
@@ -214,19 +280,37 @@ with sync_playwright() as p:
         return {roots: roots.length,
                 vis: roots.filter(n => R.alphaOf(n.id) > 0.05).length};
     }""")
+    # 顶层学科数由 payload 自己说了算 —— 私有图 6 个、公开图 3 个，写死 6 是把一张图的
+    # 形状当成契约。要钉住的行为不变：地板处**每一个**顶层学科都在画面上。地板 zoom 由
+    # max(r) × zoom_out_floor 现算，任何一个根算错（半径/最小缩放）都会让 vis < roots。
     print("    depth-1 roots=%d, visible=%d" % (top["roots"], top["vis"]))
-    # 同心环时代地板处「只剩 6 个圆」；packing 下父圆包含子圆，孩子随父圆一起留在画面里，
-    # 所以这里只断言六个顶层学科全部可见 + 总数仍在合理区间。
-    check("all 6 top disciplines visible at the zoom floor",
-          top["roots"] == 6 and top["vis"] == 6, str(top))
-    check("shownNodes in 40..120 at floor", 40 <= out["shownNodes"] <= 120, str(out["shownNodes"]))
-    check("the 6 top disciplines are labelled at the zoom floor",
+    check("all %d top-level roots visible at the zoom floor" % top["roots"],
+          top["roots"] >= 1 and top["vis"] == top["roots"], str(top))
+    # 地板处的可见带也由 payload 现算：屏幕半径够 min_px 的圆（淡入进度 = 1）必须全部画出来，
+    # 半径不到 min_px/fade_span 的圆（淡入还没开始）一个都不该出现。私有图 [44..54]、
+    # 公开图 [12..16] —— 旧的 40..120 两个方向都放水：同心环时代地板只剩顶层圆（6 个）
+    # 会漏过去的下界，正是这条断言当初想抓的回归。
+    band_lo = len(page.evaluate(ON_SCREEN, meta["minPx"]))
+    band_hi = len(page.evaluate(ON_SCREEN, meta["minPx"] / meta["fade"]))
+    print("    floor legible band = [%d..%d], shownNodes=%d" % (band_lo, band_hi, out["shownNodes"]))
+    check("floor shows exactly the band the payload says is legible ([%d..%d])" % (band_lo, band_hi),
+          band_lo <= out["shownNodes"] <= band_hi,
+          "shownNodes=%d, band=[%d..%d], total=%d" % (out["shownNodes"], band_lo, band_hi,
+                                                      meta["nodeCount"]))
+    check("the top-level roots are labelled at the zoom floor",
           out["shownLabels"] >= 1, str(out["shownLabels"]))
     shot("02_zmin")
 
-    print("\n=== 3. wheel up x48 -> zoom/level monotonic, reach max_depth and ceiling ===")
+    # 到天花板要多少步，由这张图自己的缩放跨度算：log(zMax/zMin)/log(wheel_step)，再加
+    # 3 步余量（clamp 与最后一步的取整）。私有图 157× = 45 步，公开图 338× = 52 步 ——
+    # 写死 48 步只够前者，公开图第 48 步停在中途（45.7 vs zMax 66.9），看起来像 zoom 卡住了。
+    up_steps = int(math.ceil(math.log(meta["zMax"] / meta["zMin"]) /
+                             math.log(meta["wheelStep"]))) + 3
+    print("\n=== 3. wheel up x%d (span %.1fx) -> zoom/level monotonic, reach max_depth and ceiling ==="
+          % (up_steps, meta["zMax"] / meta["zMin"]))
     ups, prev_z, prev_lv, z_mono, lv_mono = [], 0.0, 0, True, True
-    for i in range(48):
+    label_gap = []
+    for i in range(up_steps):
         page.mouse.wheel(0, -100)
         page.wait_for_timeout(38)
         s = page.evaluate(STATE)
@@ -236,21 +320,28 @@ with sync_playwright() as p:
         if s["level"] < prev_lv:
             lv_mono = False
         prev_z, prev_lv = s["zoom"], s["level"]
-        if i in (0, 5, 11, 17, 23, 29, 35, 41, 47):
+        if i % 6 == 0 or i == up_steps - 1:
             print("    step %2d  zoom=%8.4f  level=%2d  nodes=%4d  edges=%3d  labels=%3d" % (i + 1, *ups[-1]))
-        if i in (4, 15, 29, 47):
+        if i in (4, up_steps // 3, 2 * up_steps // 3, up_steps - 1):
             shot("03_up%02d" % (i + 1))
+        # bug C 的判据：这一帧一个标签都没有时，问渲染器自己「够大的圆上放得下标签吗」。
+        # 候选集 = 屏内、屏幕半径 ≥ min_px 的圆（淡入进度已经是 1，label_alpha 门槛必过）。
+        # 深缩放到祖先圆内部时圆顶的标签锚点整条都在屏外，渲染器自己也放不下 —— 那是
+        # 合法状态（公开图 z=23.151 那一帧：12 个屏内圆、legibleOnScreen=12、forced=0）。
+        # 只要有候选却一个都没落笔，就是 bug C 复发。判据全在渲染器自己的锚点/碰撞代码里。
+        if s["shownLabels"] == 0:
+            cand = page.evaluate(ON_SCREEN, meta["minPx"])
+            forced = page.evaluate(FORCE_LABELS, cand) if cand else 0
+            if forced:
+                label_gap.append((round(s["zoom"], 4), s["shownNodes"], len(cand), forced))
     check("zoom monotonic increasing on wheel up", z_mono)
     check("level monotonic non-decreasing (direction lock)", lv_mono)
     check("reached max_depth %d" % meta["maxDepth"], prev_lv == meta["maxDepth"], str(prev_lv))
     check("zoom hit ceiling", prev_z >= meta["zMax"] * 0.999, "%.4f vs zMax %.4f" % (prev_z, meta["zMax"]))
     nanseen = [u for u in ups if any(v != v for v in u)]
-    check("no NaN during 48 wheel steps", not nanseen, str(nanseen[:2]))
-    # 深缩放时画面可能只剩几个铺满视口的祖先圆（画不出标签）甚至落进圆之间的空隙，
-    # 这些都是合法状态；只有「明显还有一堆内容却一个标签都没有」才算 bug C 复发。
-    nolabel = [u for u in ups if u[2] > 8 and u[4] == 0]
-    check("labels never all vanish while a real crowd is on screen (was 0 at every zoom before)",
-          not nolabel, str(nolabel[:3]))
+    check("no NaN during %d wheel steps" % up_steps, not nanseen, str(nanseen[:2]))
+    check("labels never all vanish while the renderer itself could place one (was 0 at every zoom before)",
+          not label_gap, str(label_gap[:3]))
 
     print("\n=== 3b. bug B: empty viewport must say so, not look broken ===")
     # 同心环布局的中心天然是空的，天花板处直接就能验；packing 下父圆套着子圆、
@@ -504,18 +595,33 @@ with sync_playwright() as p:
           geo["arrows"] > 0 and geo["dots"] > 0,
           "%d arrows / %d dots" % (geo["arrows"], geo["dots"]))
 
-    # 深入一层再看：MARK_MIN 守卫在小尺度下应该开始生效（短边不画标记），
-    # 于是 marks 会掉到 2*edges 以下。这条钉住「密集簇里不糊噪点」的设计意图。
-    page.evaluate("() => window.KG.renderer.zoomToDepth(6)")
-    page.wait_for_timeout(1200)
-    deep = page.evaluate(STATE)
-    print("    depth6: zoom=%.4f shownEdges=%d marks=%d"
-          % (deep["zoom"], deep["shownEdges"], deep["marks"]))
-    check("deep zoom still draws some markers", deep["marks"] > 0, str(deep["marks"]))
-    check("short edges are skipped by the min-length guard",
-          deep["marks"] < 2 * deep["shownEdges"],
-          "%d marks < %d (2 x %d edges)" % (deep["marks"], 2 * deep["shownEdges"],
-                                            deep["shownEdges"]))
+    # 深入再看：MARK_MIN 守卫在小尺度下应该开始生效（短边不画标记），marks 掉到 2*edges
+    # 以下；同时长边仍然要带标记。以前这里写死 depth 6 —— 那是私有图的形状：公开图在
+    # depth 6 的画面上只剩一条代表边（数字信号处理(自己理解) → LTI analysis：圆心距 546px，
+    # 两圆屏幕半径 83+467，截断后只剩 4px），MARK_MIN=20 与 alpha≥0.1 两道门都合理地压掉
+    # 了它，marks=0 是数据形状而不是渲染回归（同层私有图有两条边、其中一条 189px，所以有标记）。
+    # 改成沿 payload 自己的 zoom 阶梯（enter[L-1]*1.05，正是 zoomToDepth 用的那一档）逐层扫，
+    # 每一层都验「每条边最多两个标记」；有两条以上代表边在屏上的层，再要求「有边带标记、
+    # 也有边被守卫压掉」—— 后者是 MARK_MIN 守卫唯一能被观测到的地方（只有一条边时，
+    # marks 的 0 或 2 都说明不了守卫在不在）。
+    rungs = []
+    for L in range(meta["maxDepth"], 0, -1):
+        page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
+        page.wait_for_timeout(850)
+        s = page.evaluate(STATE)
+        rungs.append((L, s["zoom"], s["shownEdges"], s["marks"]))
+    for L, z, e, m in rungs:
+        print("    rung L=%2d zoom=%8.4f edges=%3d marks=%3d" % (L, z, e, m))
+    deep_rungs = [r for r in rungs if r[2] >= 2]
+    print("    rungs with >=2 drawn edges: %s" % [r[0] for r in deep_rungs])
+    check("deep rungs still draw markers for the long edges",
+          bool(deep_rungs) and all(m > 0 for _, _, _, m in deep_rungs),
+          "rungs %s" % [(L, e, m) for L, _, e, m in deep_rungs])
+    check("short edges are skipped by the min-length guard, never more than two marks per edge",
+          bool(deep_rungs) and all(m < 2 * e for _, _, e, m in deep_rungs)
+          and all(m <= 2 * e for _, _, e, m in rungs),
+          "guarded %s ; all %s" % ([(L, m, 2 * e) for L, _, e, m in deep_rungs],
+                                   [(L, m, 2 * e) for L, _, e, m in rungs]))
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
 
