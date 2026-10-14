@@ -39,7 +39,7 @@ python build.py verify --scope public     # 只校验公开那份
 python build.py scope  --scope public     # 打印公开那份的镜像清单（stdout 上只有 JSON）
 ```
 
-`scope` 是喂给同步脚本的机器接口（`quartz-sync-task/sync.ps1` 把它直接交给
+`scope` 是喂给同步脚本的机器接口（vault 里的 `quartz-setup/sync.ps1` 把它直接交给
 `ConvertFrom-Json`），想给人看范围概览请用 `scan`。`build --scope all` 两份都建；
 `watch` 一次只能盯一份（`--scope all` 会被拒绝）。
 
@@ -128,13 +128,13 @@ public，所以 private 图里没有它。产物固定叫：
 | scope | JSON | HTML | 谁来建 |
 |---|---|---|---|
 | `private` | `dist/graph.json` | `dist/knowledge-graph.html` | `sync-graph.ps1`（每 30 分钟跑 `build --scope all`，两份本地产物都在这儿出） |
-| `public` | `dist/graph.public.json` | `dist/knowledge-graph.public.html` | 同上；另外站点侧 `quartz-sync-task\sync.ps1` 只在 `publish_graph: true` 时**再重建一次**并上站 |
+| `public` | `dist/graph.public.json` | `dist/knowledge-graph.public.html` | 同上；另外站点侧 `quartz-setup\sync.ps1` 只在 `publish_graph: true` 时**再重建一次**并上站 |
 
 `private` 的那两个文件名是**故意不动的旧名字**：它是主人日常双击打开的那一份，
 换名字等于把使用习惯打断。所以读文档时别默认「`graph.json` = 全部」——它只含 private 范围。
 
 **public 那份会不会上网？** 由 `public-scope.yaml` 的 `publish_graph` 决定，**默认 `false`**：
-`quartz-sync-task/sync.ps1` 只有在它为 `true` 时才把 `knowledge-graph.public.html` 复制进站点
+`quartz-setup/sync.ps1` 只有在它为 `true` 时才把 `knowledge-graph.public.html` 复制进站点
 `content/` 并发布到 https://xidianhush.github.io/knowledge-graph.html 。默认关闭是一笔算过的账：
 那份 HTML 约 8.2 MB，而站点仓库近 60 天实测 130 次提交（≈ 2.17 次/天），每次都提交一遍就是
 8.2 MB × 2.17 × 365 ≈ **6.5 GB/年**，而 GitHub 对仓库体积的建议上限约 1 GB、Pages 发布产物也
@@ -165,7 +165,7 @@ public，所以 private 图里没有它。产物固定叫：
 `.log` / `.lock` 都在 `.gitignore` 里。
 
 > 💡 **为什么是 `--scope all`（两份都在这儿建）**：private 是自留的那份，public 是站点要用的
-> 那份，但两份都只是本地文件。站点侧的 `quartz-sync-task\sync.ps1` 平时只镜像笔记，
+> 那份，但两份都只是本地文件。站点侧的 `quartz-setup\sync.ps1` 平时只镜像笔记，
 > **只有在 `publish_graph: true` 时才会自己再建一次 public 并把它发上站**，
 > 免得两个计划任务各自把整张图重建一遍（见 §1 的体积账）。
 
@@ -215,7 +215,7 @@ $t | Set-ScheduledTask
 `watch` / `scope`，不带 `--scope` 时都是 private 那份）。
 
 > ⚠️ **改这两个 `.ps1` 时要留意编码**：`sync-graph.ps1` 和站点那边的
-> `quartz-sync-task\sync.ps1` 都必须存成**带 BOM 的 UTF-8**。Windows PowerShell 5.1 读没有 BOM 的
+> `quartz-setup\sync.ps1` 都必须存成**带 BOM 的 UTF-8**。Windows PowerShell 5.1 读没有 BOM 的
 > `.ps1` 会用系统 ANSI 代码页解码：非 ASCII 字节一旦落在**字符串字面量**里，引号配对就被打乱、
 > 直接解析失败（`字符串缺少终止符` / `缺少右"}"`，报错位置还会指到别处），而计划任务会静默停摆
 > ——日志一行不写。两个脚本现在都刻意把**消息写成英文**（中文只留在 `#` 注释里），

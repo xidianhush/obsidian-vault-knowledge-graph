@@ -24,7 +24,7 @@ scope_file: D:/obsidian_vault/hush-ob-bucket/quartz-setup/public-scope.yaml
 #   private  自留：6 个学科全量，只在本地，不上网。沿用旧文件名，
 #            双击 dist/knowledge-graph.html 的习惯不用改。
 #   public   与 Quartz 站点共用同一套公开范围；产物会被
-#            quartz-sync-task/sync.ps1 复制进站点 content/ 并发布。
+#            vault 里的 quartz-setup/sync.ps1 复制进站点 content/ 并发布。
 scopes:
   private:
     output:

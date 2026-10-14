@@ -276,7 +276,8 @@ def cmd_watch(cfg, args):
 
 
 def cmd_scope(cfg, args):
-    """把当前 scope 的镜像清单打成 JSON 打到 stdout —— 给 quartz-sync-task/sync.ps1 读。
+    """把当前 scope 的镜像清单打成 JSON 打到 stdout —— 给 vault 里的
+    quartz-setup/sync.ps1 （站点同步脚本）读。
 
     所以这里只允许有一种输出：不要加任何「顺便打印」的人话。
     想给人看范围概览用 python build.py scan。

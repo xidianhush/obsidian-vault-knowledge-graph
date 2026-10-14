@@ -22,7 +22,8 @@
 `quartz-setup/public-scope.yaml`；CLI 每条子命令都接受 `--scope private|public|all`（`-s`，
 `all` 只对会遍历范围的子命令有意义 —— `watch --scope all` 会被直接拒绝）；
 产出两份（private 沿用旧文件名 `graph.json` / `knowledge-graph.html`，public 加 `.public` 后缀）；
-站点侧的 `quartz-sync-task\sync.ps1` 也改成读同一份真源、读不到就整轮放弃（fail-closed）。
+站点侧的同步脚本（当时还在 `quartz-sync-task\sync.ps1`，2026-10-14 已搬进 vault 的
+`quartz-setup\sync.ps1`）也改成读同一份真源、读不到就整轮放弃（fail-closed）。
 `python build.py verify --scope private` 与 `--scope public` 两份都全绿。
 ⚠️ **这轮改动还在工作区里没提交**（`git status` 里代码侧 `build.py` / `config.yaml` /
 `kg/config.py` / `kg/scan.py` / `kg/graph.py` / `sync-graph.ps1` / `verify.py` /
@@ -104,8 +105,8 @@ python build.py watch        # 开发时挂上，改笔记/配置/范围定义�
 | 范围真源 | `D:/obsidian_vault/hush-ob-bucket/quartz-setup/public-scope.yaml`（唯一真源；本项目与站点同步脚本都读它。`config.yaml` 里只记它的路径 `scope_file`） |
 | 本项目 | `D:/obsidian_vault/knowledge-graph`（vault 同级，不在 vault 内） |
 | 站点仓库 | `D:/obsidian_vault/quartz-site`（公开 Quartz 站点，发布分支 `v5`） |
-| 站点同步脚本 | `D:/obsidian_vault/quartz-sync-task/sync.ps1`：读 `public-scope.yaml` 的 `mirror` 清单 → robocopy /MIR →（**仅当 `publish_graph: true`**）建公开图谱并复制进 `content/` → commit/push。**依赖 `python` 在 PATH 上** |
-| 已有计划任务 | `Quartz Site Auto Sync`：每 30 分钟，从 :24 起算（:24 / :54） |
+| 站点同步脚本 | `D:/obsidian_vault/hush-ob-bucket/quartz-setup/sync.ps1`（142 行；2026-10-14 从 `quartz-sync-task/` 搬进 vault，交给 obsidian-git 备份）：读 `public-scope.yaml` 的 `mirror` 清单 → robocopy /MIR →（**仅当 `publish_graph: true`**）建公开图谱并复制进 `content/` → commit/push。**依赖 `python` 在 PATH 上**。脚本用 `$PSCommandPath` 现算自己的目录、不写死绝对路径，所以再搬家只需改计划任务里的 `-File`；`sync.log` / `sync.lock` / `marker.log` 就放在它旁边，三份都在 vault 的 `.gitignore` 里 |
+| 已有计划任务 | `Quartz Site Auto Sync`：每 30 分钟，从 :24 起算（:24 / :54）；`-File` 参数已指向上面那个新位置 |
 | 本项目计划任务 | `sync-graph.ps1`，每 30 分钟从 :07 起算（:07 / :37）——与上面那个错开 17 分钟避免撞车。**注册/取消命令给用户自己执行**（见 §7）。⚠️ `schtasks /Create` 默认带 `DisallowStartIfOnBatteries=true` + `StopIfGoingOnBatteries=true`：**笔记本只要在用电池，这个任务就一次都不会跑**（请求返回成功、进程根本不启动、日志不写、`上次结果` 仍是 0）——极难发现，注册后必须按 §4 坑 25 把这两条关掉 |
 
 ### 自动化看页面的正路（已换掉）
@@ -582,7 +583,7 @@ Medical and Health                  44.56     ← zMin 由它决定
     别指望从它拿历史，只能靠「任务属性 + 进程 + lock + 日志时间戳」四个证据交叉判断。
 
 26. **两个 `.ps1` 必须存成「UTF-8 **带 BOM**」，而且字符串字面量保持纯 ASCII（本轮新增）。**
-    `D:\obsidian_vault\quartz-sync-task\sync.ps1` 与 `knowledge-graph\sync-graph.ps1` 的
+    `D:\obsidian_vault\hush-ob-bucket\quartz-setup\sync.ps1` 与 `knowledge-graph\sync-graph.ps1` 的
     **字符串**现在一律写英文，中文只留在 `#` 注释里 —— 这是刻意的纵深防御，别「帮忙翻译回去」。
     理由：**Windows PowerShell 5.1 读一个没有 BOM 的 `.ps1` 时，会用系统 ANSI 代码页去解码**。
     非 ASCII 字节一旦落在字符串字面量里，引号配对就被打乱、直接解析失败
@@ -597,7 +598,7 @@ Medical and Health                  44.56     ← zMin 由它决定
 
     ```bash
     cd D:/obsidian_vault
-    head -c 3 quartz-sync-task/sync.ps1 | od -An -tx1     # 应输出 ef bb bf
+    head -c 3 hush-ob-bucket/quartz-setup/sync.ps1 | od -An -tx1  # 应输出 ef bb bf
     head -c 3 knowledge-graph/sync-graph.ps1 | od -An -tx1
     ```
 
@@ -790,7 +791,8 @@ Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交�
 - **`derives` 方向语义模糊**：可在侧栏加「改这条边的类型」并导出 `annotations.yaml` 片段。
 
 **P5 — 已完成（本轮）：统一公开范围定义**
-站点侧（`quartz-sync-task\sync.ps1` 的 `$dirs` 数组）与图谱侧（`config.yaml` 的 `include` 白名单）
+站点侧（当年 `quartz-sync-task\sync.ps1` 的 `$dirs` 数组 —— 那个目录 2026-10-14 已删除，
+脚本搬进 vault 的 `hush-ob-bucket\quartz-setup\sync.ps1`）与图谱侧（`config.yaml` 的 `include` 白名单）
 过去是两份互相矛盾的手工清单：站点发的是 `Science and Tech` / `Projects` / `Logs/Study log` /
 `Attachment`，图谱画的是另外 6 个学科目录。现在**只剩 vault 里的
 `quartz-setup/public-scope.yaml` 一份**：
