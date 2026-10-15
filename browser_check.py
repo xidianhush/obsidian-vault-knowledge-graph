@@ -22,6 +22,13 @@ happens to show, how many wheel steps it takes to reach the ceiling). Where an
 expectation needs a number, it is derived from the payload the HTML carries
 (meta.lod / meta.zoom, node radii) or asked of the renderer through its own API
 (state(), alphaOf(), matchSet, zoomToDepth) rather than written down here.
+
+Two edge-drawing modes share the same contract: 'raw' (the default) draws one
+line per [[link]] at every zoom level and lets the *number* of lines carry the
+strength, while 'agg' merges them into one thicker line as you zoom out. Section
+1c checks the mode plumbing and that raw really does not aggregate; sections
+7b/7c/7d run twice, once per mode, because focus filtering, marker geometry and
+the off-screen chip are all mode-aware.
 """
 import json
 import math
@@ -176,9 +183,13 @@ BG = [15, 17, 22]
 
 fails = []
 warns = []
+# 7b/7c/7d 那三节在两种连线模式下各跑一遍。这个后缀挂在断言名上，让 fails 里的
+# 条目认得出是哪一轮挂的；其余各节跑在默认模式下，后缀是空串。
+MODE_TAG = ""
 
 
 def check(name, cond, detail=""):
+    name = name + MODE_TAG
     print("  [%s] %s%s" % ("ok" if cond else "FAIL", name, ("  " + detail) if detail else ""))
     if not cond:
         fails.append(name + (" :: " + detail if detail else ""))
@@ -292,6 +303,132 @@ with sync_playwright() as p:
     check("labelMode 'auto' restored", back == st["shownLabels"], "%d vs %d" % (back, st["shownLabels"]))
     check("labels stay inside the per-frame budget", on <= 400, str(on))
     shot("01_home")
+
+    print("\n=== 1c. edge mode switch: raw (per-link) vs agg (scale-aggregated) ===")
+    # 这一节验**模式管线**和「raw 确实不聚合」，不验某张图的形状（文件头的铁律）。
+    #
+    # 特别注意：shownEdges 只数「两端锚点都在屏上、且没有塌到同一个代表节点」的边，所以它是
+    # **视口绑定**的，会随缩放剧烈变化（实测私有图 raw 从 L=10 的 4 条一路到 L=2 的 96 条）。
+    # 因此这里绝不断言「条数恒定」—— 那不是用户的契约。用户的契约是「某一处链接不因为缩小
+    # 而消失」，那条由 7d 的 fitPair 断言覆盖（raw/agg 两种模式各跑一遍）。这里只断言三件
+    # 可以从 payload 推导、与某张图的绝对数字无关的事：
+    #   A 两个入口（renderer.edgeMode 赋值 / #edgemode 下拉框）连通，图例与 localStorage 跟着切；
+    #   B 同一相机下 raw 画出的线不少于 agg（合并只可能减少线数），并且确实严格更多过；
+    #   C 来回切换是确定性的，读数完全复原（invalidate() 没漏掉缓存）。
+    # 能这样比是因为 zoomToDepth(L) 的落点是确定的（zoom=enter[L-1]*1.05、pan 回画布中心），
+    # 所以「同一 L 下先 raw 后 agg」两次读数的相机严格相同。
+    LEG = "(id) => document.getElementById(id).hidden"
+    SELVAL = "() => document.getElementById('edgemode').value"
+    STORED = """() => { try { return localStorage.getItem('kg.edgeMode'); }
+                        catch (e) { return 'UNAVAILABLE'; } }"""
+    page.evaluate("() => { window.KG.renderer.selected = null; }")
+    page.wait_for_timeout(300)
+
+    # --- A. 模式管线：两个入口 + 图例 + 持久化 ---
+    page.evaluate("() => { window.KG.renderer.edgeMode = 'agg'; }")
+    page.wait_for_timeout(400)
+    check("renderer.edgeMode = 'agg' is reflected in state()",
+          page.evaluate(STATE)["edgeMode"] == "agg", page.evaluate(STATE)["edgeMode"])
+    # 直接赋值是自动化后门，不会回写下拉框和图例（那两个由 app.js 的 change 事件驱动）。
+    # 只观察、不断言：将来做成双向同步也不该把测试弄红。
+    print("    (direct assignment leaves the select at %r, raw legend hidden=%s)"
+          % (page.evaluate(SELVAL), page.evaluate(LEG, "legend-rel-raw")))
+
+    page.evaluate("() => { window.KG.renderer.edgeMode = 'nonsense'; }")
+    page.wait_for_timeout(300)
+    check("an unknown edgeMode value normalizes back to 'raw'",
+          page.evaluate(STATE)["edgeMode"] == "raw", page.evaluate(STATE)["edgeMode"])
+
+    page.select_option("#edgemode", "agg")
+    page.wait_for_timeout(400)
+    agg_hidden, raw_hidden = page.evaluate(LEG, "legend-rel-agg"), page.evaluate(LEG, "legend-rel-raw")
+    check("the #edgemode select drives the renderer",
+          page.evaluate(STATE)["edgeMode"] == "agg", page.evaluate(STATE)["edgeMode"])
+    # 图例说明必须跟着模式换：聚合模式下「线宽 = 合并了多少条」，逐条模式下「条数本身 = 强度」。
+    # 两块同时可见会互相打脸。
+    check("agg mode shows the agg legend and hides the raw one",
+          agg_hidden is False and raw_hidden is True,
+          "agg.hidden=%s raw.hidden=%s" % (agg_hidden, raw_hidden))
+    stored = page.evaluate(STORED)
+    if stored == "UNAVAILABLE":
+        warns.append("localStorage unavailable on file:// -> the remembered edge mode was not checked")
+        print("    (localStorage unavailable on file://; persistence not asserted)")
+    else:
+        check("the chosen edge mode is remembered in localStorage", stored == "agg", repr(stored))
+
+    page.select_option("#edgemode", "raw")
+    page.wait_for_timeout(400)
+    agg_hidden, raw_hidden = page.evaluate(LEG, "legend-rel-agg"), page.evaluate(LEG, "legend-rel-raw")
+    check("switching the select back to 'raw' drives the renderer",
+          page.evaluate(STATE)["edgeMode"] == "raw", page.evaluate(STATE)["edgeMode"])
+    check("raw mode shows the raw legend and hides the agg one",
+          raw_hidden is False and agg_hidden is True,
+          "agg.hidden=%s raw.hidden=%s" % (agg_hidden, raw_hidden))
+
+    # --- B. 同一相机下 raw 不聚合 ---
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(900)
+    home_edges = {}
+    for m in ("raw", "agg"):
+        page.evaluate("(m) => { window.KG.renderer.edgeMode = m; }", m)
+        page.wait_for_timeout(450)
+        home_edges[m] = page.evaluate(STATE)["shownEdges"]
+    print("    home camera: raw=%d agg=%d" % (home_edges["raw"], home_edges["agg"]))
+
+    ladder = []
+    for L in range(meta["maxDepth"], 0, -1):
+        rec = {"L": L}
+        for m in ("raw", "agg"):
+            page.evaluate("(m) => { window.KG.renderer.edgeMode = m; }", m)
+            page.wait_for_timeout(250)
+            page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
+            page.wait_for_timeout(850)
+            s = page.evaluate(STATE)
+            rec[m], rec["z_" + m] = s["shownEdges"], s["zoom"]
+        ladder.append(rec)
+        print("    rung L=%2d zoom=%.5f/%.5f raw=%3d agg=%3d  %s"
+              % (L, rec["z_raw"], rec["z_agg"], rec["raw"], rec["agg"],
+                 "raw>agg" if rec["raw"] > rec["agg"]
+                 else ("equal" if rec["raw"] == rec["agg"] else "RAW<AGG")))
+    check("both modes land on the same camera at each rung (zoomToDepth is deterministic)",
+          all(abs(r["z_raw"] - r["z_agg"]) < 1e-3 for r in ladder),
+          str([(r["L"], r["z_raw"], r["z_agg"]) for r in ladder
+               if abs(r["z_raw"] - r["z_agg"]) >= 1e-3]))
+    # 这一条才是「不聚合」的硬不变式：raw 就是 agg 去掉合并，合并只可能把多条并成一条，
+    # 所以同一相机下 raw 的线数不可能更少。真出现了更少，说明 raw 路径额外丢边了。
+    check("raw never draws fewer edges than agg at the same camera (merging can only remove lines)",
+          all(r["raw"] >= r["agg"] for r in ladder),
+          str([(r["L"], r["raw"], r["agg"]) for r in ladder if r["raw"] < r["agg"]]))
+    # 上一条全是等号也能过（比如整个库里每对元素之间只有一处链接、根本没东西可合并），
+    # 所以再要一条「严格更多」来证明聚合确实有事可做、而 raw 确实没做。写成 home 或阶梯
+    # 任一档成立即可，不绑定具体是哪一档 —— 那才是某张图的形状。
+    strict = [r["L"] for r in ladder if r["raw"] > r["agg"]]
+    check("non-aggregation is observable: raw draws strictly more than agg somewhere",
+          home_edges["raw"] > home_edges["agg"] or bool(strict),
+          "home raw=%d agg=%d; rungs with raw>agg: %s" % (home_edges["raw"], home_edges["agg"], strict))
+
+    # --- C. 确定性：来回切换必须完全复原 ---
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(900)
+    trip = []
+    for m in ("raw", "agg", "raw"):
+        page.evaluate("(m) => { window.KG.renderer.edgeMode = m; }", m)
+        page.wait_for_timeout(450)
+        trip.append((m, page.evaluate(STATE)["shownEdges"]))
+    print("    home round trip:", trip)
+    check("switching raw -> agg -> raw restores the exact edge count",
+          trip[0][1] == trip[2][1] == home_edges["raw"],
+          "%s vs earlier raw=%d" % (trip, home_edges["raw"]))
+    check("the agg reading in the round trip matches the earlier agg reading",
+          trip[1][1] == home_edges["agg"], "%s vs earlier agg=%d" % (trip[1], home_edges["agg"]))
+
+    # 收尾：把页面留在默认的 raw 模式（下拉框也一起归位），后面 2-6 节都跑在默认模式下。
+    page.select_option("#edgemode", "raw")
+    page.wait_for_timeout(400)
+    check("section 1c leaves the page in the default raw mode",
+          page.evaluate(STATE)["edgeMode"] == "raw" and page.evaluate(SELVAL) == "raw",
+          "renderer=%r select=%r" % (page.evaluate(STATE)["edgeMode"], page.evaluate(SELVAL)))
+    shot("01b_edgemode_raw")
 
     print("\n=== 2. the zoom floor landmark: land on zMin, every top-level root on screen ===")
     page.mouse.move(720, 430)
@@ -723,365 +860,381 @@ with sync_playwright() as p:
         warns.append("no node found under scan -> click test skipped")
         print("    !! no node hit; skipping")
 
-    print("\n=== 7b. focus mode: selecting an element filters edges + rings neighbours ===")
-    # 焦点模式的判据全在渲染器里（isFocusSide / hotNeighbors）。这一节只负责三件事：
-    # ① 用真实相机找一个**确实带语义边**的靶子 ② 走真实 page.mouse.click 验端到端
-    # ③ 钉住「无关连线是压暗而不是删除」这个设计决定（shownEdges 必须不变）。
-    page.evaluate("() => window.KG.renderer.resetView()")
-    page.wait_for_timeout(900)
-    st0 = page.evaluate(STATE)
-    base_edges = st0["shownEdges"]
-    print("    home baseline: shownNodes=%d shownEdges=%d zoom=%.4f"
-          % (st0["shownNodes"], base_edges, st0["zoom"]))
-    check("focus test starts from a view that has edges", base_edges > 0, str(base_edges))
-    check("no focus stats while nothing is selected",
-          st0["focusEdges"] == 0 and st0["focusNeighbors"] == 0,
-          "focusEdges=%s focusNeighbors=%s" % (st0["focusEdges"], st0["focusNeighbors"]))
-    # 每条边最多两个端点标记（源端一个 + 目标端一个），所以 marks <= 2*edges 是硬上界。
-    # 下界 marks > 0 才是这轮的重点：home 视图里必须有标记，否则「看不出线的头尾」
-    # 这个原始痛点根本没被解决。
-    check("endpoint markers are drawn in the home view", st0["marks"] > 0, str(st0["marks"]))
-    check("markers never exceed two per drawn edge",
-          st0["marks"] <= 2 * base_edges,
-          "%d marks / %d edges" % (st0["marks"], base_edges))
-
-    # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
-    # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
-    probe = page.evaluate("""() => {
-        const R = window.KG.renderer; const [W, H] = R.size();
-        const seen = new Set(); const out = [];
-        for (let y = H * 0.15; y < H * 0.85; y += 6) {
-            for (let x = W * 0.10; x < W * 0.90; x += 6) {
-                const n = R.hitTest(x, y);
-                if (!n || seen.has(n.id)) continue;
-                seen.add(n.id);
-                R.selected = n.id; R.draw();   // setter 只 invalidate，draw() 才立刻出真值
-                out.push({id: n.id, x: x, y: y, depth: n.depth, sr: Math.round(n._sr),
-                          rel: R.stats.focusEdges, nb: R.stats.focusNeighbors});
-            }
-        }
-        R.selected = null; R.draw();
-        return out;
-    }""")
-    print("    probed %d distinct on-screen nodes; %d of them carry a related edge"
-          % (len(probe), len([c for c in probe if c["rel"] > 0])))
-    # rel < base_edges 才看得出「无关的被压掉了」；nb > 0 才验得到邻居环
-    cand = [c for c in probe if 0 < c["rel"] < base_edges and c["nb"] > 0]
-    if not cand:
-        cand = [c for c in probe if 0 < c["rel"] < base_edges]
-        if cand:
-            warns.append("no on-screen node has an *external* semantic edge -> "
-                         "neighbour-ring assertion weakened")
-    if cand:
-        tgt = max(cand, key=lambda c: (c["nb"], -c["sr"]))
-        print("    target %s (depth=%d, sr=%dpx) rel=%d/%d nb=%d"
-              % (tgt["id"], tgt["depth"], tgt["sr"], tgt["rel"], base_edges, tgt["nb"]))
-        page.mouse.click(tgt["x"], tgt["y"])
-        page.wait_for_timeout(700)
-        s = page.evaluate(STATE)
-        print("    ", json.dumps({k: s[k] for k in
-                                 ("selected", "shownEdges", "focusEdges", "focusNeighbors")},
-                                ensure_ascii=False))
-        check("click selected the probed node", s["selected"] == tgt["id"],
-              "%s vs %s" % (s["selected"], tgt["id"]))
-        check("focus keeps every edge on canvas (dim, not delete)",
-              s["shownEdges"] == base_edges, "%d vs base %d" % (s["shownEdges"], base_edges))
-        check("focus marks some (not all) edges related",
-              0 < s["focusEdges"] < s["shownEdges"],
-              "%d of %d" % (s["focusEdges"], s["shownEdges"]))
-        check("real click agrees with the programmatic probe",
-              s["focusEdges"] == tgt["rel"], "%d vs %d" % (s["focusEdges"], tgt["rel"]))
-        check("focus rings at least one neighbour", s["focusNeighbors"] > 0,
-              str(s["focusNeighbors"]))
-        # 这是本节最锋利的一条断言：上界用 focusEdges（相关边）而不是 shownEdges（全部边）。
-        # 无关边被压到 focus_edge_dim=0.07，标记的 alpha 门槛是 0.1 —— 0.07 过不去，
-        # 于是冷边一个标记都不该冒出来。上界写成 2*shownEdges 就退化成永真式了。
-        check("markers appear on related edges only (cold 7% edges stay bare)",
-              0 < s["marks"] <= 2 * s["focusEdges"],
-              "%d marks / %d related edges (%d drawn in total)"
-              % (s["marks"], s["focusEdges"], s["shownEdges"]))
-        shot("09_focus")
-        page.keyboard.press("Escape")
+    # 7b/7c/7d 验的是「焦点过滤 + 端点标记 + 屏外 chip」这几条硬不变式，它们和连线
+    # 怎么画无关 —— 逐条（raw）和聚合（agg）两种模式都必须成立，所以整块跑两遍。
+    # 默认模式是 raw，agg 是设置项里保留的旧画法：不跑它就等于留一条没人验证的代码路径。
+    for EDGE_MODE in ("raw", "agg"):
+        SUF = "_" + EDGE_MODE          # 截图名带上模式，两轮互不覆盖
+        MODE_TAG = " [" + EDGE_MODE + "]"   # 断言名后缀，fails 里认得出是哪一轮
+        page.select_option("#edgemode", EDGE_MODE)
         page.wait_for_timeout(400)
-        e = page.evaluate(STATE)
-        check("Escape drops the focus filter",
-              e["selected"] is None and e["focusEdges"] == 0 and e["focusNeighbors"] == 0,
-              json.dumps({k: e[k] for k in ("selected", "focusEdges", "focusNeighbors")},
-                         ensure_ascii=False))
-        check("Escape restores the full edge count", e["shownEdges"] == base_edges,
-              "%d vs %d" % (e["shownEdges"], base_edges))
-        shot("10_focus_off")
-    else:
-        warns.append("no on-screen node carries a semantic edge -> focus test skipped")
-        print("    !! nothing to focus on; skipping")
+        check("edge mode switched via the #edgemode select",
+              page.evaluate(STATE)["edgeMode"] == EDGE_MODE, EDGE_MODE)
+        print("\n=== 7b[%s]. focus mode: selecting an element filters edges + rings neighbours ==="
+              % EDGE_MODE)
+        # 焦点模式的判据全在渲染器里（isFocusSide / hotNeighbors）。这一节只负责三件事：
+        # ① 用真实相机找一个**确实带语义边**的靶子 ② 走真实 page.mouse.click 验端到端
+        # ③ 钉住「无关连线是压暗而不是删除」这个设计决定（shownEdges 必须不变）。
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(900)
+        st0 = page.evaluate(STATE)
+        base_edges = st0["shownEdges"]
+        print("    home baseline: shownNodes=%d shownEdges=%d zoom=%.4f"
+              % (st0["shownNodes"], base_edges, st0["zoom"]))
+        check("focus test starts from a view that has edges", base_edges > 0, str(base_edges))
+        check("no focus stats while nothing is selected",
+              st0["focusEdges"] == 0 and st0["focusNeighbors"] == 0,
+              "focusEdges=%s focusNeighbors=%s" % (st0["focusEdges"], st0["focusNeighbors"]))
+        # 每条边最多两个端点标记（源端一个 + 目标端一个），所以 marks <= 2*edges 是硬上界。
+        # 下界 marks > 0 才是这轮的重点：home 视图里必须有标记，否则「看不出线的头尾」
+        # 这个原始痛点根本没被解决。
+        check("endpoint markers are drawn in the home view", st0["marks"] > 0, str(st0["marks"]))
+        check("markers never exceed two per drawn edge",
+              st0["marks"] <= 2 * base_edges,
+              "%d marks / %d edges" % (st0["marks"], base_edges))
 
-    print("\n=== 7c. endpoint markers: geometry + config wiring ===")
-    # 端点标记的全部意义是「一眼看出线从哪个圆出发、进哪个圆」。所以这里直接量几何：
-    # 每个标记到它所附着圆心的屏幕距离，必须 >= 该圆的屏幕半径（留 TRIM 的间隙）。
-    # 截断公式一旦写反（ra 用了减号、或切向取反），标记就会掉进圆里被节点整个盖住 ——
-    # 那正是这轮要修的原始 bug，值得一条独立断言钉住。
-    page.evaluate("() => window.KG.renderer.resetView()")
-    page.wait_for_timeout(900)
-    geo = page.evaluate("""() => {
-        const R = window.KG.renderer;
-        R.selected = null; R.hover = null; R.draw();
-        const cam = R.camera, z = cam.zoom;
-        const lod = (window.KG.data.meta || {}).lod || {};
-        const trim = lod.edge_trim_clearance;
-        const jobs = R.markJobs;
-        let inside = 0, checked = 0, arrows = 0, dots = 0, minGap = 1e9, maxGap = -1e9;
-        for (const j of jobs) {
-            if (j.k === 1) arrows++; else dots++;
-            // 标记自带它附着的节点 id，直接量那一个圆 —— 不用「找最近圆心」那种
-            // 猜法（packing 布局里大祖先圆的圆心常常比小圆自己的更近，会误判）。
-            const n = R.byId.get(j.id);
-            if (!n || !(n._r > 0)) continue;
-            checked++;
-            const dx = j.x - (n.x * z + cam.panX), dy = j.y - (n.y * z + cam.panY);
-            const gap = Math.sqrt(dx * dx + dy * dy) - n._r * z;  // 正 = 圆外
-            if (gap < minGap) minGap = gap;
-            if (gap > maxGap) maxGap = gap;
-            if (gap < -0.5) inside++;
-        }
-        return {marks: jobs.length, checked: checked, inside: inside, arrows: arrows,
-                dots: dots, minGap: Math.round(minGap * 100) / 100,
-                maxGap: Math.round(maxGap * 100) / 100, trim: trim,
-                minLen: lod.edge_marker_min_len, tint: lod.edge_marker_tint,
-                zoom: Math.round(z * 10000) / 10000};
-    }""")
-    print("    ", json.dumps(geo, ensure_ascii=False))
-    check("three marker knobs reached META.lod through build.py",
-          geo["trim"] is not None and geo["minLen"] is not None and geo["tint"] is not None,
-          "trim=%s minLen=%s tint=%s" % (geo["trim"], geo["minLen"], geo["tint"]))
-    check("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
-    check("every marker resolves to the node it is attached to",
-          geo["checked"] == geo["marks"], "%d of %d" % (geo["checked"], geo["marks"]))
-    check("no marker is buried inside its node circle",
-          geo["inside"] == 0, "%d of %d inside" % (geo["inside"], geo["checked"]))
-    # 截断把端点放在「屏幕半径 + TRIM」处，所以间隙应当**恒等于** TRIM（弯边的
-    # 退让方向取圆心→控制点，与弦方向略有夹角，会多出零点几 px 的余量）。
-    check("markers sit just outside the circle, by the configured clearance",
-          geo["minGap"] >= geo["trim"] - 0.75 and geo["maxGap"] <= geo["trim"] + 2.0,
-          "gap in [%s, %s] px vs trim=%s px" % (geo["minGap"], geo["maxGap"], geo["trim"]))
-    # 有向边（derives / prerequisite）目标端画箭头，源端画点；无向边两端都是点。
-    # 本库当前 92 条 derives、0 条 contrast —— 所以 home 视图里两种标记都该有。
-    check("both arrow heads and source dots are produced",
-          geo["arrows"] > 0 and geo["dots"] > 0,
-          "%d arrows / %d dots" % (geo["arrows"], geo["dots"]))
-
-    # 深入再看：MARK_MIN 守卫在小尺度下应该开始生效（短边不画标记），marks 掉到 2*edges
-    # 以下；同时长边仍然要带标记。以前这里写死 depth 6 —— 那是私有图的形状：公开图在
-    # depth 6 的画面上只剩一条代表边（数字信号处理(自己理解) → LTI analysis：圆心距 546px，
-    # 两圆屏幕半径 83+467，截断后只剩 4px），MARK_MIN=20 与 alpha≥0.1 两道门都合理地压掉
-    # 了它，marks=0 是数据形状而不是渲染回归（同层私有图有两条边、其中一条 189px，所以有标记）。
-    # 改成沿 payload 自己的 zoom 阶梯（enter[L-1]*1.05，正是 zoomToDepth 用的那一档）逐层扫，
-    # 每一层都验「每条边最多两个标记」；有两条以上代表边在屏上的层，再要求「有边带标记、
-    # 也有边被守卫压掉」—— 后者是 MARK_MIN 守卫唯一能被观测到的地方（只有一条边时，
-    # marks 的 0 或 2 都说明不了守卫在不在）。
-    rungs = []
-    # 扫之前必须清掉选中：焦点模式会让 drawFocusEdges 另外往 markJobs 里塞标记（它补画的是
-    # 被三道门挡下的焦点边），而下面比较用的 shownEdges 只算主绘制趟的代表边 —— 于是
-    # 「2 条边却 6 个标记」这种假红就出来了（实测 rung 9）。这一段验的是**普通边标记**的
-    # 几何，与选中无关，所以把选中清掉，让输入集干净。不清也行，那就得把 focusEdges 折算
-    # 进来，反而更容易错。
-    page.evaluate("() => { window.KG.renderer.selected = null; }")
-    page.wait_for_timeout(300)
-    for L in range(meta["maxDepth"], 0, -1):
-        page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
-        page.wait_for_timeout(850)
-        s = page.evaluate(STATE)
-        rungs.append((L, s["zoom"], s["shownEdges"], s["marks"]))
-    for L, z, e, m in rungs:
-        print("    rung L=%2d zoom=%8.4f edges=%3d marks=%3d" % (L, z, e, m))
-    deep_rungs = [r for r in rungs if r[2] >= 2]
-    print("    rungs with >=2 drawn edges: %s" % [r[0] for r in deep_rungs])
-    check("deep rungs still draw markers for the long edges",
-          bool(deep_rungs) and all(m > 0 for _, _, _, m in deep_rungs),
-          "rungs %s" % [(L, e, m) for L, _, e, m in deep_rungs])
-    # 硬不变式是 **≤** 2×edges：每条画出的代表边最多落两个标记（源端圆点 + 目标端箭头）。
-    # 不能写成严格 `<`：一条边上两个标记本来就是正常的，所以「三条边全长、共 6 个标记」
-    # 完全合法（实测 rung L=7 就是 3/6），严格小于会在正常数据上假红。
-    check("never more than two markers per drawn edge (hard invariant)",
-          all(m <= 2 * e for _, _, e, m in rungs),
-          "all %s" % [(L, m, 2 * e) for L, _, e, m in rungs])
-    # MARK_MIN 守卫是否真的在生效，用「阶梯上存在某档标记数严格少于 2×edges」来证明 ——
-    # 也就是确实有短边被压掉了。只要有边界够短，这一条就会亮；守卫一旦被删掉整条阶梯
-    # 都会顶满 2×edges，这条就红。
-    suppressed = [(L, e, m) for L, _, e, m in rungs if m < 2 * e]
-    check("the min-length guard really suppresses some markers somewhere on the ladder",
-          bool(suppressed), "rungs with marks < 2*edges: %s" % [(L, m, 2 * e) for L, e, m in suppressed])
-    page.evaluate("() => window.KG.renderer.resetView()")
-    page.wait_for_timeout(900)
-
-    print("\n=== 7d. off-screen focus target: viewport-edge arrow + name chip + fitPair ===")
-    # drawEdges 的三道门（同容器 / 聚合索引 / 在屏）会在某些缩放比挡掉焦点边，
-    # 挡掉之后画布上「这条链接指向谁」一度一个像素的线索都没有。这一轮补了两条后路：
-    # 一端屏外时连线止于视口边缘、挂箭头 + 写著屏外端点名字的 chip；侧栏边行点击
-    # 一次 tween 把链接两端一起框进视口（fitPair）。这里用真实相机钉住两条后路。
-    # fixture 按**后缀**解析，不写完整路径：笔记一改名路径就失效，7d 会静默跳过
-    # （2026-10-10 用户把 信号与系统.md 改名成 LTI analysis.md 之后正是如此）。
-    # 后缀是稳定的语义锚点，改名不该让回归覆盖凭空少十几条断言。
-    SEL_TAIL = "理解傅利叶变换&频谱密度的几何意义"
-    TGT_TAIL = "5.1.2 定积分的定义(本质是求和的极限)"
-    pair = page.evaluate("""(tails) => {
-        const R = window.KG.renderer;
-        const find = (t) => {
-            let best = null;
-            for (const [id, n] of R.byId) {
-                if (!(id.endsWith('/' + t) || id.endsWith('#' + t))) continue;
-                if (!best || n.depth < best.depth ||
-                    (n.depth === best.depth && n._r > best._r)) best = n;
-            }
-            return best;
-        };
-        const a = find(tails[0]), b = find(tails[1]);
-        if (!a || !b) return null;
-        const linked = R.SEM.some(e => (e.s === a.id && e.t === b.id) ||
-                                       (e.s === b.id && e.t === a.id));
-        return linked ? [a.id, b.id] : null;
-    }""", [SEL_TAIL, TGT_TAIL])
-    if not pair:
-        warns.append("fixture edge SEL->TGT missing from payload -> 7d skipped")
-        print("    !! fixture edge not found; skipping")
-    else:
-        SEL_ID, TGT_ID = pair
-        print("    fixture resolved: SEL=…/%s  TGT=…/%s"
-              % (SEL_ID.split("/")[-1], TGT_ID.split("/")[-1]))
-        # (a) 深缩放：选中圆在屏、链接目标屏外 -> 线止于视口边，箭头与 chip 都该在
-        a = page.evaluate("""(ids) => {
-            const R = window.KG.renderer;
-            R.selected = null;
-            R.focusOn(ids[0], 1.25, 0);
-            R.selected = ids[0]; R.draw();
-            const st = window.KG.state();
-            return {focusEdges: st.focusEdges, chips: st.chips,
-                    chipTexts: R.chipJobs.filter(j => j.id === ids[1]).map(j => j.text),
-                    edgeArrow: R.markJobs.some(j => j.k === 1 && j.id === ids[1]),
-                    selDot: R.markJobs.some(j => j.k === 0 && j.id === ids[0])};
-        }""", [SEL_ID, TGT_ID])
-        print("    ", json.dumps(a, ensure_ascii=False))
-        check("focus edge to an off-screen target still counts as drawn",
-              a["focusEdges"] >= 1, str(a["focusEdges"]))
-        check("off-screen target gets a name chip",
-              a["chips"] >= 1 and len(a["chipTexts"]) >= 1,
-              "chips=%s texts=%s" % (a["chips"], a["chipTexts"]))
-        check("chip carries the off-screen target's name",
-              bool(a["chipTexts"]) and a["chipTexts"][0].startswith("5.1.2 定积分的定义"),
-              str(a["chipTexts"][:1]))
-        check("viewport-edge arrow is tagged with the off-screen target", a["edgeArrow"])
-        check("on-screen end keeps its source dot", a["selDot"])
-        shot("11_chip")
-
-        # (b) +k 折叠：语义度 top-6 的 hub 各扫三档缩放，读真实 chipJobs。
-        # 不变式：chip 数永不超过 CHIP_MAX+1；只有超出 CHIP_MAX 时末项才是右锚的「+k」。
-        chip_max = page.evaluate(
-            "() => (((window.KG.data.meta || {}).lod || {}).focus_offscreen_chips) ?? 8")
-        probes = page.evaluate("""(mults) => {
-            const R = window.KG.renderer;
-            const deg = new Map();
-            for (const e of R.SEM) { deg.set(e.s, (deg.get(e.s) || 0) + 1); deg.set(e.t, (deg.get(e.t) || 0) + 1); }
-            const hubs = [...deg.entries()].sort((x, y) => y[1] - x[1]).slice(0, 6).map(x => x[0]);
-            const cs = R.centerScreen();
-            const out = [];
-            for (const id of hubs) {
-                const n = R.byId.get(id);
-                for (const m of mults) {
-                    const z = Math.min(n._mz * m, R.zMax);
-                    R.tweenTo({zoom: z, panX: cs[0] - n.x * z, panY: cs[1] - n.y * z}, 0);
-                    R.selected = id; R.draw();
-                    const jobs = R.chipJobs;
-                    const last = jobs.length ? jobs[jobs.length - 1] : null;
-                    out.push({id: id, mult: m, deg: deg.get(id), n: jobs.length,
-                              lastText: last ? last.text : null, lastRight: last ? !!last.right : false});
+        # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
+        # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
+        probe = page.evaluate("""() => {
+            const R = window.KG.renderer; const [W, H] = R.size();
+            const seen = new Set(); const out = [];
+            for (let y = H * 0.15; y < H * 0.85; y += 6) {
+                for (let x = W * 0.10; x < W * 0.90; x += 6) {
+                    const n = R.hitTest(x, y);
+                    if (!n || seen.has(n.id)) continue;
+                    seen.add(n.id);
+                    R.selected = n.id; R.draw();   // setter 只 invalidate，draw() 才立刻出真值
+                    out.push({id: n.id, x: x, y: y, depth: n.depth, sr: Math.round(n._sr),
+                              rel: R.stats.focusEdges, nb: R.stats.focusNeighbors});
                 }
             }
             R.selected = null; R.draw();
             return out;
-        }""", [1.3, 3, 8])
-        collapsed = [p for p in probes if p["n"] > chip_max]
-        print("    hub probes: %d combos, %d collapsed to +k (chip_max=%s)"
-              % (len(probes), len(collapsed), chip_max))
-        for p in probes[:6]:
-            print("      deg=%3d mult=%-4s -> chips=%2d last=%r"
-                  % (p["deg"], p["mult"], p["n"], p["lastText"]))
-        check("chip list never exceeds CHIP_MAX+1",
-              all(p["n"] <= chip_max + 1 for p in probes),
-              str(max(p["n"] for p in probes)))
-        check("overflow collapses into exactly one right-anchored +k chip",
-              all((p["n"] > chip_max) == p["lastRight"] for p in probes) and
-              all(p["lastText"].startswith("+") and p["lastText"][1:].isdigit()
-                  for p in probes if p["n"] > chip_max),
-              str(collapsed[:2]))
-        if not collapsed:
-            warns.append("no hub probe produced more than CHIP_MAX off-screen targets -> +k chip untested")
-
-        # (c) 侧栏边行点击：fitPair 一次 tween 把链接两端框进视口
-        page.evaluate("""(sel) => {
-            const R = window.KG.renderer;
-            R.selected = null;
-            R.focusOn(sel, 1.25, 0);
-            R.selected = sel; R.draw();
-        }""", SEL_ID)
-        page.wait_for_timeout(200)
-        pt = page.evaluate("""(sel) => {
-            const R = window.KG.renderer;
-            const n = R.byId.get(sel);
-            const cs = R.centerScreen();
-            const cv = document.getElementById('cv').getBoundingClientRect();
-            const offs = [[0, 0]];
-            for (let f = 0.2; f <= 0.95; f += 0.15)
-                for (let t = 0; t < 6.28; t += Math.PI / 6) offs.push([Math.cos(t) * f, Math.sin(t) * f]);
-            for (const o of offs) {
-                const x = cs[0] + o[0] * n._sr, y = cs[1] + o[1] * n._sr;
-                const h = R.hitTest(x, y);
-                if (h && h.id === sel) return {x: cv.left + x, y: cv.top + y};
-            }
-            return null;
-        }""", SEL_ID)
-        if not pt:
-            warns.append("no click point resolves to the fixture node -> fitPair test skipped")
-            print("    !! no click point; skipping")
+        }""")
+        print("    probed %d distinct on-screen nodes; %d of them carry a related edge"
+              % (len(probe), len([c for c in probe if c["rel"] > 0])))
+        # rel < base_edges 才看得出「无关的被压掉了」；nb > 0 才验得到邻居环
+        cand = [c for c in probe if 0 < c["rel"] < base_edges and c["nb"] > 0]
+        if not cand:
+            cand = [c for c in probe if 0 < c["rel"] < base_edges]
+            if cand:
+                warns.append("no on-screen node has an *external* semantic edge -> "
+                             "neighbour-ring assertion weakened")
+        if cand:
+            tgt = max(cand, key=lambda c: (c["nb"], -c["sr"]))
+            print("    target %s (depth=%d, sr=%dpx) rel=%d/%d nb=%d"
+                  % (tgt["id"], tgt["depth"], tgt["sr"], tgt["rel"], base_edges, tgt["nb"]))
+            page.mouse.click(tgt["x"], tgt["y"])
+            page.wait_for_timeout(700)
+            s = page.evaluate(STATE)
+            print("    ", json.dumps({k: s[k] for k in
+                                     ("selected", "shownEdges", "focusEdges", "focusNeighbors")},
+                                    ensure_ascii=False))
+            check("click selected the probed node", s["selected"] == tgt["id"],
+                  "%s vs %s" % (s["selected"], tgt["id"]))
+            check("focus keeps every edge on canvas (dim, not delete)",
+                  s["shownEdges"] == base_edges, "%d vs base %d" % (s["shownEdges"], base_edges))
+            check("focus marks some (not all) edges related",
+                  0 < s["focusEdges"] < s["shownEdges"],
+                  "%d of %d" % (s["focusEdges"], s["shownEdges"]))
+            check("real click agrees with the programmatic probe",
+                  s["focusEdges"] == tgt["rel"], "%d vs %d" % (s["focusEdges"], tgt["rel"]))
+            check("focus rings at least one neighbour", s["focusNeighbors"] > 0,
+                  str(s["focusNeighbors"]))
+            # 这是本节最锋利的一条断言：上界用 focusEdges（相关边）而不是 shownEdges（全部边）。
+            # 无关边被压到 focus_edge_dim=0.07，标记的 alpha 门槛是 0.1 —— 0.07 过不去，
+            # 于是冷边一个标记都不该冒出来。上界写成 2*shownEdges 就退化成永真式了。
+            check("markers appear on related edges only (cold 7% edges stay bare)",
+                  0 < s["marks"] <= 2 * s["focusEdges"],
+                  "%d marks / %d related edges (%d drawn in total)"
+                  % (s["marks"], s["focusEdges"], s["shownEdges"]))
+            shot("09_focus" + SUF)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+            e = page.evaluate(STATE)
+            check("Escape drops the focus filter",
+                  e["selected"] is None and e["focusEdges"] == 0 and e["focusNeighbors"] == 0,
+                  json.dumps({k: e[k] for k in ("selected", "focusEdges", "focusNeighbors")},
+                             ensure_ascii=False))
+            check("Escape restores the full edge count", e["shownEdges"] == base_edges,
+                  "%d vs %d" % (e["shownEdges"], base_edges))
+            shot("10_focus_off" + SUF)
         else:
-            page.mouse.click(pt["x"], pt["y"])
-            page.wait_for_timeout(600)
-            check("real click selects the fixture node",
-                  page.evaluate(STATE)["selected"] == SEL_ID)
-            row = page.evaluate("""(ids) => {
-                const lis = [...document.querySelectorAll('#sidebar li')];
-                const li = lis.find(l => l.dataset.self === ids[0] && l.dataset.target === ids[1]);
-                if (!li) return {found: false, rows: lis.length};
-                li.click();
-                return {found: true, rows: lis.length};
-            }""", [SEL_ID, TGT_ID])
-            print("    sidebar edge rows=%d, fixture row found=%s" % (row["rows"], row["found"]))
-            check("sidebar lists the fixture edge as a clickable row", row["found"], str(row["rows"]))
-            page.wait_for_timeout(900)
-            fit = page.evaluate("""(ids) => {
-                const R = window.KG.renderer;
-                const cam = R.camera, z = cam.zoom;
-                const [W, H] = R.size();
-                const box = (id) => {
-                    const n = R.byId.get(id);
-                    const sx = n.x * z + cam.panX, sy = n.y * z + cam.panY, sr = n._r * z;
-                    return [sx - sr, sy - sr, sx + sr, sy + sr];
-                };
-                const inside = (q) => q[0] >= 0 && q[2] <= W && q[1] >= 0 && q[3] <= H - 46;
-                const st = window.KG.state();
-                return {selected: st.selected, focusEdges: st.focusEdges, marks: st.marks,
-                        okA: inside(box(ids[0])), okB: inside(box(ids[1]))};
-            }""", [SEL_ID, TGT_ID])
-            print("    ", json.dumps(fit, ensure_ascii=False))
-            check("clicking the edge row selects the link target",
-                  fit["selected"] == TGT_ID, str(fit["selected"]))
-            check("fitPair frames both link ends inside the viewport", fit["okA"] and fit["okB"])
-            check("the framed pair still draws its focus edge + markers",
-                  fit["focusEdges"] >= 1 and fit["marks"] > 0,
-                  "focusEdges=%s marks=%s" % (fit["focusEdges"], fit["marks"]))
-            shot("13_fitpair")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(400)
+            warns.append("no on-screen node carries a semantic edge -> focus test skipped")
+            print("    !! nothing to focus on; skipping")
+
+        print("\n=== 7c[%s]. endpoint markers: geometry + config wiring ===" % EDGE_MODE)
+        # 端点标记的全部意义是「一眼看出线从哪个圆出发、进哪个圆」。所以这里直接量几何：
+        # 每个标记到它所附着圆心的屏幕距离，必须 >= 该圆的屏幕半径（留 TRIM 的间隙）。
+        # 截断公式一旦写反（ra 用了减号、或切向取反），标记就会掉进圆里被节点整个盖住 ——
+        # 那正是这轮要修的原始 bug，值得一条独立断言钉住。
         page.evaluate("() => window.KG.renderer.resetView()")
         page.wait_for_timeout(900)
+        geo = page.evaluate("""() => {
+            const R = window.KG.renderer;
+            R.selected = null; R.hover = null; R.draw();
+            const cam = R.camera, z = cam.zoom;
+            const lod = (window.KG.data.meta || {}).lod || {};
+            const trim = lod.edge_trim_clearance;
+            const jobs = R.markJobs;
+            let inside = 0, checked = 0, arrows = 0, dots = 0, minGap = 1e9, maxGap = -1e9;
+            for (const j of jobs) {
+                if (j.k === 1) arrows++; else dots++;
+                // 标记自带它附着的节点 id，直接量那一个圆 —— 不用「找最近圆心」那种
+                // 猜法（packing 布局里大祖先圆的圆心常常比小圆自己的更近，会误判）。
+                const n = R.byId.get(j.id);
+                if (!n || !(n._r > 0)) continue;
+                checked++;
+                const dx = j.x - (n.x * z + cam.panX), dy = j.y - (n.y * z + cam.panY);
+                const gap = Math.sqrt(dx * dx + dy * dy) - n._r * z;  // 正 = 圆外
+                if (gap < minGap) minGap = gap;
+                if (gap > maxGap) maxGap = gap;
+                if (gap < -0.5) inside++;
+            }
+            return {marks: jobs.length, checked: checked, inside: inside, arrows: arrows,
+                    dots: dots, minGap: Math.round(minGap * 100) / 100,
+                    maxGap: Math.round(maxGap * 100) / 100, trim: trim,
+                    minLen: lod.edge_marker_min_len, tint: lod.edge_marker_tint,
+                    zoom: Math.round(z * 10000) / 10000};
+        }""")
+        print("    ", json.dumps(geo, ensure_ascii=False))
+        check("three marker knobs reached META.lod through build.py",
+              geo["trim"] is not None and geo["minLen"] is not None and geo["tint"] is not None,
+              "trim=%s minLen=%s tint=%s" % (geo["trim"], geo["minLen"], geo["tint"]))
+        check("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
+        check("every marker resolves to the node it is attached to",
+              geo["checked"] == geo["marks"], "%d of %d" % (geo["checked"], geo["marks"]))
+        check("no marker is buried inside its node circle",
+              geo["inside"] == 0, "%d of %d inside" % (geo["inside"], geo["checked"]))
+        # 截断把端点放在「屏幕半径 + TRIM」处，所以间隙应当**恒等于** TRIM（弯边的
+        # 退让方向取圆心→控制点，与弦方向略有夹角，会多出零点几 px 的余量）。
+        check("markers sit just outside the circle, by the configured clearance",
+              geo["minGap"] >= geo["trim"] - 0.75 and geo["maxGap"] <= geo["trim"] + 2.0,
+              "gap in [%s, %s] px vs trim=%s px" % (geo["minGap"], geo["maxGap"], geo["trim"]))
+        # 有向边（derives / prerequisite）目标端画箭头，源端画点；无向边两端都是点。
+        # 本库当前 92 条 derives、0 条 contrast —— 所以 home 视图里两种标记都该有。
+        check("both arrow heads and source dots are produced",
+              geo["arrows"] > 0 and geo["dots"] > 0,
+              "%d arrows / %d dots" % (geo["arrows"], geo["dots"]))
+
+        # 深入再看：MARK_MIN 守卫在小尺度下应该开始生效（短边不画标记），marks 掉到 2*edges
+        # 以下；同时长边仍然要带标记。以前这里写死 depth 6 —— 那是私有图的形状：公开图在
+        # depth 6 的画面上只剩一条代表边（数字信号处理(自己理解) → LTI analysis：圆心距 546px，
+        # 两圆屏幕半径 83+467，截断后只剩 4px），MARK_MIN=20 与 alpha≥0.1 两道门都合理地压掉
+        # 了它，marks=0 是数据形状而不是渲染回归（同层私有图有两条边、其中一条 189px，所以有标记）。
+        # 改成沿 payload 自己的 zoom 阶梯（enter[L-1]*1.05，正是 zoomToDepth 用的那一档）逐层扫，
+        # 每一层都验「每条边最多两个标记」；有两条以上代表边在屏上的层，再要求「有边带标记、
+        # 也有边被守卫压掉」—— 后者是 MARK_MIN 守卫唯一能被观测到的地方（只有一条边时，
+        # marks 的 0 或 2 都说明不了守卫在不在）。
+        rungs = []
+        # 扫之前必须清掉选中：焦点模式会让 drawFocusEdges 另外往 markJobs 里塞标记（它补画的是
+        # 被三道门挡下的焦点边），而下面比较用的 shownEdges 只算主绘制趟的代表边 —— 于是
+        # 「2 条边却 6 个标记」这种假红就出来了（实测 rung 9）。这一段验的是**普通边标记**的
+        # 几何，与选中无关，所以把选中清掉，让输入集干净。不清也行，那就得把 focusEdges 折算
+        # 进来，反而更容易错。
+        page.evaluate("() => { window.KG.renderer.selected = null; }")
+        page.wait_for_timeout(300)
+        for L in range(meta["maxDepth"], 0, -1):
+            page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
+            page.wait_for_timeout(850)
+            s = page.evaluate(STATE)
+            rungs.append((L, s["zoom"], s["shownEdges"], s["marks"]))
+        for L, z, e, m in rungs:
+            print("    rung L=%2d zoom=%8.4f edges=%3d marks=%3d" % (L, z, e, m))
+        deep_rungs = [r for r in rungs if r[2] >= 2]
+        print("    rungs with >=2 drawn edges: %s" % [r[0] for r in deep_rungs])
+        check("deep rungs still draw markers for the long edges",
+              bool(deep_rungs) and all(m > 0 for _, _, _, m in deep_rungs),
+              "rungs %s" % [(L, e, m) for L, _, e, m in deep_rungs])
+        # 硬不变式是 **≤** 2×edges：每条画出的代表边最多落两个标记（源端圆点 + 目标端箭头）。
+        # 不能写成严格 `<`：一条边上两个标记本来就是正常的，所以「三条边全长、共 6 个标记」
+        # 完全合法（实测 rung L=7 就是 3/6），严格小于会在正常数据上假红。
+        check("never more than two markers per drawn edge (hard invariant)",
+              all(m <= 2 * e for _, _, e, m in rungs),
+              "all %s" % [(L, m, 2 * e) for L, _, e, m in rungs])
+        # MARK_MIN 守卫是否真的在生效，用「阶梯上存在某档标记数严格少于 2×edges」来证明 ——
+        # 也就是确实有短边被压掉了。只要有边界够短，这一条就会亮；守卫一旦被删掉整条阶梯
+        # 都会顶满 2×edges，这条就红。
+        suppressed = [(L, e, m) for L, _, e, m in rungs if m < 2 * e]
+        check("the min-length guard really suppresses some markers somewhere on the ladder",
+              bool(suppressed), "rungs with marks < 2*edges: %s" % [(L, m, 2 * e) for L, e, m in suppressed])
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(900)
+
+        print("\n=== 7d[%s]. off-screen focus target: viewport-edge arrow + name chip + fitPair ==="
+              % EDGE_MODE)
+        # drawEdges 的三道门（同容器 / 聚合索引 / 在屏）会在某些缩放比挡掉焦点边，
+        # 挡掉之后画布上「这条链接指向谁」一度一个像素的线索都没有。这一轮补了两条后路：
+        # 一端屏外时连线止于视口边缘、挂箭头 + 写著屏外端点名字的 chip；侧栏边行点击
+        # 一次 tween 把链接两端一起框进视口（fitPair）。这里用真实相机钉住两条后路。
+        # fixture 按**后缀**解析，不写完整路径：笔记一改名路径就失效，7d 会静默跳过
+        # （2026-10-10 用户把 信号与系统.md 改名成 LTI analysis.md 之后正是如此）。
+        # 后缀是稳定的语义锚点，改名不该让回归覆盖凭空少十几条断言。
+        SEL_TAIL = "理解傅利叶变换&频谱密度的几何意义"
+        TGT_TAIL = "5.1.2 定积分的定义(本质是求和的极限)"
+        pair = page.evaluate("""(tails) => {
+            const R = window.KG.renderer;
+            const find = (t) => {
+                let best = null;
+                for (const [id, n] of R.byId) {
+                    if (!(id.endsWith('/' + t) || id.endsWith('#' + t))) continue;
+                    if (!best || n.depth < best.depth ||
+                        (n.depth === best.depth && n._r > best._r)) best = n;
+                }
+                return best;
+            };
+            const a = find(tails[0]), b = find(tails[1]);
+            if (!a || !b) return null;
+            const linked = R.SEM.some(e => (e.s === a.id && e.t === b.id) ||
+                                           (e.s === b.id && e.t === a.id));
+            return linked ? [a.id, b.id] : null;
+        }""", [SEL_TAIL, TGT_TAIL])
+        if not pair:
+            warns.append("fixture edge SEL->TGT missing from payload -> 7d skipped")
+            print("    !! fixture edge not found; skipping")
+        else:
+            SEL_ID, TGT_ID = pair
+            print("    fixture resolved: SEL=…/%s  TGT=…/%s"
+                  % (SEL_ID.split("/")[-1], TGT_ID.split("/")[-1]))
+            # (a) 深缩放：选中圆在屏、链接目标屏外 -> 线止于视口边，箭头与 chip 都该在
+            a = page.evaluate("""(ids) => {
+                const R = window.KG.renderer;
+                R.selected = null;
+                R.focusOn(ids[0], 1.25, 0);
+                R.selected = ids[0]; R.draw();
+                const st = window.KG.state();
+                return {focusEdges: st.focusEdges, chips: st.chips,
+                        chipTexts: R.chipJobs.filter(j => j.id === ids[1]).map(j => j.text),
+                        edgeArrow: R.markJobs.some(j => j.k === 1 && j.id === ids[1]),
+                        selDot: R.markJobs.some(j => j.k === 0 && j.id === ids[0])};
+            }""", [SEL_ID, TGT_ID])
+            print("    ", json.dumps(a, ensure_ascii=False))
+            check("focus edge to an off-screen target still counts as drawn",
+                  a["focusEdges"] >= 1, str(a["focusEdges"]))
+            check("off-screen target gets a name chip",
+                  a["chips"] >= 1 and len(a["chipTexts"]) >= 1,
+                  "chips=%s texts=%s" % (a["chips"], a["chipTexts"]))
+            check("chip carries the off-screen target's name",
+                  bool(a["chipTexts"]) and a["chipTexts"][0].startswith("5.1.2 定积分的定义"),
+                  str(a["chipTexts"][:1]))
+            check("viewport-edge arrow is tagged with the off-screen target", a["edgeArrow"])
+            check("on-screen end keeps its source dot", a["selDot"])
+            shot("11_chip" + SUF)
+
+            # (b) +k 折叠：语义度 top-6 的 hub 各扫三档缩放，读真实 chipJobs。
+            # 不变式：chip 数永不超过 CHIP_MAX+1；只有超出 CHIP_MAX 时末项才是右锚的「+k」。
+            chip_max = page.evaluate(
+                "() => (((window.KG.data.meta || {}).lod || {}).focus_offscreen_chips) ?? 8")
+            probes = page.evaluate("""(mults) => {
+                const R = window.KG.renderer;
+                const deg = new Map();
+                for (const e of R.SEM) { deg.set(e.s, (deg.get(e.s) || 0) + 1); deg.set(e.t, (deg.get(e.t) || 0) + 1); }
+                const hubs = [...deg.entries()].sort((x, y) => y[1] - x[1]).slice(0, 6).map(x => x[0]);
+                const cs = R.centerScreen();
+                const out = [];
+                for (const id of hubs) {
+                    const n = R.byId.get(id);
+                    for (const m of mults) {
+                        const z = Math.min(n._mz * m, R.zMax);
+                        R.tweenTo({zoom: z, panX: cs[0] - n.x * z, panY: cs[1] - n.y * z}, 0);
+                        R.selected = id; R.draw();
+                        const jobs = R.chipJobs;
+                        const last = jobs.length ? jobs[jobs.length - 1] : null;
+                        out.push({id: id, mult: m, deg: deg.get(id), n: jobs.length,
+                                  lastText: last ? last.text : null, lastRight: last ? !!last.right : false});
+                    }
+                }
+                R.selected = null; R.draw();
+                return out;
+            }""", [1.3, 3, 8])
+            collapsed = [p for p in probes if p["n"] > chip_max]
+            print("    hub probes: %d combos, %d collapsed to +k (chip_max=%s)"
+                  % (len(probes), len(collapsed), chip_max))
+            for p in probes[:6]:
+                print("      deg=%3d mult=%-4s -> chips=%2d last=%r"
+                      % (p["deg"], p["mult"], p["n"], p["lastText"]))
+            check("chip list never exceeds CHIP_MAX+1",
+                  all(p["n"] <= chip_max + 1 for p in probes),
+                  str(max(p["n"] for p in probes)))
+            check("overflow collapses into exactly one right-anchored +k chip",
+                  all((p["n"] > chip_max) == p["lastRight"] for p in probes) and
+                  all(p["lastText"].startswith("+") and p["lastText"][1:].isdigit()
+                      for p in probes if p["n"] > chip_max),
+                  str(collapsed[:2]))
+            if not collapsed:
+                warns.append("no hub probe produced more than CHIP_MAX off-screen targets -> +k chip untested")
+
+            # (c) 侧栏边行点击：fitPair 一次 tween 把链接两端框进视口
+            page.evaluate("""(sel) => {
+                const R = window.KG.renderer;
+                R.selected = null;
+                R.focusOn(sel, 1.25, 0);
+                R.selected = sel; R.draw();
+            }""", SEL_ID)
+            page.wait_for_timeout(200)
+            pt = page.evaluate("""(sel) => {
+                const R = window.KG.renderer;
+                const n = R.byId.get(sel);
+                const cs = R.centerScreen();
+                const cv = document.getElementById('cv').getBoundingClientRect();
+                const offs = [[0, 0]];
+                for (let f = 0.2; f <= 0.95; f += 0.15)
+                    for (let t = 0; t < 6.28; t += Math.PI / 6) offs.push([Math.cos(t) * f, Math.sin(t) * f]);
+                for (const o of offs) {
+                    const x = cs[0] + o[0] * n._sr, y = cs[1] + o[1] * n._sr;
+                    const h = R.hitTest(x, y);
+                    if (h && h.id === sel) return {x: cv.left + x, y: cv.top + y};
+                }
+                return null;
+            }""", SEL_ID)
+            if not pt:
+                warns.append("no click point resolves to the fixture node -> fitPair test skipped")
+                print("    !! no click point; skipping")
+            else:
+                page.mouse.click(pt["x"], pt["y"])
+                page.wait_for_timeout(600)
+                check("real click selects the fixture node",
+                      page.evaluate(STATE)["selected"] == SEL_ID)
+                row = page.evaluate("""(ids) => {
+                    const lis = [...document.querySelectorAll('#sidebar li')];
+                    const li = lis.find(l => l.dataset.self === ids[0] && l.dataset.target === ids[1]);
+                    if (!li) return {found: false, rows: lis.length};
+                    li.click();
+                    return {found: true, rows: lis.length};
+                }""", [SEL_ID, TGT_ID])
+                print("    sidebar edge rows=%d, fixture row found=%s" % (row["rows"], row["found"]))
+                check("sidebar lists the fixture edge as a clickable row", row["found"], str(row["rows"]))
+                page.wait_for_timeout(900)
+                fit = page.evaluate("""(ids) => {
+                    const R = window.KG.renderer;
+                    const cam = R.camera, z = cam.zoom;
+                    const [W, H] = R.size();
+                    const box = (id) => {
+                        const n = R.byId.get(id);
+                        const sx = n.x * z + cam.panX, sy = n.y * z + cam.panY, sr = n._r * z;
+                        return [sx - sr, sy - sr, sx + sr, sy + sr];
+                    };
+                    const inside = (q) => q[0] >= 0 && q[2] <= W && q[1] >= 0 && q[3] <= H - 46;
+                    const st = window.KG.state();
+                    return {selected: st.selected, focusEdges: st.focusEdges, marks: st.marks,
+                            okA: inside(box(ids[0])), okB: inside(box(ids[1]))};
+                }""", [SEL_ID, TGT_ID])
+                print("    ", json.dumps(fit, ensure_ascii=False))
+                check("clicking the edge row selects the link target",
+                      fit["selected"] == TGT_ID, str(fit["selected"]))
+                check("fitPair frames both link ends inside the viewport", fit["okA"] and fit["okB"])
+                check("the framed pair still draws its focus edge + markers",
+                      fit["focusEdges"] >= 1 and fit["marks"] > 0,
+                      "focusEdges=%s marks=%s" % (fit["focusEdges"], fit["marks"]))
+                shot("13_fitpair" + SUF)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+            page.evaluate("() => window.KG.renderer.resetView()")
+            page.wait_for_timeout(900)
+
+    MODE_TAG = ""
+    page.select_option("#edgemode", "raw")
+    page.wait_for_timeout(400)
 
     print("\n=== 8. search ===")
     page.fill("#search", "微分方程")

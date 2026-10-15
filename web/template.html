@@ -162,6 +162,10 @@
     <option value="all">标签：全部显示</option>
     <option value="none">标签：只显示选中</option>
   </select>
+  <select id="edgemode" title="链接线的画法">
+    <option value="raw">连线：逐条链接（不聚合）</option>
+    <option value="agg">连线：按尺度聚合</option>
+  </select>
   <button id="reset" title="回到该层默认视角">重置视角</button>
 </header>
 
@@ -173,12 +177,23 @@
     <h4>学科（顶层目录）</h4>
     <div id="legend-domains"></div>
   </section>
-  <section>
+  <section id="legend-rel-agg" hidden>
     <h4>关系（线宽 = 当前尺度上聚合了多少条原始链接）</h4>
     <div class="row"><span class="sw" style="background:#8B949E"></span>前置：source 是 target 的前置</div>
     <div class="row"><span class="sw" style="background:#4C8DFF"></span>引用：source 引用了 target</div>
     <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
     <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg>链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</div>
+    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</div>
+    <div class="row">缩小到看不清单条链接时，多条链接会<b>合并成一条更粗的线</b>；粗细就是「这一对之间原本有多少条链接」</div>
+  </section>
+  <section id="legend-rel-raw">
+    <h4>关系（每处 [[链接]] 各画一条细线，任何尺度都在）</h4>
+    <div class="row"><span class="sw" style="background:#E6EDF3"></span>近白 = 整篇级链接 [[笔记]]（一条线可能代表了正文里多处这样的链接）</div>
+    <div class="row"><span class="sw" style="background:#4C8DFF"></span>彩色 = 标题级链接 [[笔记#标题]]，颜色按关系类型：蓝=引用 / 灰=前置</div>
+    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg>链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</div>
+    <div class="row"><b>同一对元素之间线的条数 = 关联强度</b>：缩到文件级时两篇笔记之间那一束细线，就是它们互相引用的分量</div>
+    <div class="row">缩放<b>只改线的长度和形状</b>，不改颜色、不改浓淡、不减少条数 —— 链接本来就是从一个标题指向一个标题的，不该因为缩小而消失</div>
     <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</div>
   </section>
   <section>

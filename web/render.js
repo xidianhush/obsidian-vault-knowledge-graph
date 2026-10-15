@@ -19,19 +19,29 @@
  * 屏幕外，继续画只会和更外层的罩子叠成不透明色块，所以接近铺满时平滑退场、
  * 铺满后停画，只留还没铺满的最内层圆当「你在哪个区域里」的界线。
  *
- * ── 用户那个「跨层级链接怎么淡入淡出」的疑惑，答案是两层机制叠加 ──────────
- * 地图软件处理「北京到上海的高铁」在省级图上是两个省会之间一条线、
- * 在市区图上是两个车站之间一条线，用的正是这两层：
+ * ── 链接线怎么跨尺度存在：两种模式，用户在顶栏「连线」下拉里选 ──────────────
  *
- *  1) 层级预聚合（generalization）—— 构建期已算好 aggregates[L]：
- *     任意两个元素之间的关系，在第 L 层表现为「各自在第 L 层的祖先」之间的一条
- *     聚合边，粗细随被合并的原始边数 count 变化。所以跨层级的链接不需要特殊处理，
- *     它在每个尺度上都有一个唯一确定的代表。
- *  2) per-node minzoom —— 就是 Mapbox vector tile 里那个 minzoom 字段。
- *     端点自己决定它什么时候浮现，边的 alpha 直接取两端点 alpha 的最小值。
+ * ▸ edgeMode = 'agg' —— 层级预聚合（generalization）。地图软件处理「北京到上海的
+ *   高铁」那套：省级图上是两个省会之间一条线，市区图上是两个车站之间一条线。
+ *   构建期已算好 aggregates[L]：任意两个元素之间的关系在第 L 层表现为「各自在第
+ *   L 层的祖先」之间的一条聚合边，粗细随被合并的原始边数 count 变化；再叠上
+ *   per-node minzoom（Mapbox vector tile 里那个字段）—— 端点自己决定它什么时候
+ *   浮现，边的 alpha 直接取两端点 alpha 的最小值。于是「这条边现在画在哪两个点
+ *   之间」由聚合决定，「它现在该不该出现、多透明」由 minzoom 决定，边本身不做
+ *   独立的淡入淡出。
  *
- * 于是「这条边现在画在哪两个点之间」由 (1) 决定，「它现在该不该出现、多透明」
- * 由 (2) 决定。边本身不做独立的淡入淡出 —— 那是它两端点的事。
+ * ▸ edgeMode = 'raw'（默认）—— 逐条链接，不聚合。链接本来就是从一个标题指向一个
+ *   标题的，那条线在任何尺度上都该在。所以这里每条原始边各画一条细线，两端各自
+ *   锚到「当前尺度上它在屏的代表」，颜色与不透明度恒定，缩放只改线的长度和形状
+ *   （落在同一对代表之间的多条线沿法向扇形展开）。于是同一对元素之间线的**条数**
+ *   就是关联强度：放大时看得清单条链接的箭头，缩小时「LTI analysis → Calculus」
+ *   之间那一束细线比任何一根粗线都更能说明这两篇笔记有多纠缠。近白色的线是
+ *   整篇级的 [[笔记]] 链接，彩色的线是 [[笔记#标题]] 链接。
+ *
+ * 两种模式共用同一套端点标记、焦点补画（drawFocusEdges）与屏外 chip 机制，区别
+ * 只在「挑哪些边、给什么 alpha、线宽怎么算」—— 分流点见 drawEdges 的第一行。
+ * 焦点/悬停对无关连线的压暗两种模式都保留：那是「我选中的是什么」的语义，与缩放
+ * 无关。
  */
 
 (function () {
@@ -139,16 +149,29 @@
 
     var EDGE_RGB = {};
     Object.keys(THEME.edges || {}).forEach(function (k) { EDGE_RGB[k] = hexToRgb(THEME.edges[k]); });
-    // 端点标记的颜色表：边色向浅色混合 MARK_TINT。构建期算一次，绘制循环里只查表
-    var MARK_RGB = {};
-    Object.keys(EDGE_RGB).forEach(function (k) {
-      var c = EDGE_RGB[k];
-      MARK_RGB[k] = [
+    // 端点标记的颜色表：边色向浅色混合 MARK_TINT。构建期算一次，绘制循环里只查表。
+    // 必须提亮 —— derives 的边色和 Science and Tech 的节点色同源，同色标记落在同色
+    // 圆边上等于隐形。
+    function tintLight(c) {
+      return [
         Math.round(c[0] + (MARK_LIGHT[0] - c[0]) * MARK_TINT),
         Math.round(c[1] + (MARK_LIGHT[1] - c[1]) * MARK_TINT),
         Math.round(c[2] + (MARK_LIGHT[2] - c[2]) * MARK_TINT)
       ];
-    });
+    }
+    var MARK_RGB = {};
+    Object.keys(EDGE_RGB).forEach(function (k) { MARK_RGB[k] = tintLight(EDGE_RGB[k]); });
+    // raw 模式按**粒度**上色：note→note 的整篇级链接走近白色，heading→heading 仍按
+    // 关系类型走 EDGE_RGB。两者在同一对笔记之间会同屏出现（一篇笔记里多处
+    // [[另一篇#标题]] 链接 + 正文里裸写的 [[另一篇]]），不给整篇级一个独立颜色就
+    // 分不清哪条是哪一级的。
+    var NOTE_EDGE_RGB = hexToRgb(THEME.note_edge || '#E6EDF3');
+    var NOTE_MARK_RGB = tintLight(NOTE_EDGE_RGB);
+    // raw 模式的线宽与平行边展开间距。两个都**刻意不含 zoom 因子**：raw 的契约就是
+    // 「缩放只改长度，不改粗细浓淡」。间距为 0 时同一对代表之间的多条线会完全重叠
+    // 成一条，条数（= 关联强度）这个信息就丢了。
+    var RAW_LW = LOD.raw_edge_width == null ? 1 : LOD.raw_edge_width;
+    var RAW_SPREAD = LOD.raw_edge_spread == null ? 5 : LOD.raw_edge_spread;
     // 邻居环的颜色。跟着 derives 的边色走（= CSS --accent），和白色的选中环同轨但
     // 更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
     // 命中环撞色。
@@ -218,6 +241,13 @@
 
     // 语义边（contains 不画：包含关系已经由半径几何表达，画出来只会糊成一团）
     var SEM = EDGES.filter(function (e) { return e.type !== 'contains'; });
+    // _nl = note-level，两端都是整篇笔记的链接。raw 模式据此上色；drawFocusEdges
+    // 据此分组，否则「LTI→Calculus」和「LTI#CTFT→Calculus#定积分」在文件级会解析到
+    // 同一对锚点、同一种关系类型，被并成一条线，颜色也说不清是哪一级的。
+    SEM.forEach(function (e) {
+      var A = byId.get(e.s), B = byId.get(e.t);
+      e._nl = !!(A && B && A.kind === 'note' && B.kind === 'note');
+    });
     // aggregates[L] 里也混着 contains，同样只留语义边；按 "s\0t\0type" 建索引
     var aggIndex = {};
     Object.keys(AGG).forEach(function (L) {
@@ -252,6 +282,9 @@
     var hoverId = null, selectedId = null;
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
+    // 链接线的画法：'raw' = 逐条链接（默认，不聚合、颜色与透明度不随缩放变），
+    // 'agg' = 层级预聚合。由 app.js 从 localStorage 灌进来，setter 负责 invalidate。
+    var edgeMode = 'raw';
     var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0, chips: 0,
                   // painted = 真正按 PAINT_MIN 以上不透明度落了笔的节点数。nodes 是「候选
                   // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
@@ -623,6 +656,8 @@
     }
 
     function drawEdges(alpha) {
+      // raw 模式走另一条完全独立的路径：不查 aggregates、不去重、不淡出。
+      if (edgeMode === 'raw') { drawRawEdges(alpha); return; }
       // 每条原始语义边，按两端点「当前浮现的层级」取 min，再去 aggregates[L] 查代表边。
       // 多条原始边可能塌到同一条代表边上 —— 用 Map 去重，顺便把 count 取最大。
       hotNeighbors.clear();
@@ -773,6 +808,140 @@
       ctx.globalAlpha = 1;
     }
 
+    // ── raw 模式：逐条链接，不聚合 ──────────────────────────────────────────
+    // 与 drawEdges 的三处根本区别：
+    //   1) 不查 aggregates[L]。遍历全部 SEM，每条原始边各画一条线，两端各自沿
+    //      parent 链锚到「当前尺度上它在屏的代表」（resolveAnchor）—— 缩到文件级
+    //      时 heading 级的边自动落在两篇笔记的圆心之间，放大后又自动回到两个标题
+    //      之间。同一条链接在任何尺度上都有线，只是端点换了代表。
+    //   2) alpha 恒为 1。不乘端点淡入进度、不乘「count < WEAK 打 45 折」的弱边
+    //      折扣 —— 那两项都随 zoom 变，正是这里要去掉的东西。
+    //   3) 线宽恒为 RAW_LW。关联强度改由「同一对代表之间有几条线」表达：平行边
+    //      沿法向扇形展开 RAW_SPREAD px，条数越多那一束越宽。
+    // 焦点/悬停的压暗（FOCUS_DIM / HOVER_DIM）保留，理由见文件头注释。
+    function drawRawEdges(alpha) {
+      hotNeighbors.clear();
+      stats.focusEdges = 0;
+      markJobs.length = 0;
+      chipJobs.length = 0;
+      stats.chips = 0;
+      var selN = byId.get(selectedId), hovN = byId.get(hoverId);
+      var droppedFocus = [];
+      // 攒组：键是「无向锚点对 + 关系类型 + 粒度」。必须无向 —— A→B 与 B→A 要分到
+      // 同一束里占据不同侧；各按有向键分组的话两条会完全重叠、看起来只有一条。
+      var groups = new Map();
+      for (var i = 0; i < SEM.length; i++) {
+        var e = SEM[i];
+        var A = byId.get(e.s), B = byId.get(e.t);
+        if (!A || !B) continue;
+        var aA = resolveAnchor(A, alpha), aB = resolveAnchor(B, alpha);
+        var sF = isFocusSide(A, selN), tF = isFocusSide(B, selN);
+        var hs = !!(sF || tF);
+        // 本帧画不出线段的三种情况：有一端在屏外、两端塌到同一个代表上（同一篇笔记
+        // 内部的标题互链在文件级就是这种）。焦点相关的记下来交 drawFocusEdges 补画，
+        // 其余跳过 —— 位置稳定优先，不为凑数硬画。
+        if (!aA.on || !aB.on || aA.node.id === aB.node.id) {
+          if (hs) droppedFocus.push({ e: e, A: A, B: B });
+          continue;
+        }
+        if (sF !== tF) hotNeighbors.add(sF ? aB.node.id : aA.node.id);
+        var aid = aA.node.id, bid = aB.node.id, fwd = aid < bid;
+        var key = (fwd ? aid : bid) + '\u0000' + (fwd ? bid : aid) + '\u0000' + e.type +
+                  (e._nl ? '\u0000n' : '');
+        var g = groups.get(key);
+        if (!g) {
+          g = { type: e.type, nl: !!e._nl, items: [], pA: fwd ? aA : aB, pB: fwd ? aB : aA };
+          groups.set(key, g);
+        }
+        g.items.push({ aA: aA, aB: aB, hs: hs,
+                       hh: !!(isFocusSide(A, hovN) || isFocusSide(B, hovN)) });
+      }
+
+      var drawn = 0;
+      ctx.lineCap = 'round';
+      groups.forEach(function (g) {
+        var n = g.items.length;
+        // 法向按**规范方向**算一次、同组共用，扇形才对称；每条线按序号偏离中线。
+        var pdx = g.pB.sx - g.pA.sx, pdy = g.pB.sy - g.pA.sy;
+        var pl = Math.sqrt(pdx * pdx + pdy * pdy) || 1;
+        var nx = -pdy / pl, ny = pdx / pl;
+        var rgb = g.nl ? NOTE_EDGE_RGB : (EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255]);
+        var mrgb = g.nl ? NOTE_MARK_RGB : (MARK_RGB[g.type] || MARK_RGB.derives || rgb);
+        for (var k = 0; k < n; k++) {
+          var it = g.items[k];
+          var hot = selN ? it.hs : it.hh;
+          var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
+          if (it.hs) stats.focusEdges++;
+          var off = n === 1 ? 0 : (k - (n - 1) / 2) * RAW_SPREAD;
+          if (drawRawSegment(it.aA, it.aB, nx * off, ny * off, dim,
+                             hot ? RAW_LW + 0.8 : RAW_LW, rgb, mrgb, g.type)) drawn++;
+        }
+      });
+      ctx.globalAlpha = 1;
+      // 与 agg 模式同语义：edges 是主循环落笔的线数（焦点补画的线只进 focusEdges），
+      // focusNeighbors 要等补画往 hotNeighbors 里加完再计。
+      stats.edges = drawn;
+      if (selN && droppedFocus.length) drawFocusEdges(droppedFocus, alpha);
+      stats.focusNeighbors = hotNeighbors.size;
+    }
+
+    // raw 模式的一条线段。几何照抄 drawEdges 的截断/弯边/标记规则，区别是 alpha 与
+    // 线宽都由调用方给死（不随缩放变），控制点偏移 (ox, oy) 由扇形展开算好传进来。
+    // 返回是否真的落了笔 —— 两圆贴死时屏幕上没有可见长度，硬画会得到一条方向反掉的
+    // 短线段，比不画更乱。
+    function drawRawSegment(aA, aB, ox, oy, dim, lw, rgb, mrgb, type) {
+      var x1 = aA.sx, y1 = aA.sy, x2 = aB.sx, y2 = aB.sy;
+      var dx = x2 - x1, dy = y2 - y1;
+      var bent = !!(ox || oy);
+      var mx = (x1 + x2) / 2 + ox, my = (y1 + y2) / 2 + oy;
+      // 退让方向：弯曲边取「圆心 → 控制点」，直边取「圆心 → 圆心」，取错标记会歪
+      var sdx = bent ? mx - x1 : dx, sdy = bent ? my - y1 : dy;
+      var tdx = bent ? x2 - mx : dx, tdy = bent ? y2 - my : dy;
+      var sl = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
+      var tl = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+      sdx /= sl; sdy /= sl; tdx /= tl; tdy /= tl;
+      var r1 = aA.sr + TRIM, r2 = aB.sr + TRIM;
+      var ex1 = x1 + sdx * r1, ey1 = y1 + sdy * r1;
+      var ex2 = x2 - tdx * r2, ey2 = y2 - tdy * r2;
+      var gx = ex2 - ex1, gy = ey2 - ey1;
+      var glen = Math.sqrt(gx * gx + gy * gy);
+      if (glen < 0.5) return false;
+
+      var a = clamp(dim, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = rgba(rgb, 1);
+      ctx.lineWidth = lw;
+      ctx.setLineDash(type === 'contrast' ? [5, 4] : []);
+      ctx.beginPath();
+      ctx.moveTo(ex1, ey1);
+      if (bent) ctx.quadraticCurveTo(mx, my, ex2, ey2);
+      else ctx.lineTo(ex2, ey2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      // 短于 MARK_MIN 就不画标记：密集簇里几十个小箭头糊成噪点，比没有更难读。
+      if (glen < MARK_MIN) return true;
+      // 冷边的 alpha 就是 dim（焦点模式 0.07 / 悬停模式 0.75），过不了 0.1 的门槛，
+      // 于是被压暗的无关边不会冒出标记来添乱 —— 与 agg 模式同一套取舍。
+      if (a < 0.1) return true;
+      var dot = clamp(1.6 + lw * 0.5, 2, 4);
+      var s = clamp(5 + lw * 1.6, 7, 14);
+      // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml 的
+      // 字段说明），两端都只画点。id 是标记**附着的节点**，这里填锚点代表而不是原始
+      // 端点 —— 自动化验证量的是屏幕上那个圆的几何。
+      if (type === 'derives' || type === 'prerequisite') {
+        markJobs.push({ k: 1, x: ex2, y: ey2, ux: tdx, uy: tdy, id: aB.node.id,
+                        s: s, c: mrgb, a: a });
+      } else {
+        markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id,
+                        s: dot, c: mrgb, a: a });
+      }
+      markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id,
+                      s: dot, c: mrgb, a: a });
+      return true;
+    }
+
     // 端点标记落笔。单独一趟，排在 drawNodes 之后（理由见 markJobs 的声明处），
     // 排在 drawEmphasis 之前 —— 让选中白环 / 邻居蓝环仍然压过标记，延续
     // 「哪个是我选的」永远一目了然的优先级。
@@ -860,16 +1029,23 @@
     // 彼此不合并（各挂各的 chip）。
     function drawFocusEdges(dropped, alpha) {
       var selN = byId.get(selectedId);
+      // raw 模式下补画线也要遵守「透明度不随缩放变」：alpha.get() 拿到的是端点淡入
+      // 进度（zoom 的函数），所以整个 raw 分支不读它。
+      var raw = edgeMode === 'raw';
       var groups = new Map();
       for (var i = 0; i < dropped.length; i++) {
         var d = dropped[i];
         var aA = resolveAnchor(d.A, alpha), aB = resolveAnchor(d.B, alpha);
         var kA = aA.on ? aA.node.id : ' ' + d.A.id;
         var kB = aB.on ? aB.node.id : ' ' + d.B.id;
-        var key = kA + '\u0000' + kB + '\u0000' + d.e.type;
+        // 粒度后缀只在 raw 模式下加，免得扰动 agg 模式既有的分组行为。必要性：
+        // note 级边「LTI→Calculus」和 heading 级边「LTI#CTFT→Calculus#定积分」在
+        // 文件级会解析到同一对锚点、同为 derives，不加后缀就被并成一条。
+        var nl = !!(raw && d.e._nl);
+        var key = kA + '\u0000' + kB + '\u0000' + d.e.type + (nl ? '\u0000n' : '');
         var g = groups.get(key);
         if (!g) {
-          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id };
+          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id, nl: nl };
           groups.set(key, g);
         }
         g.count += 1;
@@ -884,13 +1060,15 @@
         }
         if (!g.aA.on && !g.aB.on) return;
         if (g.aA.on && g.aB.on && g.aA.node.id === g.aB.node.id) return;
-        var rgb = EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255];
-        var mrgb = MARK_RGB[g.type] || MARK_RGB.derives || rgb;
-        var lw = Math.min(4, 0.6 + 1.8 * Math.log(1 + g.count) / Math.LN2) + 0.8;
+        var rgb = g.nl ? NOTE_EDGE_RGB : (EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255]);
+        var mrgb = g.nl ? NOTE_MARK_RGB : (MARK_RGB[g.type] || MARK_RGB.derives || rgb);
+        // raw 不按 count 加粗（强度改由「有几条线」表达），线宽恒为 RAW_LW + 0.8
+        var lw = raw ? RAW_LW + 0.8
+                     : Math.min(4, 0.6 + 1.8 * Math.log(1 + g.count) / Math.LN2) + 0.8;
         var dot = clamp(1.6 + lw * 0.5, 2, 4);
         if (g.aA.on && g.aB.on) {
-          var ea = clamp(Math.min(alpha.get(g.aA.node.id), alpha.get(g.aB.node.id)) *
-                         (g.count >= WEAK ? 1 : 0.45), 0, 1);
+          var ea = raw ? 1 : clamp(Math.min(alpha.get(g.aA.node.id), alpha.get(g.aB.node.id)) *
+                                   (g.count >= WEAK ? 1 : 0.45), 0, 1);
           drawFocusSegment(g.aA, g.aB, ea, lw, rgb, mrgb, g.type, dot);
           return;
         }
@@ -912,7 +1090,7 @@
         if (!isFinite(tBest) || tBest <= 0) return;
         var px = S.sx + ux * tBest, py = S.sy + uy * tBest;
         var rS = S.sr + TRIM;
-        var ea2 = clamp(alpha.get(S.node.id) * (g.count >= WEAK ? 1 : 0.45), 0, 1);
+        var ea2 = raw ? 1 : clamp(alpha.get(S.node.id) * (g.count >= WEAK ? 1 : 0.45), 0, 1);
         var ma = Math.max(ea2, 0.75);
         var as = clamp(5 + lw * 1.6, 7, 14);
         if (tBest - rS >= 0.5) {
@@ -1424,6 +1602,10 @@
       set matchSet(v) { matchSet = v; invalidate(); },
       get labelMode() { return labelMode; },
       set labelMode(v) { labelMode = v; invalidate(); },
+      // 'raw'（逐条链接，默认）| 'agg'（层级预聚合），两种画法的取舍见文件头注释。
+      // 未知值一律退回 raw。
+      get edgeMode() { return edgeMode; },
+      set edgeMode(v) { edgeMode = v === 'agg' ? 'agg' : 'raw'; invalidate(); },
       centerScreen: function () { return [W / 2, (H - FOOTER_H) / 2]; },
       size: function () { return [W, H]; }
     };

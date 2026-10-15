@@ -3,7 +3,8 @@
  * 分工：web/render.js 负责「画什么、怎么淡入淡出、怎么响应滚轮/拖拽」，
  * 本文件只负责 DOM 侧的一切 —— 顶栏、侧栏、搜索、过滤、图例、键盘快捷键。
  * 两者通过 createRenderer 的 hooks（onHover / onSelect / onCamera / onFrame）
- * 与 api（selected / filterSet / matchSet / labelMode / focusOn / zoomToDepth）通信。
+ * 与 api（selected / filterSet / matchSet / labelMode / edgeMode / focusOn /
+ * zoomToDepth）通信。
  *
  * 设计要点：
  *  1) zoom 是唯一真源，层级由 zoom 连续派生（R.enterAt(zoom)）。换层从不反向改
@@ -69,6 +70,23 @@
   let filterMastery = 'all';
   let searchQ = '';
   let labelMode = 'auto';      // 'auto' | 'on' | 'off'，与渲染器同词汇
+  let edgeMode = 'raw';        // 'raw'（逐条链接，不随缩放聚合）| 'agg'（按尺度聚合）
+
+  // 用户选的连线模式要记住：这份 HTML 是 file:// 直接打开的，Chrome 下
+  // localStorage 可能抛 SecurityError，所以两个方向都整段兜住，失败就退回默认值。
+  function readStored(key, fallback) {
+    try {
+      const v = window.localStorage.getItem(key);
+      return v == null ? fallback : v;
+    } catch (err) { return fallback; }
+  }
+
+  function writeStored(key, value) {
+    try { window.localStorage.setItem(key, value); } catch (err) { /* 存不下就算了 */ }
+  }
+
+  const storedEdgeMode = readStored('kg.edgeMode', null);
+  if (storedEdgeMode === 'raw' || storedEdgeMode === 'agg') edgeMode = storedEdgeMode;
 
   function toast(msg) {
     toastEl.textContent = msg;
@@ -179,6 +197,16 @@
       row.appendChild(label);
       box.appendChild(row);
     });
+  }
+
+  // 两套「关系」图例互斥：聚合模式下线宽代表合并了多少条原始链接，逐条模式下
+  // 线宽是恒定的、条数本身才代表强度 —— 说明文字必须跟着模式换，否则会误导。
+  function applyEdgeLegend() {
+    const raw = edgeMode !== 'agg';
+    const rawBox = $('legend-rel-raw');
+    const aggBox = $('legend-rel-agg');
+    if (rawBox) rawBox.hidden = !raw;
+    if (aggBox) aggBox.hidden = raw;
   }
 
   function buildFilters() {
@@ -540,11 +568,21 @@
     labelMode = v === 'all' ? 'on' : v === 'none' ? 'off' : 'auto';
     R.labelMode = labelMode;
   });
+  $('edgemode').addEventListener('change', (e) => {
+    edgeMode = e.target.value === 'agg' ? 'agg' : 'raw';
+    R.edgeMode = edgeMode;
+    writeStored('kg.edgeMode', edgeMode);
+    applyEdgeLegend();
+  });
 
   // ── 启动 ──────────────────────────────────────────────────────────────
   $('subtitle').textContent = META.note_count + ' 篇笔记 · ' + META.heading_total + ' 个标题';
+  // 先把记住的连线模式灌进渲染器和下拉框，再建图例 —— 顺序反了会闪一下错的图例。
+  R.edgeMode = edgeMode;
+  $('edgemode').value = edgeMode;
   buildPills();
   buildLegend();
+  applyEdgeLegend();
   buildFilters();
   updateHud();
 
@@ -585,6 +623,9 @@
       hovered: R.hover,
       search: searchQ,
       labelMode: labelMode,
+      // 连线模式报的是渲染器的真值（而不是 app.js 自己的副本）：调试/自动化时
+      // 可以直接改 window.KG.renderer.edgeMode，读数必须跟着变。
+      edgeMode: R.edgeMode,
       filterSet: R.filterSet ? R.filterSet.size : null,
       camera: { zoom: R.camera.zoom, panX: R.camera.panX, panY: R.camera.panY },
     }),

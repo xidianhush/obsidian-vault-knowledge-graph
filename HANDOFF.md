@@ -14,7 +14,7 @@
 见 §4 坑 21/22、§5 调参表、§8 回归基准）已落地并提交（第12步）。
 **标签字号绑屏幕半径 + 淡入淡出平滑**（见 §4 坑 23、§5 调参表）已落地并提交（第13步）。
 数据侧（`build.py verify`）与浏览器侧
-（`browser_check.py`，108 项断言）自动校验全绿，截图人眼复看过。
+（`browser_check.py`，156 项断言）自动校验全绿，截图人眼复看过。
 剩下的都是有意的待办（`annotations.yaml` 还是空的、候选边还没审核）。
 
 **紧跟其后是「公开范围统一成一份真源」这一轮**（见 §1「范围真源」、§2、§4 坑 26–30、§5）：
@@ -75,7 +75,7 @@ python build.py build        # 不出 --scope 时 = private：生成 dist/knowle
                              #   不是固定不变量）
 python build.py build --scope all    # 两份都建（public → dist/knowledge-graph.public.html，8452 KB）
 python build.py verify       # 数据侧自动校验，应全绿（--scope private 与 --scope public 都要绿）
-python browser_check.py      # 浏览器侧 108 项断言 + 截图，应全绿（默认查 private 那份 HTML；
+python browser_check.py      # 浏览器侧 156 项断言 + 截图，应全绿（默认查 private 那份 HTML；
                              #   想看 public 那份：KG_HTML=knowledge-graph.public.html …）
 python build.py watch        # 开发时挂上，改笔记/配置/范围定义自动重建
 ```
@@ -168,9 +168,9 @@ knowledge-graph/
 │                          ⚠️ **公开范围不在这里**，去 vault 的 quartz-setup/public-scope.yaml 改
 ├── build.py             CLI：scan | suggest | build | verify | watch | scope（都吃 --scope/-s）（380 行）
 ├── verify.py            数据侧自动校验（断言式，无测试框架；含 scope 范围一致性断言）（483 行）
-├── browser_check.py     浏览器侧自动回归：108 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（1110 行）
+├── browser_check.py     浏览器侧自动回归：156 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（1346 行）
 ├── sync-graph.ps1       计划任务包装：防重入 lock + python 检查 + UTF-8 + 日志裁剪 400 行；建本地的两份（`build --scope all`）（49 行）
-├── kg/config.py         读 public-scope.yaml、解析各 scope、配置校验（中文报错） （325 行）
+├── kg/config.py         读 public-scope.yaml、解析各 scope、配置校验（中文报错） （336 行）
 ├── kg/scan.py           白名单 glob 扫描 + 落地名（remap）前缀重写               （118 行）
 ├── kg/parse.py          frontmatter / 标题树（跳过代码块）/ wiki 链接 / 摘要     （186 行）
 ├── kg/graph.py          层级树、语义边、按层聚合边、标题级链接、重映射路径的别名索引（476 行）
@@ -179,9 +179,11 @@ knowledge-graph/
 │                        ↑ 开头 docstring 是布局的权威叙述，改布局前先读它
 ├── kg/ioutils.py        stdout UTF-8（`setup_stdout()`）                        （18 行）
 ├── kg/emit.py           输出 graph.json 与自包含单文件 HTML                      （66 行）
-├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（211 行）
-├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定（含方向键/Home）、window.KG（588 行）
-├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、聚合边、端点标记、屏外 chip、fitPair、拾取、标签竞争、键盘平移 `panBy`/`panStep`（1402 行）
+├── web/template.html    骨架 + CSS（顶栏/侧栏/画布 + 右下角绝对定位的 `#footer`）（226 行）
+├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定（含方向键/Home）、window.KG（633 行）
+├── web/render.js        Canvas2D 渲染器：相机、五趟绘制、两条画边路径（`drawRawEdges` 逐条链接 /
+│                        `drawEdges` 按尺度聚合，顶栏下拉框运行时可切）、端点标记、屏外 chip、
+│                        fitPair、拾取、标签竞争、键盘平移 `panBy`/`panStep`（1622 行）
 ├── annotations.yaml     用户手工标注（权重/掌握度/别名/手工边）—— **目前是空的**
 ├── candidates.yaml      候选边（待审核）
 ├── sync-graph.log/.lock 运行时产物，gitignore
@@ -317,15 +319,15 @@ Medical and Health                  44.56     ← zMin 由它决定
 | 端点标记（home） | marks 34 / edges 23 | 箭头 17 + 源点 17；每个标记到所附圆边的间隙恒为 2px（= `edge_trim_clearance`），落在圆内 0 个 |
 | 端点标记（焦点模式） | shownEdges 23 / focusEdges 18 / focusNeighbors 10 / marks 26 | 冷边（压到 7%）不产生可见标记 |
 | 端点标记（zoom 阶梯逐层，depth 6 是其中一档） | zoom 7.4880 / shownEdges 2 / marks 2 | 2 < 2×2，短边被 `edge_marker_min_len` 挡掉；每层都验 marks ≤ 2×画出的边数 |
-| 屏外焦点边（深缩放选中 fixture） | focusEdges 1 / chips 1 | 线止于视口边、挂朝外箭头 + 选中圆边源点；chip 文 = 屏外目标标题截 18 字（`kg_11_chip.png`） |
-| 侧栏边行点击 | fitPair 一次 tween 框住两端 | 框住后 selected 切到对端、focusEdges 1 且 marks 2，连接箭头直接可见（`kg_13_fitpair.png`） |
+| 屏外焦点边（深缩放选中 fixture） | focusEdges 1 / chips 1 | 线止于视口边、挂朝外箭头 + 选中圆边源点；chip 文 = 屏外目标标题截 18 字（`kg_11_chip.png`）。这条 fixture 两种连线模式读数相同（raw / agg 各跑一遍，都是 1 / 1） |
+| 侧栏边行点击 | fitPair 一次 tween 框住两端 | 框住后 selected 切到对端、focusEdges 1 且 marks 2，连接箭头直接可见（`kg_13_fitpair_agg.png`）。这是 **agg 读数**；同一对 fixture 在 raw 下是 **focusEdges 4 / marks 8**（`kg_13_fitpair_raw.png`，四条细线各有各的箭头），正好是「细线条数 = 关联强度」的现场证据 |
 | chip 上限 | 18 组缩放×选中组合 chips ≤ CHIP_MAX+1 | 本轮探针最多单帧 1 枚 chip（max 读到 3）、0 组触发 `+k` 折叠（warn 条件跳过，非失败） |
 | 缩放地标：往下滚过地板（2b） | 29 格后 zoom 0.0168 / shownNodes 0 | 要越过 `zMin` 10 倍以上才真的整屏都空（世界半径 1000 的那个根是最后消失的）；空视口**不是死黑屏** —— 兜底提示确实落笔（中心带非背景像素 2329）。public 那份只需 19 格（它的 `zMin` 更低） |
 | 缩放地标：放到 maxzoom 停画（3c） | 空于 z=472.2（1024× home、**≈6.6× `zMax`**） | 放大侧也会空 —— 圆的屏幕半径 ≥ `farCornerDist` 就停画填充，**这条规则本来就有**，只是以前被 clamp 挡在门外；提示照画，`Home` 精确回到 `zHome` 0.461160。public 那份**更晚**（实测约 **26× `zMax`**）：空在哪一档取决于 payload 形状，别当常数（这一条以前写反过，说 public 更早、0.4× —— 错的）。⚠️ break 条件读的是 **`stats.painted == 0`**，**不是** `stats.nodes == 0` —— 公开那份在极端缩放下永远剩 1 个候选圆，按候选集判就永远等不到「空」（见 §4 坑 33） |
 | 空白画布兜底（3d） | 9 档缩放 × 4 种平移 = **36 组**，空白且无提示 **0 组** | 整画布探针 `CANVAS_LIT`（数遍全屏与背景色不同的像素）。修「画布全黑却没有提示」那个 bug 之前，它在 public 上能扫出违规组（z ≥ 5000 时 0 个非背景像素而兜底不画），修完 0 组。⚠️ 收尾用**瞬时**相机归位（`setZoom(zHome)` + 居中 + `draw()`），**不能**调 `resetView()` —— 那是 364ms 的 tween，下一段的 LOD 契约会在相机还在飞时取样 |
 | 方向键平移（5b） | ArrowRight panX 720.0 → 900.0（= `panStep` 180.0）、ArrowDown 106.75、Shift+ArrowRight 720.0（= 4×） | 缩放一点不动；选中 Projects 后按两次 ArrowLeft，sel 仍是 Projects、focusEdges 仍 1；再挪回来 `fx 1 → 1`、panX 1620.0 → 1620.0（**平移只动相机，从不改焦点状态**）；搜索框有焦点时方向键不平移；`panBy` 会取消在飞的 tween |
 | console error / pageerror | 0 | |
-| `browser_check.py` | **108 [ok] / 2 warn / 0 FAIL**（private 与 public 两份都是 108） | ALL BROWSER CHECKS PASSED；2 条 warn 都是条件跳过（zoom 天花板处找不到空视口 → bug B 跳过；无 hub 产出超 CHIP_MAX 的屏外目标 → `+k` chip 未实测），不是失败 |
+| `browser_check.py` | **156 [ok] / 3 warn / 0 FAIL**（private 与 public 两份都是 156） | ALL BROWSER CHECKS PASSED；3 条 warn 都是条件跳过，不是失败：1 条是 zoom 天花板处找不到空视口 → bug B 跳过；2 条是无 hub 产出超 CHIP_MAX 的屏外目标 → `+k` chip 未实测 —— 这条现在**按连线模式各触发一次**（raw / agg 各一条），所以从 2 条变成 3 条 |
 
 （这张表是**跑一次就变**的快照：节点数、marks、搜索命中数都随 vault 内容漂移。
 要刷新就重跑 `python browser_check.py`，别把这里的数字当不变量。
@@ -345,7 +347,42 @@ Medical and Health                  44.56     ← zMin 由它决定
 > ⚠️ `browser_check.py` 与 `verify.py` 是**两件事**：上面这两组数字（数据侧 / 浏览器侧）
 > 各自跑各自的；改了 `web/*.js` 必须重建 dist 再跑浏览器侧，否则测的是旧 HTML。
 > 本轮两次都实跑过：`verify --scope private` / `--scope public` 全绿、
-> `browser_check.py` **108 [ok] / 2 warn / 0 FAIL（两份都是 108）**。
+> `browser_check.py` **156 [ok] / 3 warn / 0 FAIL（两份都是 156）**。
+
+#### 1c 段：连线模式切换（`raw` / `agg`）为什么这样断言
+
+**这一节是全文所有「见 §8 的 1c 节说明」的落点。** `browser_check.py` 的 **1c 段**专测顶栏
+那个「连线」下拉框（`web/template.html:165` 的 `#edgemode`），跑在 1b（标签模式）之后、
+焦点 / 端点标记 / 屏外兜底三段之前 —— 后面那三段 **raw / agg 各跑一遍**，断言名带
+`[raw]` / `[agg]` 后缀，跑完把页面留在默认的 `raw`。1c 自己覆盖六件事：
+
+1. `select_option('#edgemode', …)` 之后 `state()` 跟着变（下拉框真的驱动渲染器，不是摆设）；
+   赋一个未知值会归一化回 `raw`（`web/app.js:571-574` 的 `e.target.value === 'agg' ? 'agg' : 'raw'`，
+   以及 `:88-89` 读 localStorage 时只认白名单里的两个值）。
+2. 两套关系图例 `#legend-rel-raw` / `#legend-rel-agg` **互斥显隐**（`web/app.js:205-207`）——
+   用户看到的图例必须跟当前画法对得上，否则「近白 = 整篇级」那套说明会挂在聚合线上。
+3. 选择记进 localStorage 键 **`kg.edgeMode`**，两份 HTML（private / public）共用同一个键，
+   所以在一份里切了模式，另一份打开也是那个模式。
+4. **相机确定性先验**：同一档 `zoomToDepth(L)` 两次落点逐位相同。这条排在比较之前是必须的 ——
+   相机若不确定，两种模式的边数就没有可比性，后面第 5 条判据会变成噪声。
+5. 核心判据：**同一档缩放下 `raw` 画出的边数 ≥ `agg`**（合并只可能减少线数，这是硬不变量）。
+   「严格更多」只要求 **home 或阶梯任一档**成立，**不绑定具体哪一档** —— 那是某张图的形状
+   （实测 private：home 72 vs 25、10 档阶梯全部严格更多；public：home 72 vs 25、9 档更多
+   而最深那档两边都是 0）。
+6. `raw → agg → raw` 往返后边数逐位复原，证明切换不留残余状态（没有「切回来但旧画法还在」）。
+
+两条**别改回去**的判据：
+
++ **绝不断言「raw 任何一档都非 0」**。public 在最深那档 raw 与 agg 同为 0，写成「恒 > 0」会假红。
++ **绝不断言「`shownEdges` 恒定」**。它是视口绑定的，实测 private 的 raw 沿阶梯从 4 剧烈变到 96。
+  用户要的「某一处链接不会因为缩小而消失」不由这两条覆盖，而是由 7d 的 `fitPair` 用例保证
+  （那段两种模式各跑一遍：同一对 fixture agg 是 `focusEdges 1 / marks 2`、raw 是 `focusEdges 4 / marks 8`
+  —— 四条细线各有各的箭头，正是「细线条数 = 关联强度」的现场证据）。
+
+⚠️ 断言基线从 108 涨到 **156** 就是这么来的：1c 自己一节，加上焦点 / 标记 / 屏外兜底三段翻倍。
+以后改这三段，**两种模式都要过**；只跑 raw 就宣布通过等于漏掉一半（`agg` 那半边正是
+「三道门 vs 两道门」差别最大的地方，见 §4 坑 21）。warn 从 2 条变 3 条同理：`+k` chip 那条
+现在按模式各触发一次。
 
 ### 截图人眼验收结论
 
@@ -514,26 +551,46 @@ Medical and Health                  44.56     ← zMin 由它决定
     不是链接边。它现在改成 `setLineDash([1, 4])` 的圆头点线，跟链接边彻底区分开；
     另两处虚线（contrast `[5,4]`、mastery≤3 `[2,2]`）当前**零数据**——contrast 0 条、
     108 篇笔记的 mastery 全是 0，所以永远看不到。
+    上面四条修的是聚合那趟（`drawEdges`）；逐条那趟（`drawRawEdges`，现在的默认，见坑 34）
+    **照抄同一套**：两端同样截断 `lod.edge_trim_clearance`、标记同样用 `MARK_RGB`、同样单独
+    一趟排在 `drawNodes` 之后、同样短于 `lod.edge_marker_min_len` 就不画标记。`drawRawSegment`
+    还多一条：**返回它到底有没有落笔** —— 两圆贴死时屏幕上没有可见长度，硬画只会得到一条
+    方向反掉的短线段，比不画更乱（`stats.edges` 数的是真画出来的条数）。
+    第 ③ 条的两个成因在 raw 下只剩一半：alpha **恒为 1**（不乘端点淡入进度、也不乘「弱边打
+    45 折」），所以不再被压到 0.45；但线宽恒为 `lod.raw_edge_width`（1.0 px），标记尺寸
+    `clamp(5 + lw * 1.6, 7, 14)` 就钉在下限 **7px**（热边 `lw = 1.8` → 7.9px），比 agg 里
+    粗聚合边的大箭头小一号。这是有意的：raw 用**条数**表达关联强度，不用粗细。
 
-21. **「侧栏有这条边、画布却没有线」是三道门叠加 —— 别加「全部显示」开关。**
+21. **「侧栏有这条边、画布却没有线」是几道门叠加 —— 别加「全部显示」开关。**
+    门数**随连线模式变**（模式本身见坑 34）：`agg` 三道、`raw` 两道。
     侧栏入边/出边列表读的是**原始边表**（app.js `edgesOf`），没有尺度概念；画布上这条链接
-    要在当前尺度画出来，得过 `drawEdges` 里的三道门：
+    要在当前尺度画出来，得过 `drawEdges`（`agg`）里的三道门：
     ① **聚合门**：聚合后两端落在**同一个祖先圆**里（`sa === sb`，包含关系已由嵌套圆表达，线不画）；
     ② **聚合索引门**：聚合索引在这一层**没有代表**；
     ③ **在屏门**：任一端点当帧**不在屏上**（`alpha.get(sa)` / `alpha.get(sb)` 取不到——
       `alpha` 只含本帧过了视口裁剪 + 淡入的节点）。
-    用户实测的死区正是三门叠加的三段：home 时 `sa === sb`（两端聚进同一祖先）；中等缩放时
-    选中圆还没淡入、箭头没有附着点；深缩放时目标必在屏外。
+    `drawRawEdges`（`raw`，默认）只剩 ①③，而且两道都更宽松：① 变成「两端锚到**同一个
+    代表圆**」（`aA.node.id === aB.node.id`，同一篇笔记内部的标题互链在文件级就是这种）；
+    ③ 由 `resolveAnchor` 沿 parent 链往上找**任一在屏祖先**当附着点，只有整条链都被平移出
+    视口、或都还没淡入时才失败。② 对它**根本不存在** —— raw 不查 `aggregates[L]`，没有
+    「这一层没有代表」这回事，这正是「链接不该因为缩小而消失」的落点：实测最深那几档
+    agg 直接归零、raw 仍画出几到十几条（逐层数字见坑 34）。
+    用户实测的死区正是三门叠加的三段（**当时只有 `agg`**）：home 时 `sa === sb`（两端聚进
+    同一祖先）；中等缩放时选中圆还没淡入、箭头没有附着点；深缩放时目标必在屏外。
     用户曾提议「选中后不管缩放比，把它自己和它全部子孙元素的出/入边箭头全显示」——驳回，
     理由三条：屏外目标端的箭头**本身不可见**（指向虚空）；粗缩放比下选中圆还没淡入、
     箭头**没有附着点**；子孙元素的全量边在粗尺度是几十上百条线 = 回到最初抱怨的「太乱了」。
-    正确的后路是坑 22 的兜底，而不是放宽三道门。
+    正确的后路是坑 22 的兜底，而不是放宽那几道门。现在 `raw` 已经把 ② 整道拿掉、①③ 也放宽
+    到「找得到任一在屏祖先就画」，死区大幅收窄但**没有归零**（public 最深那档实测 raw 也是
+    0 条 —— 那里确实一个在屏祖先都找不到），够用了，别再动门。
 
 22. **屏外焦点边兜底：视口边箭头 + 名字 chip + 侧栏边行 fitPair。**
     焦点边一端在屏外时：连线**止于视口边缘**，止点挂箭头/圆点指示方向（箭头 = 屏外那一端
     是被指向的，即屏外端 = target；圆点 = 屏外端 = source），另一端的标记照旧附着在屏内圆边；
     止点旁再挂一枚写着**屏外端点名字**的 chip（`chipLabel` 截 18 字 + `…`）。
-    实现要点：`drawEdges` / `drawFocusEdges` 只往 `chipJobs` 排队，真正落笔在 `drawChips`
+    实现要点：`drawEdges` / `drawRawEdges` / `drawFocusEdges` 只往 `chipJobs` 排队（raw 那趟
+    自己产不出 chip —— 画不出的焦点边攒进 `droppedFocus` 交 `drawFocusEdges` 补画），
+    真正落笔在 `drawChips`
     的**屏幕空间**趟（`drawLabels` 之后、最顶层，不参与世界坐标的遮挡关系）；chip 同时最多
     `CHIP_MAX` 枚（读 `lod.focus_offscreen_chips`，缺省 8），超出截断并在右下角补一枚右锚的
     `+k` 折叠 chip（定位避开 `FOOTER_H`）；**两端都在屏外时不画线也不挂 chip**（没有屏内附着点，
@@ -569,7 +626,7 @@ Medical and Health                  44.56     ← zMin 由它决定
     用户把笔记改名成 `LTI analysis.md` 之后路径失配，`have_pair` 为假 →
     整段 7d 被当成「条件跳过」warn 掉，套件依旧 `ALL BROWSER CHECKS PASSED`，
     **但屏外 chip / fitPair 那 12 条断言已经悄悄不再跑了**（`[ok]` 从 84 掉到 72，
-    这是唯一的可见信号；那批的基准是 84，现在的基准是 108，见 §8）。
+    这是唯一的可见信号；那批的基准是 84，现在的基准是 156，见 §8）。
     现在改成按**后缀**解析：在 `R.byId` 里找 id 以
     `/TAIL` 或 `#TAIL` 结尾的节点，再确认两端确实有语义边，解析不出来才 warn。
     教训：**「warn 只允许条件跳过」这条规矩本身不够**，还得盯 `[ok]` 总数有没有掉 ——
@@ -707,40 +764,43 @@ Medical and Health                  44.56     ← zMin 由它决定
 
 32. **`zMin` / `zMax` 是地标，不是墙 —— 别再给滚轮加回 `clamp`。**
     这两个值原来就是 `zoomAt()` 的夹取上下限，现在那里只夹 `ZOOM_HARD_LO = 1e-6` /
-    `ZOOM_HARD_HI = 1e6`（常量在 `web/render.js:129`，夹取在 `zoomAt()`：
-    `web/render.js:335-336`）。那道护栏只负责拦住「任何 bug 把 zoom 推到 0 / Infinity
+    `ZOOM_HARD_HI = 1e6`（常量在 `web/render.js:144`，夹取在 `zoomAt()`：
+    `web/render.js:376-377`）。那道护栏只负责拦住「任何 bug 把 zoom 推到 0 / Infinity
     让画布静默失效」，**不是可用范围**。
     **为什么要放开**：`zMin` / `zMax` 是构图结论（「最小那个顶层学科刚好看得见」
     「最挤的节点舒服淡入」），不是内容边界；夹住的代价是用户「缩到想看的细节就到头了」，
     而越界其实完全可恢复。放开之后缩过头**不是崩**，是画布渐渐清空 + 全空白兜底提示
-    （`web/render.js:532-544`）：`此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角`。
+    （`web/render.js:577-589`）：`此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角`。
     这句措辞是故意两个方向都管用的 —— 老文案只写「向下滚回到更粗的层级」，在**缩得太远**
     那一侧方向是反的（这正是它被改掉的原因）。
-    * **仍然夹着的地方**（工具自己去某个地方，不该跑出地标）：`homeZoom()`（`web/render.js:275`）、
-      `focusOn()`（`:1209`）、`fitPair()`（`:1225-1226`）、`zoomToDepth()`（`:1370` —— 所以顶栏
+    * **仍然夹着的地方**（工具自己去某个地方，不该跑出地标）：`homeZoom()`（`web/render.js:315`）、
+      `focusOn()`（`:1419`）、`fitPair()`（`:1433`）、`zoomToDepth()`（`:1584` —— 所以顶栏
       层级胶囊和 `[` `]` 仍然落在地标内）。`zMin` / `zMax` 本身照旧由 payload 现算
-      （`:240-241`：`zMin = rootNeed × zoom_out_floor`、`zMax = maxMz × zoom_in_ceiling`），
-      并照旧作为 `KG.zMin` / `KG.zMax` 导出（`:1346`）。注意 **HUD 的层级读数与顶栏胶囊不是
-      直接读这两个值的**：它们走 `enterAt(zoom)`（`web/app.js:119`），层级由 zoom 单向派生。
+      （`:275-276`：`zMin = rootNeed × zoom_out_floor`、`zMax = maxMz × zoom_in_ceiling`），
+      并照旧作为 `KG.zMin` / `KG.zMax` 导出（`:1562`）。注意 **HUD 的层级读数与顶栏胶囊不是
+      直接读这两个值的**：它们走 `enterAt(zoom)`（`web/app.js:137`），层级由 zoom 单向派生。
     * **两个方向都会空**。往小滚：圆的屏幕半径掉到 `lod.min_px` 以下，圆一个个淡出，
       默认那份实测**要滚 29 格**才连世界半径 1000 的根也没了（公开那份 19 格，它的 `zMin` 更低）。
-      往大滚：撞上**本来就存在**的 maxzoom 规则（`web/render.js:504`：圆的屏幕半径
-      `>= farCornerDist(cx, cy)` 就停画填充，`farCornerDist` 在 `:553-559`），视口同样会空 ——
+      往大滚：撞上**本来就存在**的 maxzoom 规则（`web/render.js:541-545`：圆的屏幕半径
+      `>= farCornerDist(cx, cy)` 就停画填充，`farCornerDist` 在 `:600`），视口同样会空 ——
       默认那份实测 **6.6–6.9× `zMax`**，公开那份**更晚**（实测约 **26× `zMax`**）。**空在哪一档取决于
       payload 的形状，不是常数**，所以别把「几倍 zMax」「几格滚轮」写成断言，只能写「会空、提示会画、
       能回来」。（这一条以前在文档里写反过：说公开那份更早、0.4× `zMax` —— 那是错的。）
-    * **找回手段三个**：`Home` 键（`web/app.js:521`）、双击空白、顶栏「重置」，三者都走
+    * **找回手段三个**：`Home` 键（`web/app.js:549`）、双击空白、顶栏「重置」，三者都走
       `R.resetView()` 回到 `zHome`。`browser_check.py` 的 3c 段直接断言 `Home` 精确恢复到
       `meta["zHome"]`（容差 1e-6）—— 判据用「恢复到 zHome」而不是「比某个阈值大」，是因为
       小视口下 `homeZoom()` 自己会被夹到 `zMin`，前者才是真契约。
     * **`stats.focusEdges` 是屏幕空间的视觉计数，不是逻辑焦点集合 —— 别把 5b 的断言「收紧」回去。**
-      主绘制趟按视口裁剪圆（`web/render.js:493-494`），被三道门挡下的焦点边再由
-      `drawFocusEdges()` 按「解析到的在屏锚点」分组（`web/render.js:831-834`），
+      （这一条对两种连线模式都成立，语义一致。）
+      主绘制趟按视口裁剪圆（`web/render.js:534-535`），被主绘制趟那几道门挡下的焦点边再由
+      `drawFocusEdges()` 按「解析到的在屏锚点」分组（`web/render.js:1036-1046`；**门数随连线
+      模式变** —— `raw` 两道、`agg` 三道，见坑 21。raw 的分组键还多带一个粒度后缀 `\0n`，
+      agg 那套分组不受影响），
       所以**平移本来就会改变这个数**（实测公开那份 2 → 1；这不是 bug，它数的就是屏幕上的东西）。
       正因如此 5b 段断言的是「挪出去再挪回来，`focusEdges` 与相机逐位相同」，
       **不是**「平移过程中计数不许变」—— 后者必然假红，改成它等于把这条覆盖废掉。
-      同理，方向键平移刻意**不碰** `selectedId` / `hoverId`（`panBy`，`web/render.js:1250-1270`）：
-      鼠标拖拽的抖动会被 `dragMoved > 5` 判成点击（`:1316`），选中就切到光标下的大父圆上、
+      同理，方向键平移刻意**不碰** `selectedId` / `hoverId`（`panBy`，`web/render.js:1470-1476`）：
+      鼠标拖拽的抖动会被 `dragMoved > 5` 判成点击（`:1532`），选中就切到光标下的大父圆上、
       焦点模式把想看的箭头一起滤掉 —— 方向键把「平移」与「点击」解耦，`panStep` 给的步长是
       视口宽的 1/8（`Shift` = 半个视口，≈4×），由视口现算、与 zoom 无关（屏幕空间的距离）。
 
@@ -759,17 +819,17 @@ Medical and Health                  44.56     ← zMin 由它决定
     * **为什么以前撞不上**：滚轮过去被 `zMin` / `zMax` 夹住，zoom 到不了这种极端。放开缩放
       （坑 32）**不是**引入了这个 bug，是把它**暴露**了 —— 死局早就写在那里。
     * **修法三件套**（都在 `web/render.js`）：
-      ① 新常量 **`PAINT_MIN = 0.02`**（`:49`）：「这一笔算不算画出来了」的最低不透明度。
+      ① 新常量 **`PAINT_MIN = 0.02`**（`:59`）：「这一笔算不算画出来了」的最低不透明度。
          低于它的落笔在 8 位画布上合成后与背景完全同值（≈0.2/255，四舍五入成 0），
          肉眼与像素读回都看不见 —— 所以判「空」必须按这个门槛算，不能按「有没有发起绘制调用」。
-      ② 新函数 **`nearDist(sx, sy)`**（`:581-586`，圆心到**内容视口矩形最近点**的距离，圆心在
+      ② 新函数 **`nearDist(sx, sy)`**（`:614-619`，圆心到**内容视口矩形最近点**的距离，圆心在
          视口内则为 0）与既有的 `farCornerDist`（最远角）配对，把「这一笔到底会不会落在画布上」
          变成可判定的几何：**圆盘穿过视口 ⟺ `near < sr`（填充可见）；
          圆环穿过视口 ⟺ `near ≤ sr ≤ far`（界线可见）**。
-      ③ 新计数 **`stats.painted`**：每帧清零（`:526`），只在 `drawWash`（`:606-607`，填充看圆盘、
-         界线看圆环）与 `drawNodes`（`:1030`）里**同时**满足「alpha > `PAINT_MIN`」**且**
-         「几何上真的穿过视口」时才 +1；兜底改成 `if (!stats.painted)`（`:544`）。
-         `KG.state()` 也把它导出成 `painted` 了（`web/app.js:570-577`）。
+      ③ 新计数 **`stats.painted`**：每帧清零（`:559`），只在 `drawWash`（`:639-640`，填充看圆盘、
+         界线看圆环）与 `drawNodes`（`:1208`，函数在 `:1201`）里**同时**满足「alpha > `PAINT_MIN`」**且**
+         「几何上真的穿过视口」时才 +1；兜底改成 `if (!stats.painted)`（`:577`）。
+         `KG.state()` 也把它导出成 `painted` 了（`web/app.js:608-615`）。
     * **`painted` 才是「屏上到底有没有东西」，`shownNodes` 只是候选集大小。** 断言、调试、
       写文档都别再拿 `shownNodes == 0` 当「视口空了」的判据：public 那份在极端缩放下
       `shownNodes` **恒为 1**（就是上面那个幽灵候选圆），拿它当判据的用例永远不会红。
@@ -782,6 +842,49 @@ Medical and Health                  44.56     ← zMin 由它决定
       骗了人）。**别把 3d 的收尾改回 `resetView()`**：那是 364ms 的 tween，而极端 zoom 下每帧要
       栅格化半径上百万像素的圆弧、rAF 被拖住，tween 迟迟走不完 —— 测试要的是确定的起始状态，
       不是动画（§8 基线有实测到的假红）。
+
+34. **画边有两种模式，`raw`（逐条链接）是默认，`agg`（按尺度聚合）是保留的设置项 ——
+    别再假设「边一定随缩放聚合」。**
+    用户的原始要求是：标题→标题的链接在**任何**缩放尺度都在，颜色和浓淡不变，只变**形状**
+    （线宽、标记大小、扇形展开）。`agg` 那条路恰好反着来：缩小到文件级时 heading 级的边被
+    并进一条聚合边、`count` 变成线宽、`count < WEAK` 再打 45% 折扣 —— 链接会**变淡、变少、
+    最后消失**（坑 21 那三道门就是这么来的）。所以现在多了第二条画边路径 `drawRawEdges`
+    （`web/render.js:822`，紧跟前面 `:811-821` 有一段注释写清它与 `drawEdges` 的三处根本
+    区别），`raw` 是默认值（`web/app.js:73`）。
+    * **两个容器之间细线的条数才是关联强度。** `raw` **不查** `aggregates[L]`，每帧遍历全部
+      `SEM`、每条原始边各画一条线；两端各自沿 `parent` 链锚到「此刻在屏的代表圆」
+      （`resolveAnchor`，`web/render.js:975`）。缩到文件级时 heading 级的边自动落在两篇笔记
+      的圆心之间，放大后又自动回到两个标题之间 —— **条数不减，只是端点换了代表**。线宽恒为
+      `lod.raw_edge_width`（1.0 px，不随缩放变），同一束里每条按 `lod.raw_edge_spread`
+      （5 px）沿法向偏离中线排成扇形，束越宽关系越强。分组键是**无向**的
+      `(小 id)\0(大 id)\0type`（`web/render.js:848-850`）：必须无向，A→B 与 B→A 要进同一束
+      占不同侧；按有向键分的话两条完全重叠、看着只有一条。
+    * **笔记级 vs 标题级用颜色区分粒度。** 近白 `theme.note_edge`（`#E6EDF3`）= 整篇级链接
+      `[[笔记]]`，彩色 = 标题级链接 `[[笔记#标题]]`（按关系类型着色）。同一对元素之间的两种
+      粒度**同时画**，靠颜色分辨（`NOTE_EDGE_RGB` / `NOTE_MARK_RGB`，`web/render.js:168-169`；
+      分组键上那个粒度后缀 `\0n` 来自 `e._nl`，**只在 raw 下加**，agg 的分组不受影响）。
+    * **`raw` 下 alpha 恒为 1，焦点/悬停压暗保留。** 不乘端点淡入进度、不乘弱边 45% 折扣
+      （那两项都随 zoom 变，正是这里要去掉的东西）；`FOCUS_DIM` / `HOVER_DIM` 的压暗照旧。
+      补画那趟 `drawFocusEdges` 也跟着分模式：`raw` 时线宽恒为 `RAW_LW + 0.8`、alpha 恒为 1
+      （`web/render.js:1066`、`1070`、`1093`），`agg` 时才按 `count` 加粗打折。
+    * **切换入口与持久化**：顶栏 `<select id="edgemode">`（`web/template.html:165-167`，
+      两个 option `raw` / `agg`），change 时写 `R.edgeMode` 并存 `localStorage` 键
+      `kg.edgeMode`（`web/app.js:572-574`），启动时读回并接线（`:581-582`）。**存了未知值就
+      归一化回 `'raw'`** —— `web/app.js:88-89` 只接受这两个字面量。private / public 两份
+      共用同一个键，所以在一边切了另一边也跟着变。图例也分两套：`#legend-rel-raw`
+      （默认可见）与 `#legend-rel-agg`（`hidden`），由 `applyEdgeLegend()` 按
+      `edgeMode !== 'agg'` 切（`web/app.js:205`）。`KG.state()` 导出 `edgeMode`
+      （`web/app.js:628`），测试就是读它。
+    * **`raw` 是两种模式里更重的那个**（落笔数明显更多）：实测 home 视角 private 那份
+      raw 72 条边 / 116 个端点标记，agg 只有 25 / 36。所以两种画法都留着，**别删 `agg`**。
+      `stats.focusEdges` 这一条两种模式语义相同（坑 32 最后一条）。
+    * **断言纪律**（`browser_check.py` 的 1c 段 + 7b/7c/7d 双轮，见 §8）：硬不变量只有
+      **`raw >= agg`**；「严格更多」只要求在 home 或**某一层**成立，**绝不绑定到具体某层**，
+      也**绝不断言 raw 在任一给定层非零**（public 那份 L=10 两边都是 0 条，绑上去就是假红）。
+      同样**绝不断言 `shownEdges` 跨缩放恒定** —— 它是视口绑定的（private raw 实测从 L=10 的
+      4 条一路到 L=2 的 96 条）。用户真正要的那句保证（「缩小后链接不消失」）由 `fitPair`
+      那条覆盖：同一对笔记 raw 画出 `focusEdges = 4 / marks = 8`，agg 只有
+      `focusEdges = 1 / marks = 2`。
 
 ---
 
@@ -814,7 +917,10 @@ Medical and Health                  44.56     ← zMin 由它决定
 | 浅层标签半粗门槛 | `lod.label_bold_depth`（2） | depth ≤ 此值的标签用 600 半粗。粗细是「类别」信号、字号是「尺度」信号，两者不冲突 |
 | 圆外标签最大宽度 | `lod.label_max_width`（180） | 缩到 `label_font_min` 还超宽就截断加 `…`（完整名字在 tooltip/搜索里）；圆内连下限字号都装不下的长名字自动改挂圆外再受本键收口（§4.23） |
 | 标签压暗是否走平滑版 | `lod.label_smooth_dim`（true） | true = 标签不透明度跟 `fillAlphaOf`（随最先浮现的孩子同步渐变）；false = 回到 `alphaOf` 的硬跳变（越过 `_gate` 时祖先标签从 ~1.0 瞬跳到 `parent_dim`）。**只换落笔浓度**：候选排序仍读 `alpha.get()` |
-| 弱聚合边压暗阈值 | `lod.weak_edge_min_count`（2） | 聚合边 `count` 低于此值时压到 45% 不透明度（关系弱，别抢戏） |
+| 弱聚合边压暗阈值 | `lod.weak_edge_min_count`（2） | 聚合边 `count` 低于此值时压到 45% 不透明度（关系弱，别抢戏）。**只对 `agg` 生效** —— raw 模式 alpha 恒为 1（§4 坑 34） |
+| **raw 模式的连线线宽** | `lod.raw_edge_width`（1.0） | 屏幕像素，**刻意不含任何 zoom 因子**：raw 模式下缩放只改线的长度，粗细、颜色、透明度全部恒定 —— 用户要的就是「同一批线在任何尺度上都在，且看起来是同一批线」。想让整束线更醒目就调大它，**别去改 alpha**。校验要求必须是正数 |
+| **raw 模式平行边的扇形间距** | `lod.raw_edge_spread`（5） | 屏幕像素，二次贝塞尔控制点的偏移量（同组第 k 条偏 `(k-(n-1)/2)×本值`）。**填 0 = 同一对元素之间的多条链接精确重叠成一条线，「线的条数 = 关联强度」这个信号当场读不出来**；校验只拦负数，所以 0 是「合法但自废武功」的值 |
+| **raw 模式整篇级链接的颜色** | `theme.note_edge`（`#E6EDF3`） | 近白 = 笔记→笔记的整篇级链接 `[[笔记]]`，彩色（`theme.edges`）= 标题→标题的 `[[笔记#标题]]`；同一对元素之间两种粒度**同时画**、只靠颜色区分（§4 坑 34）。选近白是因为七个色相已被 `domains` 占满，而 `#4C8DFF` 同时是 `derives` 的边色和 Science and Tech 的节点色，再拿它区分粒度会和域色/关系色双双撞车。端点标记色由它 `tintLight` 派生，不单独配 |
 | 焦点模式无关连线压到多少 | `lod.focus_edge_dim`（0.07） | 选中节点后，与它（含其内部子元素）无关的连线压到此不透明度。**0 = 彻底不画**，1 = 不压暗。默认 7% 是有意留残影：保住「这片区域连得多密」的环境感知（Obsidian graph view 也是淡到约 10% 而非删掉） |
 | 屏外端点名字 chip 最多挂几枚 | `lod.focus_offscreen_chips`（8） | 焦点边一端在屏外时，视口边止点旁挂写屏外端点名的 chip（§4.22）。超出截断、右下角折叠成一枚 `+k`；设 0 = 全部折叠成 `+k`（视口边箭头/圆点照旧） |
 | hover 时连线压到多少 | `lod.hover_edge_dim`（0.75） | 只轻微提亮、不过滤。hover 每帧重算（`evalHover`），相机 tween 时会连续换节点，做强过滤会频闪 |
@@ -849,7 +955,7 @@ Medical and Health                  44.56     ← zMin 由它决定
 `CHIP_MAX` 同模式读 `lod.focus_offscreen_chips`（缺省 8）；折叠的 `+k` chip 右锚在
 `(W-12, H-FOOTER_H-12)`，即右下角、避开 footer 预留带——改 `FOOTER_H` 会连带挪它。
 
-方向键平移**没有常量、也不读配置**：`panStep(fast)`（`web/render.js:1266-1270`）按视口现算 ——
+方向键平移**没有常量、也不读配置**：`panStep(fast)`（`web/render.js:1482-1486`）按视口现算 ——
 一步 = `max(40, W/8)` × `max(40, (H-FOOTER_H)/8)`，`Shift` 时换成半个视口（≈4×）。
 下限 40px 是给极小窗口兜底的，别删。理由见 §4 坑 32。
 
@@ -868,13 +974,14 @@ Python 侧、渲染侧、浏览器回归套件都已适配，并已分别提交�
 —— 新增 6 个 `lod.label_*` 键（字号三键 / bold_depth / max_width / smooth_dim）
 并把 `label_alpha` 从 0.55 降到 0.12，观感不满意可以**全部在 `config.yaml` 里回退**，
 不用碰代码；渲染侧与浏览器回归套件都已适配（`verify` 全绿、`browser_check` 84 [ok] / 0 FAIL
-—— 那一批的基准；现在是 108 [ok] / 0 FAIL，见 §8；截图已人眼复核）。同批还修了回归套件的
+—— 那一批的基准；现在是 156 [ok] / 0 FAIL，见 §8；截图已人眼复核）。同批还修了回归套件的
 fixture：改成按后缀解析，笔记改名不再让 7d 整段静默跳过（§4 坑 24）。已提交（第13步 `b528d2d`）。
 
 **P0 — 已完成（本轮，未提交）**：**修掉「画布全黑却没有任何提示」这个真 bug** ——
 兜底判据从「候选集是否为空」改成 `stats.painted`，新增 `PAINT_MIN` 与 `nearDist`（见 §4 坑 33）；
 同时补上 3d 段「任何缩放 × 任何平移都不许留下无提示的空白」的 36 组整画布探针，
-并订正两条被写错的断言（§8）。断言基线 103 → **108**。
+并订正两条被写错的断言（§8）。断言基线 103 → 108 → **156**（156 是加了「连线模式切换」1c 节、
+并把焦点/标记/屏外兜底三段改成 raw / agg 两种模式各跑一遍之后的数）。
 
 **P1 — 让「掌握度/重要度」真正起作用**
 `annotations.yaml` 是空的，108 篇笔记 `mastery` 全是 0，暗色细边看不出来。
@@ -890,7 +997,8 @@ fixture：改成按后缀解析，笔记改名不再让 7d 整段静默跳过（
 当前 3428 节点（private）、idle rAF 62 fps。没测过上限。可做：临时把范围放宽到全 vault
 （在 `public-scope.yaml` 里给 `Logs`、`Excalidraw` 之类加一条 `scopes: [...]` 就行，
 **不要去改 `config.yaml`**——`include` 这个键已经不存在了）；或造 1 万节点合成数据测深层渲染
-与拾取。已知热点是标签竞争与聚合边重建；拾取现在是线性扫描 `lastDrawn`，规模上去后也要
+与拾取。已知热点是标签竞争与聚合边重建；`raw` 模式落笔更多（home 视角 raw 72 条边 /
+116 个端点标记，agg 只有 25 / 36），是两种画法里更重的那一个；拾取现在是线性扫描 `lastDrawn`，规模上去后也要
 回头看一眼。
 
 **P4 — 语义质量**
@@ -949,7 +1057,7 @@ python build.py build      # private：笔记 108 / 文件夹 35 / 标题 3285 /
 python build.py build --scope all   # 再出一份 public：节点 3346 / 最深层 3437 条边 / HTML 8452 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过（--scope private 与 --scope public 都要绿）
 python build.py scope --scope public   # stdout 必须是一段能 ConvertFrom-Json 的 JSON（§4 坑 27）
-python browser_check.py    # 必须 108 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED（两份都是 108）
+python browser_check.py    # 必须 156 [ok] / 0 FAIL / ALL BROWSER CHECKS PASSED（两份都是 156）
                            # （warn 只允许条件跳过，不允许失败；[ok] 数掉下去
                            #   就说明有用例被跳过了 —— 见 §4 坑 24）
                            # 默认查 private 那份 HTML（dist/knowledge-graph.html）；
@@ -1020,12 +1128,14 @@ KG.renderer.setZoom(KG.zMin); KG.visible()
 #   Esc 后 focusEdges / focusNeighbors 归零，shownEdges 仍 23
 
 # 端点标记基线（7c 小节自动断言，读 KG.renderer.markJobs）：
-#   开扫前必须 `renderer.selected = null` —— `drawFocusEdges` 会另外补画「被三道门挡下的
-#   焦点边」的标记，而比较用的 shownEdges 只算主绘制趟的代表边；带着上一节的选中开扫，
+#   开扫前必须 `renderer.selected = null` —— `drawFocusEdges` 会另外补画「被主绘制趟那几道门挡下的
+#   焦点边」的标记（门数随连线模式变：`raw` 两道、`agg` 三道，见 §4 坑 21），而比较用的 shownEdges 只算主绘制趟的代表边；带着上一节的选中开扫，
 #   就会出现「2 条边 6 个标记」这种假红（本轮实测踩到过）。这一段验的是普通边标记的几何，
 #   与选中无关，所以把选中清掉让输入集干净。
 #   home:    marks 34 = 箭头 17 + 源点 17；每个标记到所附圆边间隙恒为 2px；圆内 0 个
-#   zoom 阶梯（enter[L-1]×1.05 那一档，L=10..1；私有那份本次读数 = 画出的代表边数 / 标记数）：
+#   zoom 阶梯（enter[L-1]×1.05 那一档，L=10..1；私有那份本次读数 = 画出的代表边数 / 标记数；
+#   下面这份是 **`agg` 模式**的读数 —— 连线模式切换落地后这条阶梯 raw / agg 各跑一遍，
+#   断言名带 `[raw]` / `[agg]` 后缀，见 §8 的 1c 节说明）：
 #     L=10 0/0 · L=9 3/2 · L=8 6/8 · **L=7 3/6** · L=6 4/8 · L=5 8/12 ·
 #     L=4 21/32 · L=3 36/42 · L=2 32/46 · L=1 24/36
 #   —— 以前只测 depth 6 一档，那是私有图的形状（公开图在 depth 6 只画得出
@@ -1034,20 +1144,22 @@ KG.renderer.setZoom(KG.zMin); KG.visible()
 #   不变量（⚠️ 两条都别「收紧」回去）：
 #     ① **`marks <= 2*edges` 是硬不变式，`marks < 2*edges` 不是。** 每条画出的代表边可以
 #        两端各挂一个标记（源端圆点 + 目标端箭头），所以「3 条边 6 个标记」完全合法 ——
-#        实测 rung **L=7 就是 3/6**。写成严格小于会在正常数据上假红。
+#        实测 agg 模式 rung **L=7 就是 3/6**（raw 下同档是 12/24）。写成严格小于会在正常数据上假红。
 #     ② `edge_marker_min_len` 守卫是否在生效，单独用「**阶梯上存在某档 marks < 2*edges**」
 #        证明（确实有短边被压掉）。守卫一旦被删，整条阶梯会顶满 2×edges，这条就红。
 #     ③ minGap ≈ maxGap ≈ edge_trim_clearance。
 
 # 屏外兜底基线（7d 小节自动断言，读 KG.renderer.chipJobs）：
+#   ⚠️ 整节 raw / agg 两种模式各跑一遍，断言名带 `[raw]` / `[agg]` 后缀（见 §8 的 1c 节说明）。
 #   深缩放选中 fixture（SEL = 理解傅利叶变换&频谱密度的几何意义，
 #                       TGT = 5.1.2 定积分的定义(本质是求和的极限)）：
-#     focusEdges 1 / chips 1；线止视口边挂朝外箭头 + 选中圆边源点；
-#     chip 文以「5.1.2 定积分的定义」开头（chipLabel 截 18 字）
+#     focusEdges 1 / chips 1（这条 fixture 两种模式读数相同）；线止视口边挂朝外箭头 +
+#     选中圆边源点；chip 文以「5.1.2 定积分的定义」开头（chipLabel 截 18 字）
 #   侧栏出边行点击 → fitPair 一次 tween 框住两端（两个包围盒都在视口内），
-#     且 selected 切到 TGT、focusEdges 1 / marks 2
+#     且 selected 切到 TGT；agg 下 focusEdges 1 / marks 2，raw 下 focusEdges 4 / marks 8
 #   18 组缩放×选中组合：chips ≤ CHIP_MAX+1、0 组触发折叠（+k 分支 warn 条件跳过）
-#   不变量：chip 数 ≤ 当帧屏外端焦点边数；两端屏外的边不产线也不产 chip
+#   不变量（两种模式都成立，别只按 agg 的读数收紧）：
+#     chip 数 ≤ 当帧屏外端焦点边数；两端屏外的边不产线也不产 chip
 ```
 
 改完视觉**必须重新截图并人眼看**：`python browser_check.py` 后 ReadMediaFile `%TEMP%\kg_0*.png`。

@@ -67,8 +67,10 @@ DEFAULTS: dict = {
         "edge_trim_clearance": 2,
         "edge_marker_min_len": 20,
         "edge_marker_tint": 0.55,
+        "raw_edge_width": 1.0,
+        "raw_edge_spread": 5,
     },
-    "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}},
+    "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}, "note_edge": "#E6EDF3"},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
     "candidates_file": "candidates.yaml",
@@ -153,12 +155,19 @@ def _validate(cfg: dict):
             _fail(f"lod.{key} 不能为负（它是屏幕 px；edge_marker_min_len 填 0 = 不做长度守卫）")
     if not isinstance(lod.get("edge_marker_tint"), (int, float)) or not 0 <= lod["edge_marker_tint"] <= 1:
         _fail("lod.edge_marker_tint 必须在 [0, 1] 之间（0 = 端点标记与连线同色，1 = 纯浅灰）")
+    if not isinstance(lod.get("raw_edge_width"), (int, float)) or not lod["raw_edge_width"] > 0:
+        _fail("lod.raw_edge_width 必须是正数（非聚合模式下连线的固定屏幕线宽 px）")
+    if not isinstance(lod.get("raw_edge_spread"), (int, float)) or lod["raw_edge_spread"] < 0:
+        _fail("lod.raw_edge_spread 不能为负（它是屏幕 px；填 0 = 平行边不做扇形展开）")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")
     fallback = cfg["theme"].get("fallback", "#8B949E")
     if not _HEX_RE.match(str(fallback)):
         _fail(f"theme.fallback 颜色格式应为 #RRGGBB，收到 {fallback!r}")
+    note_edge = cfg["theme"].get("note_edge", "#E6EDF3")
+    if not _HEX_RE.match(str(note_edge)):
+        _fail(f"theme.note_edge 颜色格式应为 #RRGGBB，收到 {note_edge!r}")
     for name, color in cfg["theme"].get("edges", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.edges.{name} 颜色格式应为 #RRGGBB，收到 {color!r}")
