@@ -307,10 +307,15 @@ with sync_playwright() as p:
     print("\n=== 1c. edge mode switch: raw (per-link) vs agg (scale-aggregated) ===")
     # 这一节验**模式管线**和「raw 确实不聚合」，不验某张图的形状（文件头的铁律）。
     #
-    # 特别注意：shownEdges 只数「两端锚点都在屏上、且没有塌到同一个代表节点」的边，所以它是
-    # **视口绑定**的，会随缩放剧烈变化（实测私有图 raw 从 L=10 的 4 条一路到 L=2 的 96 条）。
-    # 因此这里绝不断言「条数恒定」—— 那不是用户的契约。用户的契约是「某一处链接不因为缩小
-    # 而消失」，那条由 7d 的 fitPair 断言覆盖（raw/agg 两种模式各跑一遍）。这里只断言三件
+    # 特别注意：shownEdges 的**判定口径随模式变**，两种模式下它都是视口绑定的、会随缩放
+    # 剧烈变化，因此这里绝不断言「条数恒定」—— 那不是用户的契约。
+    #   raw：线段的屏幕 bbox 与内容视口相交即画。端点恒为真实节点自己（rawAnchor），
+    #        既不沿 parent 链上移、也没有「两端塌到同一个代表」这道门；唯一的门是几何的
+    #        （线段短于两端屏幕半径之和时无笔可落，放大立刻恢复）。
+    #   agg：两端锚点都在屏上、且没有塌到同一个代表节点才画（resolveAnchor 会沿 parent
+    #        链上移到当前深度层的代表）。
+    # 用户的契约是「某一处链接不因为缩小而消失」，那条由 7d 的 fitPair 断言覆盖（raw/agg
+    # 两种模式各跑一遍）。这里只断言三件
     # 可以从 payload 推导、与某张图的绝对数字无关的事：
     #   A 两个入口（renderer.edgeMode 赋值 / #edgemode 下拉框）连通，图例与 localStorage 跟着切；
     #   B 同一相机下 raw 画出的线不少于 agg（合并只可能减少线数），并且确实严格更多过；
@@ -994,13 +999,16 @@ with sync_playwright() as p:
             return {marks: jobs.length, checked: checked, inside: inside, arrows: arrows,
                     dots: dots, minGap: Math.round(minGap * 100) / 100,
                     maxGap: Math.round(maxGap * 100) / 100, trim: trim,
-                    minLen: lod.edge_marker_min_len, tint: lod.edge_marker_tint,
+                    minLen: lod.edge_marker_min_len, rawMinLen: lod.raw_marker_min_len,
+                    tint: lod.edge_marker_tint,
                     zoom: Math.round(z * 10000) / 10000};
         }""")
         print("    ", json.dumps(geo, ensure_ascii=False))
-        check("three marker knobs reached META.lod through build.py",
-              geo["trim"] is not None and geo["minLen"] is not None and geo["tint"] is not None,
-              "trim=%s minLen=%s tint=%s" % (geo["trim"], geo["minLen"], geo["tint"]))
+        check("four marker knobs reached META.lod through build.py",
+              geo["trim"] is not None and geo["minLen"] is not None
+              and geo["rawMinLen"] is not None and geo["tint"] is not None,
+              "trim=%s minLen=%s rawMinLen=%s tint=%s"
+              % (geo["trim"], geo["minLen"], geo["rawMinLen"], geo["tint"]))
         check("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
         check("every marker resolves to the node it is attached to",
               geo["checked"] == geo["marks"], "%d of %d" % (geo["checked"], geo["marks"]))
@@ -1023,39 +1031,107 @@ with sync_playwright() as p:
         # 两圆屏幕半径 83+467，截断后只剩 4px），MARK_MIN=20 与 alpha≥0.1 两道门都合理地压掉
         # 了它，marks=0 是数据形状而不是渲染回归（同层私有图有两条边、其中一条 189px，所以有标记）。
         # 改成沿 payload 自己的 zoom 阶梯（enter[L-1]*1.05，正是 zoomToDepth 用的那一档）逐层扫，
-        # 每一层都验「每条边最多两个标记」；有两条以上代表边在屏上的层，再要求「有边带标记、
-        # 也有边被守卫压掉」—— 后者是 MARK_MIN 守卫唯一能被观测到的地方（只有一条边时，
-        # marks 的 0 或 2 都说明不了守卫在不在）。
+        # 每一层都验「每条边最多两个标记」。判「这一档该不该有标记」的依据不是**边数**而是
+        # **边长**：曾经按「≥2 条代表边」筛，private agg L=9 就假红了 —— 那一档两条代表边
+        # 截断后各只有 4.0px，守卫把它们压掉正是该做的事。所以每档都实测「有几条边同时过了
+        # 长度门与 alpha 门」（下面的 long），只对 long>0 的档要求 marks>0。long 只用来判
+        # 「这一档不要求有标记」，**不**拿来做等式断言（理由见下面两处「刻意不断言」的注释）。
+        # 「确实有短边被压掉」仍然是 MARK_MIN 守卫唯一能被观测到的地方
+        # （marks < 2*edges 的那些档）。
         rungs = []
         # 扫之前必须清掉选中：焦点模式会让 drawFocusEdges 另外往 markJobs 里塞标记（它补画的是
-        # 被三道门挡下的焦点边），而下面比较用的 shownEdges 只算主绘制趟的代表边 —— 于是
+        # 被主绘制趟那几道门挡下的焦点边，门数随模式变：agg 三道、raw 只剩线段出屏一道），
+        # 而下面比较用的 shownEdges 只算主绘制趟的代表边 —— 于是
         # 「2 条边却 6 个标记」这种假红就出来了（实测 rung 9）。这一段验的是**普通边标记**的
         # 几何，与选中无关，所以把选中清掉，让输入集干净。不清也行，那就得把 focusEdges 折算
         # 进来，反而更容易错。
         page.evaluate("() => { window.KG.renderer.selected = null; }")
         page.wait_for_timeout(300)
+        # 每一档除了计数，还要量「这一帧真正落笔的代表边，两端截断后各有多长」。
+        # 标记有两道门（MARK_MIN 与 alpha>=0.1），所以 marks=0 未必是回归：可能这一档
+        # 所有代表边都短于 MARK_MIN（实测 private agg L=9：两条代表边截断后各 4.0px，
+        # 被门压掉是对的，「有 >=2 条边就必须有标记」于是假红）。要区分「守卫正常工作」
+        # 和「渲染丢了标记」，就得知道边的长度；而截断公式在 drawEdges / drawRawSegment
+        # 里（圆心距减两端屏幕半径再减 TRIM，弯边还按控制点方向退让 —— **raw 现在恒为
+        # 直线，没有弯边退让**，弯边只存在于 agg 的 drawEdges），在测试里复刻一遍
+        # 正是 7c 上面那几条断言刻意避免的事。改成从 canvas 侧量：包一层 moveTo / lineTo /
+        # quadraticCurveTo，把每条「两点 + round cap」的路径记下来 —— 圆走 arc 不经过
+        # moveTo，端点标记是多段路径，正好都被这个过滤器排掉。
+        # ⚠️ 记到的条数**不保证**与 state().shownEdges 恒等：实测 private L=1 探针多记到 1 条
+        # （53 vs 52）。所以这个探针只做诊断打印（long / longest 两列），不拿来做等式断言。
+        SEGS = """() => {
+            const R = window.KG.renderer;
+            const lod = (window.KG.data.meta || {}).lod || {};
+            // 标记门槛按模式取：raw 用 raw_marker_min_len（默认 6），agg 用
+            // edge_marker_min_len（默认 20）。用错旋钮会让 long 列整列判错。
+            const MM = R.edgeMode === 'raw'
+                ? (lod.raw_marker_min_len == null ? 6 : lod.raw_marker_min_len)
+                : (lod.edge_marker_min_len == null ? 20 : lod.edge_marker_min_len);
+            const proto = CanvasRenderingContext2D.prototype;
+            const om = proto.moveTo, ol = proto.lineTo, oq = proto.quadraticCurveTo;
+            const rec = []; let cur = null;
+            proto.moveTo = function (x, y) {
+                cur = {p: [[x, y]], cap: this.lineCap, a: this.globalAlpha};
+                rec.push(cur); return om.apply(this, arguments);
+            };
+            proto.lineTo = function (x, y) {
+                if (cur) cur.p.push([x, y]); return ol.apply(this, arguments);
+            };
+            proto.quadraticCurveTo = function (cx, cy, x, y) {
+                if (cur) cur.p.push([x, y]); return oq.apply(this, arguments);
+            };
+            try { R.draw(); } finally {
+                proto.moveTo = om; proto.lineTo = ol; proto.quadraticCurveTo = oq;
+            }
+            let long = 0, maxLen = 0, n = 0;
+            for (const r of rec) {
+                if (r.p.length !== 2 || r.cap !== 'round') continue;
+                n++;
+                const dx = r.p[1][0] - r.p[0][0], dy = r.p[1][1] - r.p[0][1];
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > maxLen) maxLen = len;
+                // 两道门与 render.js 同序：长度门在前，alpha 门在后。没有选中/悬停时
+                // 标记用的 alpha 就等于连线自己的 globalAlpha（热边才有 0.75 地板值）。
+                if (len >= MM && r.a >= 0.1) long++;
+            }
+            return {n: n, long: long, minLen: MM,
+                    maxLen: Math.round(maxLen * 100) / 100};
+        }"""
         for L in range(meta["maxDepth"], 0, -1):
             page.evaluate("(L) => window.KG.renderer.zoomToDepth(L)", L)
             page.wait_for_timeout(850)
             s = page.evaluate(STATE)
-            rungs.append((L, s["zoom"], s["shownEdges"], s["marks"]))
-        for L, z, e, m in rungs:
-            print("    rung L=%2d zoom=%8.4f edges=%3d marks=%3d" % (L, z, e, m))
-        deep_rungs = [r for r in rungs if r[2] >= 2]
-        print("    rungs with >=2 drawn edges: %s" % [r[0] for r in deep_rungs])
+            g = page.evaluate(SEGS)
+            rungs.append((L, s["zoom"], s["shownEdges"], s["marks"], g["long"], g["n"], g["maxLen"]))
+        for L, z, e, m, lg, n, mx in rungs:
+            print("    rung L=%2d zoom=%8.4f edges=%3d marks=%3d long=%3d longest=%8.2fpx"
+                  % (L, z, e, m, lg, mx))
+        # 这里刻意**不**断言「探针线段数 == shownEdges」：那不是不变量。弯边走
+        # quadraticCurveTo、被 TRIM 压到零长度的边、以及 focus/ancestor 兜底路径都会让两个
+        # 计数差上一两条（实测 private L=1 差 1 条，public 全档相等 —— 差异随数据形状走）。
+        # 探针的价值在于 long / longest 两列：它们让「这一档 marks=0」可解释（边太短，守卫
+        # 正常工作）而不是靠猜。
+        long_rungs = [r for r in rungs if r[4] > 0]
+        print("    rungs with an edge long enough for markers: %s" % [r[0] for r in long_rungs])
         check("deep rungs still draw markers for the long edges",
-              bool(deep_rungs) and all(m > 0 for _, _, _, m in deep_rungs),
-              "rungs %s" % [(L, e, m) for L, _, e, m in deep_rungs])
+              bool(long_rungs) and all(m > 0 for _, _, _, m, _, _, _ in long_rungs),
+              "rungs %s" % [(L, e, m, lg) for L, _, e, m, lg, _, _ in long_rungs])
         # 硬不变式是 **≤** 2×edges：每条画出的代表边最多落两个标记（源端圆点 + 目标端箭头）。
         # 不能写成严格 `<`：一条边上两个标记本来就是正常的，所以「三条边全长、共 6 个标记」
         # 完全合法（实测 rung L=7 就是 3/6），严格小于会在正常数据上假红。
         check("never more than two markers per drawn edge (hard invariant)",
-              all(m <= 2 * e for _, _, e, m in rungs),
-              "all %s" % [(L, m, 2 * e) for L, _, e, m in rungs])
+              all(m <= 2 * e for _, _, e, m, _, _, _ in rungs),
+              "all %s" % [(L, m, 2 * e) for L, _, e, m, _, _, _ in rungs])
+        # 这里也刻意**不**断言 marks == 2×long。看着像等式，其实不是：long 是探针在 canvas 侧
+        # 量的**截断后弦长**，只是 render.js 判门用的 glen 的近似下界（弯边、TRIM 退让方向、
+        # 焦点/祖先兜底路径都会让两者错开）。实测 public agg L=8 就是 edges=1 / marks=2 /
+        # long=0 —— 渲染器认为够长该挂标记，探针量出来不够。40 个「档×模式×build」组合里
+        # 37 个成立只是接近，绑上去就是间歇性假红。真正钉得住的是上面那条硬不变式
+        # （marks ≤ 2×edges）与下面那条「守卫确实压掉过标记」。
         # MARK_MIN 守卫是否真的在生效，用「阶梯上存在某档标记数严格少于 2×edges」来证明 ——
         # 也就是确实有短边被压掉了。只要有边界够短，这一条就会亮；守卫一旦被删掉整条阶梯
         # 都会顶满 2×edges，这条就红。
-        suppressed = [(L, e, m) for L, _, e, m in rungs if m < 2 * e]
+        suppressed = [(L, e, m) for L, _, e, m, _, _, _ in rungs if m < 2 * e]
         check("the min-length guard really suppresses some markers somewhere on the ladder",
               bool(suppressed), "rungs with marks < 2*edges: %s" % [(L, m, 2 * e) for L, e, m in suppressed])
         page.evaluate("() => window.KG.renderer.resetView()")
@@ -1063,10 +1139,13 @@ with sync_playwright() as p:
 
         print("\n=== 7d[%s]. off-screen focus target: viewport-edge arrow + name chip + fitPair ==="
               % EDGE_MODE)
-        # drawEdges 的三道门（同容器 / 聚合索引 / 在屏）会在某些缩放比挡掉焦点边，
+        # agg 的 drawEdges 三道门（同容器 / 聚合索引 / 在屏）会在某些缩放比挡掉焦点边，
         # 挡掉之后画布上「这条链接指向谁」一度一个像素的线索都没有。这一轮补了两条后路：
         # 一端屏外时连线止于视口边缘、挂箭头 + 写著屏外端点名字的 chip；侧栏边行点击
         # 一次 tween 把链接两端一起框进视口（fitPair）。这里用真实相机钉住两条后路。
+        # raw 只适用第一条后路的**后半截**：它的端点不上移、线本来就画到屏外，方向看得见，
+        # 缺的只是「屏外那一端叫什么名字」—— 所以 chip 由 drawRawEdges 主循环挂在线穿出
+        # 视口的那一点（不经 drawFocusEdges）；fitPair 两种模式共用。
         # fixture 按**后缀**解析，不写完整路径：笔记一改名路径就失效，7d 会静默跳过
         # （2026-10-10 用户把 信号与系统.md 改名成 LTI analysis.md 之后正是如此）。
         # 后缀是稳定的语义锚点，改名不该让回归覆盖凭空少十几条断言。
@@ -1121,6 +1200,79 @@ with sync_playwright() as p:
             check("on-screen end keeps its source dot", a["selDot"])
             shot("11_chip" + SUF)
 
+            # (a2) 两端都出屏：纯平移把选中圆整个推出屏（缩放不动），链接目标本来就已经在
+            # 屏外。raw 的线照画（横穿视口就该看得见），chip 挂**一枚**、名字给非焦点端
+            # （这里就是目标端）；agg 的 drawFocusEdges 对双端屏外是「只计数不画」，于是
+            # 一枚 chip 也没有。钉的是用户报的那个痛点：「方向键平移一下，选中项整圆出屏，
+            # 名字牌跟着消失，就再也读不出这条线通向谁」。
+            # 断言只验「有没有一枚、名字是谁、锚点在不在内容视口里」，不复刻 entryToward 的
+            # 入口公式 —— 复刻的几何一旦和实现漂移就会假绿（本文件既有风格）。上面 JS 里那段
+            # Liang-Barsky 是**前置条件**不是断言：线不横穿视口时「没有 chip」本来就对，那时
+            # warn + skip，而不是让一条红得毫无信息量的断言留在这儿。
+            a2 = page.evaluate("""(ids) => {
+                const R = window.KG.renderer; const [W, H] = R.size(); const Hc = H - 46;
+                R.selected = null;
+                R.focusOn(ids[0], 1.25, 0);
+                R.selected = ids[0];
+                // 纯平移、缩放不动（钉的就是「方向键平移一下」那一下）。方向取「远离链接
+                // 另一端」：选中圆被推出屏的同时，线段必定横穿视口。往别处推会让两端落到
+                // 同一侧、线压根不进屏，那时「一枚 chip 也没有」才是对的，测出来只是假红。
+                const cam = R.camera;
+                const A = R.byId.get(ids[0]), B = R.byId.get(ids[1]);
+                const dx = B.x - A.x, dy = B.y - A.y;
+                const d = Math.hypot(dx, dy) || 1;
+                const ux = dx / d, uy = dy / d;
+                const push = Math.hypot(W, Hc) + A._r * cam.zoom + 60;
+                R.panBy(-ux * push, -uy * push);
+                R.draw();
+                const scr = (m) => [m.x * cam.zoom + cam.panX, m.y * cam.zoom + cam.panY];
+                const off = (m) => {
+                    const [x, y] = scr(m), r = m._r * cam.zoom;
+                    return x + r < 0 || x - r > W || y + r < 0 || y - r > Hc;
+                };
+                // 线段真的横穿内容视口吗（Liang-Barsky）。这里只当**前置条件**用，不当断言：
+                // 万一和实现的 entryToward 漂了，结果是 warn+skip，不会假绿。
+                const crosses = (() => {
+                    const [x0, y0] = scr(A), [x1, y1] = scr(B);
+                    const vx = x1 - x0, vy = y1 - y0;
+                    let t0 = 0, t1 = 1;
+                    for (const [p, q] of [[-vx, x0], [vx, W - x0], [-vy, y0], [vy, Hc - y0]]) {
+                        if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+                        const r = q / p;
+                        if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+                        else { if (r < t0) return false; if (r < t1) t1 = r; }
+                    }
+                    return true;
+                })();
+                const st = window.KG.state();
+                return {bothOff: off(A) && off(B), crosses: crosses,
+                        focusEdges: st.focusEdges, chips: st.chips, shownEdges: st.shownEdges,
+                        tgtChips: R.chipJobs.filter(j => j.id === ids[1]).map(j => j.text),
+                        selChips: R.chipJobs.filter(j => j.id === ids[0]).map(j => j.text),
+                        anchored: R.chipJobs.length > 0 &&
+                                  R.chipJobs.every(j => j.px >= -1 && j.px <= W + 1 &&
+                                                           j.py >= -1 && j.py <= Hc + 1)};
+            }""", [SEL_ID, TGT_ID])
+            print("    ", json.dumps(a2, ensure_ascii=False))
+            if not (a2["bothOff"] and a2["crosses"]):
+                warns.append("fixture did not put both ends off screen across the viewport "
+                             "(bothOff=%s crosses=%s) -> a2 (both-off chip) skipped"
+                             % (a2["bothOff"], a2["crosses"]))
+                print("    !! both ends not off screen across the viewport; skipping a2")
+            else:
+                want = 1 if EDGE_MODE == "raw" else 0
+                check("both ends off screen: raw keeps one name chip, agg keeps none",
+                      a2["chips"] == want,
+                      "chips=%s want=%s focusEdges=%s shownEdges=%s"
+                      % (a2["chips"], want, a2["focusEdges"], a2["shownEdges"]))
+                check("that chip names the off-screen target, not the selection",
+                      bool(want) == bool(a2["tgtChips"]) and not a2["selChips"] and
+                      all(t.startswith("5.1.2 定积分的定义") for t in a2["tgtChips"]),
+                      "tgt=%s sel=%s" % (a2["tgtChips"], a2["selChips"]))
+                check("both-off chip anchor lands inside the content viewport",
+                      a2["anchored"] or not want, str(a2["anchored"]))
+                shot("11b_both_off_chip" + SUF)
+
             # (b) +k 折叠：语义度 top-6 的 hub 各扫三档缩放，读真实 chipJobs。
             # 不变式：chip 数永不超过 CHIP_MAX+1；只有超出 CHIP_MAX 时末项才是右锚的「+k」。
             chip_max = page.evaluate(
@@ -1162,7 +1314,8 @@ with sync_playwright() as p:
                       for p in probes if p["n"] > chip_max),
                   str(collapsed[:2]))
             if not collapsed:
-                warns.append("no hub probe produced more than CHIP_MAX off-screen targets -> +k chip untested")
+                warns.append("no hub probe exceeded CHIP_MAX in %s mode -> +k chip untested there"
+                             % EDGE_MODE)
 
             # (c) 侧栏边行点击：fitPair 一次 tween 把链接两端框进视口
             page.evaluate("""(sel) => {
