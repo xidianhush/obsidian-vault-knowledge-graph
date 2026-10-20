@@ -67,23 +67,29 @@ PICK_NODE = """(opt) => {
     const ok = (n) => !!n && n.depth >= minDepth && R.descOf(n.id) >= minDesc;
     const rec = (n, x, y) => ({id: n.id, x: x, y: y, d: R.descOf(n.id),
                               sr: Math.round(n._sr), depth: n.depth});
+    // ⚠️ 扫描点必须是**整数屏幕像素**：page.mouse.click 会把浮点坐标截成整数，
+    // 而 hitTest 的命中判据是 d <= max(_sr,4)+3。浮点扫描（x += 5 累加出 483.2）
+    // 会挑到离子圆边缘不到 1px 的点，截断后正好落到圆外、命中它的父圆 ——
+    // 于是「探针说 A、真实点击选中 B」的假红（2026-10-20 在 public 那份上实测：
+    // 探针 x=483.2 命中 Physics basic，点击落在 483 命中其父 Science and Tech）。
+    // 从 ceil 起算、步长 5 全是整数，探针与点击点数因此逐位相同。
     if (opt.smallest) {                       // 全屏扫一遍，取屏上半径最小的那个
         let best = null;
-        for (let y = H * 0.15; y < H * 0.85; y += 6)
-            for (let x = W * 0.10; x < W * 0.90; x += 6) {
+        for (let y = Math.ceil(H * 0.15); y < H * 0.85; y += 6)
+            for (let x = Math.ceil(W * 0.10); x < W * 0.90; x += 6) {
                 const n = R.hitTest(x, y);
                 if (ok(n) && (!best || n._sr < best.sr)) best = rec(n, x, y);
             }
         return best;
     }
-    for (let y = H * 0.30; y < H * 0.72; y += 5) {
-        for (let x = W * 0.28; x < W * 0.72; x += 5) {
+    for (let y = Math.ceil(H * 0.30); y < H * 0.72; y += 5) {
+        for (let x = Math.ceil(W * 0.28); x < W * 0.72; x += 5) {
             const n = R.hitTest(x, y);
             if (ok(n)) return rec(n, x, y);
         }
     }
-    for (let y = H * 0.15; y < H * 0.85; y += 6) {
-        for (let x = W * 0.10; x < W * 0.90; x += 6) {
+    for (let y = Math.ceil(H * 0.15); y < H * 0.85; y += 6) {
+        for (let x = Math.ceil(W * 0.10); x < W * 0.90; x += 6) {
             const n = R.hitTest(x, y);
             if (ok(n)) return rec(n, x, y);
         }

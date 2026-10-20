@@ -120,13 +120,18 @@
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────
-  function levelLabel(lv) {
+  // 该层「累积可见了什么」的读数。拆成两半用：levelLabel 给层级胶囊的 title（有空间，
+  // 带上 LOD 前缀），levelCounts 给顶栏 #readout（空间紧张，LOD 与 z 由调用处另拼）。
+  function levelCounts(lv) {
     const row = LEVELS[String(lv)] || {};
-    return 'LOD ' + lv + '/' + MAX_DEPTH +
-      ' · 文件夹 ' + (row.folders == null ? '-' : row.folders) +
+    return '文件夹 ' + (row.folders == null ? '-' : row.folders) +
       ' · 笔记 ' + (row.notes == null ? '-' : row.notes) +
       ' · 标题 ' + (row.headings == null ? '-' : row.headings) +
       ' · 边 ' + (row.edges == null ? '-' : row.edges);
+  }
+
+  function levelLabel(lv) {
+    return 'LOD ' + lv + '/' + MAX_DEPTH + ' · ' + levelCounts(lv);
   }
 
   let lastReadout = '';
@@ -141,7 +146,11 @@
         el.classList.toggle('on', parseInt(el.dataset.level, 10) === lv);
       });
     }
-    const text = levelLabel(lv) + ' · z=' + zoom.toFixed(3);
+    // ⚠️ 顺序有意为之：1440px 下顶栏是超额分配的（见 template.html 顶栏注释），
+    // #readout 只拿得到约 200px，折两行后装不满整串文字。所以把最关键的
+    // 「第几层 + z」放最前面，被省略掉的只会是末尾的计数与提示，而不是缩放值。
+    const text = 'LOD ' + lv + '/' + MAX_DEPTH + ' · z=' + zoom.toFixed(3) +
+      ' · ' + levelCounts(lv);
     if (text !== lastReadout) {
       lastReadout = text;
       $('readout').innerHTML = text +
@@ -550,6 +559,7 @@
     if (evt.key === ']' || evt.key === '+' || evt.key === '=') stepLevel(1);
     else if (evt.key === '[' || evt.key === '-' || evt.key === '_') stepLevel(-1);
     else if (evt.key === 'Escape') { select(null); hideTooltip(); }
+    else if (evt.key === 'l' || evt.key === 'L') toggleLegend();
     else if (evt.key === '/' ) { evt.preventDefault(); $('search').focus(); }
     else if (evt.key === 'Enter' && $('search').value) runSearch($('search').value);
   });
@@ -575,6 +585,26 @@
     applyEdgeLegend();
   });
 
+  // ── 图例收起 / 展开 ────────────────────────────────────────────────────
+  // 图例的说明文字很长（可见约 24 行），挡住画布左下角时可以折成一条。状态记进
+  // localStorage，下次打开还是那个状态。**只切 .collapsed 类**，不碰
+  // #legend-rel-agg / #legend-rel-raw 的 hidden —— 那两个属性归 applyEdgeLegend()
+  // 管，是「当前连线模式用哪套图例」的状态，浏览器回归的 1c 段直接读它。
+  function applyLegendCollapsed(collapsed) {
+    $('legend').classList.toggle('collapsed', collapsed);
+    const btn = $('legend-toggle');
+    btn.textContent = collapsed ? '展开' : '收起';
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+
+  function toggleLegend() {
+    const next = !$('legend').classList.contains('collapsed');
+    applyLegendCollapsed(next);
+    writeStored('kg.legendCollapsed', next ? '1' : '0');
+  }
+
+  $('legend-toggle').addEventListener('click', toggleLegend);
+
   // ── 启动 ──────────────────────────────────────────────────────────────
   $('subtitle').textContent = META.note_count + ' 篇笔记 · ' + META.heading_total + ' 个标题';
   // 先把记住的连线模式灌进渲染器和下拉框，再建图例 —— 顺序反了会闪一下错的图例。
@@ -583,6 +613,8 @@
   buildPills();
   buildLegend();
   applyEdgeLegend();
+  // 图例收起状态：默认展开（老行为和截图基线都不变），只有用户自己收过才记住。
+  applyLegendCollapsed(readStored('kg.legendCollapsed', '0') === '1');
   buildFilters();
   updateHud();
 

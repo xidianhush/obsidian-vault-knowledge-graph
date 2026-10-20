@@ -30,7 +30,7 @@
   /* ── 顶栏 ─────────────────────────────────────────────────────── */
   #topbar {
     position: absolute; top: 0; left: 0; right: 0; height: 46px;
-    display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px;
     background: linear-gradient(180deg, rgba(15,17,22,.96), rgba(15,17,22,.75));
     border-bottom: 1px solid var(--line); z-index: 20;
   }
@@ -55,8 +55,23 @@
     background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 12px;
   }
   .pill.on { color: #fff; border-color: var(--accent); background: #1d2c48; }
-  #readout { color: var(--muted); font-size: 12px; min-width: 0; flex: 0 1 auto; }
+  /* ⚠️ 顶栏在 1440px 下是「超额」的：所有控件的 max-content 加起来约 1777px，
+     容器只有 1440px，缺口约 337px。所以两个可压缩项必须各自封顶，否则会撑出
+     46px 的顶栏被裁掉 —— 历史 bug（2026-10-20 实测）：#readout 89×96、y=-25，
+     #reset 33×95、y=-25，「重置视角」被压成竖排三行。
+     修法：readout 折行封顶到两行，reset 禁止压缩。两者都不再依赖「空间够不够」。 */
+  #readout {
+    color: var(--muted); font-size: 12px; line-height: 19px;
+    min-width: 0; flex: 0 1 auto;
+    /* 最多折两行，超出直接省略（尾部「继续向上滚可深入」在图例提示里有全文）。
+       这样高度恒 <= 38px < 顶栏 46px，几何上不可能再上下溢出。 */
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
   #readout b { color: var(--text); font-weight: 600; }
+  /* 两条缺一不可：flex:0 0 auto 让它不参与压缩，nowrap 保证文字横向排。
+     只写其中一条仍会被挤成竖排（浏览器按最小内容宽度折行）。 */
+  #reset { flex: 0 0 auto; white-space: nowrap; }
 
   /* ── 侧栏 ─────────────────────────────────────────────────────── */
   #sidebar {
@@ -98,10 +113,30 @@
     position: absolute; left: 12px; bottom: 12px; z-index: 10;
     background: rgba(22,26,34,.9); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px 12px; font-size: 12px; max-width: 280px;
+    /* 兜底：窗口再矮也不许把图例顶进 46px 的顶栏（它原来能涨到 863px 高、
+       y=25，前 21px 躲在顶栏底下）。正常 900px 视口下这条不会触发。 */
+    max-height: calc(100% - 58px); overflow-y: auto;
   }
-  #legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
-  #legend .sw { width: 22px; height: 3px; border-radius: 2px; flex: none; }
-  #legend .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+  /* 图例可收起：说明文字很长（可见约 24 行），挡住画布左下角时能折成一条。
+     ⚠️ 收起只藏 #legend-body，**绝不动** #legend-rel-agg / #legend-rel-raw 的
+     hidden 属性 —— 那两个是「当前连线模式对应哪套图例」的状态，
+     browser_check.py 的 1c 段直接读 element.hidden 做断言。 */
+  #legend-head { display: flex; align-items: center; gap: 8px; }
+  #legend-head .t { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .3px; }
+  #legend-head button { margin-left: auto; flex: none; padding: 1px 8px; font-size: 11px; line-height: 16px; }
+  #legend-body { margin-top: 4px; }
+  #legend.collapsed #legend-body { display: none; }
+  /* 每行只有两样东西：左侧图标 + 右侧一段文字。文字**必须**包在 .tx 里 ——
+     .row 是 flex 容器，裸文本里一旦夹了 <b>，每个文本片段和内联元素都会各自
+     变成一个 flex item，被挤成几列互相覆盖（2026-10-20 修的真实 bug：三行说明
+     文字重叠成多列、不可读）。
+     行距取 1px：图例内容本身很长（可见 24 行），加到 2px 就会顶到 max-height
+     上限、面板内部出现滚动条；面板高度主要是内容量决定的，不是那个 flex bug。 */
+  #legend .row { display: flex; align-items: flex-start; gap: 8px; margin: 1px 0; }
+  #legend .row .tx { flex: 1 1 auto; min-width: 0; }
+  #legend .sw { width: 22px; height: 3px; border-radius: 2px; flex: none; margin-top: 8px; }
+  #legend .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; margin-top: 4px; }
+  #legend .row svg { flex: none; margin-top: 5px; }
   #legend h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 600; }
   #legend section + section { margin-top: 9px; }
   #legend .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
@@ -151,20 +186,20 @@
   <span class="spacer"></span>
   <input id="search" type="search" placeholder="搜索笔记 / 标题…">
   <select id="domain"><option value="all">全部学科</option></select>
-  <select id="mastery">
+  <select id="mastery" title="按掌握度过滤（已掌握 = ≥3 / 待加强 = 1-2）">
     <option value="all">全部掌握度</option>
-    <option value="known">已掌握（≥3）</option>
-    <option value="weak">待加强（1-2）</option>
+    <option value="known">已掌握</option>
+    <option value="weak">待加强</option>
     <option value="none">未标注</option>
   </select>
-  <select id="labels" title="标签的显示策略">
-    <option value="auto">标签：自动</option>
-    <option value="all">标签：全部显示</option>
-    <option value="none">标签：只显示选中</option>
+  <select id="labels" title="标签的显示策略（自动 = 按屏幕密度竞争）">
+    <option value="auto">自动</option>
+    <option value="all">全部显示</option>
+    <option value="none">只显示选中</option>
   </select>
-  <select id="edgemode" title="链接线的画法">
-    <option value="raw">连线：逐条链接（不聚合）</option>
-    <option value="agg">连线：按尺度聚合</option>
+  <select id="edgemode" title="链接线的画法：逐条链接 = 每处 [[链接]] 各画一条细线；按尺度聚合 = 合并成粗线，线宽代表条数">
+    <option value="raw">逐条链接</option>
+    <option value="agg">按尺度聚合</option>
   </select>
   <button id="reset" title="回到该层默认视角">重置视角</button>
 </header>
@@ -173,36 +208,42 @@
 <aside id="sidebar"></aside>
 
 <div id="legend">
+  <div id="legend-head">
+    <span class="t">图例</span>
+    <button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body"
+            title="收起 / 展开图例（快捷键 L）">收起</button>
+  </div>
+  <div id="legend-body">
   <section>
     <h4>学科（顶层目录）</h4>
     <div id="legend-domains"></div>
   </section>
   <section id="legend-rel-agg" hidden>
     <h4>关系（线宽 = 当前尺度上聚合了多少条原始链接）</h4>
-    <div class="row"><span class="sw" style="background:#8B949E"></span>前置：source 是 target 的前置</div>
-    <div class="row"><span class="sw" style="background:#4C8DFF"></span>引用：source 引用了 target</div>
-    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
-    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg>链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</div>
-    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</div>
-    <div class="row">缩小到看不清单条链接时，多条链接会<b>合并成一条更粗的线</b>；粗细就是「这一对之间原本有多少条链接」</div>
+    <div class="row"><span class="sw" style="background:#8B949E"></span><span class="tx">前置：source 是 target 的前置</span></div>
+    <div class="row"><span class="sw" style="background:#4C8DFF"></span><span class="tx">引用：source 引用了 target</span></div>
+    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span><span class="tx">并列/对比（方向未知）</span></div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
+    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span><span class="tx">包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</span></div>
+    <div class="row"><span class="tx">缩小到看不清单条链接时，多条链接会<b>合并成一条更粗的线</b>；粗细就是「这一对之间原本有多少条链接」</span></div>
   </section>
   <section id="legend-rel-raw">
     <h4>关系（每处 [[链接]] 各画一条细线，任何尺度都在）</h4>
-    <div class="row"><span class="sw" style="background:#E6EDF3"></span>近白 = 整篇级链接 [[笔记]]（一条线可能代表了正文里多处这样的链接）</div>
-    <div class="row"><span class="sw" style="background:#4C8DFF"></span>彩色 = 标题级链接 [[笔记#标题]]，颜色按关系类型：蓝=引用 / 灰=前置</div>
-    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span>并列/对比（方向未知）</div>
-    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg>链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</div>
-    <div class="row"><b>同一对元素之间线的条数 = 关联强度</b>：缩到文件级时两篇笔记之间那一束细线，就是它们互相引用的分量</div>
-    <div class="row">缩放<b>只改线的长度和形状</b>，不改颜色、不改浓淡、不减少条数 —— 链接本来就是从一个标题指向一个标题的，不该因为缩小而消失</div>
-    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span>包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</div>
+    <div class="row"><span class="sw" style="background:#E6EDF3"></span><span class="tx">近白 = 整篇级链接 [[笔记]]（一条线可能代表了正文里多处这样的链接）</span></div>
+    <div class="row"><span class="sw" style="background:#4C8DFF"></span><span class="tx">彩色 = 标题级链接 [[笔记#标题]]，颜色按关系类型：蓝=引用 / 灰=前置</span></div>
+    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span><span class="tx">并列/对比（方向未知）</span></div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
+    <div class="row"><span class="tx"><b>同一对元素之间线的条数 = 关联强度</b>：缩到文件级时两篇笔记之间那一束细线，就是它们互相引用的分量</span></div>
+    <div class="row"><span class="tx">缩放<b>只改线的长度和形状</b>，不改颜色、不改浓淡、不减少条数 —— 链接本来就是从一个标题指向一个标题的，不该因为缩小而消失</span></div>
+    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span><span class="tx">包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</span></div>
   </section>
   <section>
     <h4>节点（一律实心圆）</h4>
-    <div class="row"><span class="dot" style="background:#4C8DFF"></span>颜色 = 学科（顶层目录）</div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;width:16px;height:16px"></span>大小 = 规模（下辖元素越多越大）</div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #d6dbe4"></span>白色描边粗细 = 掌握度 1→5</div>
-    <div class="row"><span class="dot" style="background:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.35)"></span>黄色光环 = 搜索命中</div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #4C8DFF"></span>蓝色圆环 = 与选中元素直接相连（含其内部子元素的链接，出入向都算）</div>
+    <div class="row"><span class="dot" style="background:#4C8DFF"></span><span class="tx">颜色 = 学科（顶层目录）</span></div>
+    <div class="row"><span class="dot" style="background:#4C8DFF;width:16px;height:16px"></span><span class="tx">大小 = 规模（下辖元素越多越大）</span></div>
+    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #d6dbe4"></span><span class="tx">白色描边粗细 = 掌握度 1→5</span></div>
+    <div class="row"><span class="dot" style="background:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.35)"></span><span class="tx">黄色光环 = 搜索命中</span></div>
+    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #4C8DFF"></span><span class="tx">蓝色圆环 = 与选中元素直接相连（含其内部子元素的链接，出入向都算）</span></div>
   </section>
   <div class="hint">
     光标放在节点上<b>向上滚 = 逐层深入</b>，向下滚 = 回到更粗的层级 · 拖拽平移，
@@ -210,6 +251,7 @@
     单击看详情（<b>只留下与它相关的连线</b>，其余淡到近乎消失；相连的元素亮蓝环）·
     双击深入 · <b>Esc</b> 收起并恢复全部连线 · <b>[</b> <b>]</b> 逐层切换 ·
     <b>Home</b> 回到默认视角（缩远缩近都不再受限，缩丢了就按它）
+  </div>
   </div>
 </div>
 

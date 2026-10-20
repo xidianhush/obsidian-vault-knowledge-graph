@@ -1023,6 +1023,34 @@ fps 与滚轮 ms 两个 perf 读数会被污染。）
     一路跑到底才崩在 `b.close()` → `AttributeError: 'dict' object has no attribute 'close'`。
     变量已改名 `a2`；**别在同一个作用域里复用单字母的浏览器句柄名**。
 
+36. **`#legend .row` 是 flex 容器 —— 行内文字必须整段包在 `<span class="tx">` 里。**
+    （2026-10-20 修的真实 bug）`<div class="row">缩放<b>只改长度</b>，不改颜色…</div>` 这种
+    写法里，浏览器会把**裸文本片段也各自变成匿名 flex item**：`缩放` / `<b>…</b>` / `，不改颜色…`
+    就是三个 item，在 254px 宽里被挤成三列互相覆盖，整段说明不可读。
+    现在每行固定两个子节点：图标（`.sw` / `.dot` / `svg`）+ `<span class="tx">`，
+    `.row` 用 `align-items:flex-start`，图标靠 `margin-top` 对齐首行。
+    自查：`document.querySelectorAll('#legend .row')` 里每个的 `childNodes.length` 必须是 1（纯文字行）
+    或 2，且不能出现 `nodeType === 3` 的裸文本节点。
+    ⚠️ 面板高度（展开态约 838px）**主要是内容量决定的**，不是这个 bug —— 别指望修完它面板就变矮。
+    `#legend` 有一条 `max-height: calc(100% - 58px)` 的兜底，保证任何视口高度下都不钻到 46px 顶栏底下；
+    行距（`.row` 的 `margin`）调到 2px 就会顶到这条上限、面板内部出现滚动条，所以留 1px。
+
+37. **图例的折叠开关只能切 `.collapsed` 类，绝不许动 `#legend-rel-raw` / `#legend-rel-agg` 的 `hidden`。**
+    （2026-10-20 新增功能）那两个 `hidden` 是「当前连线模式用哪套图例」的状态，
+    `browser_check.py` 的 1c 段直接读 `element.hidden` 断言（`LEG = "(id) => document.getElementById(id).hidden"`）。
+    折叠走 `#legend.collapsed #legend-body { display:none }`，与 `hidden` 正交，两条断言互不干扰。
+    状态存 `localStorage` 键 `kg.legendCollapsed`，默认展开（不写 = 展开，截图基线与老行为都不变）；
+    快捷键 `L` 走 `app.js` 的 keydown，和 `Esc`/`Home`/`[`/`]` 并列。
+
+38. **`browser_check.py` 的 `PICK_NODE` 必须扫整数屏幕像素。**（2026-10-20 修）
+    它原先按 `x += 5` 从 `W*0.28` 累加，坐标带小数（如 `483.2`）。`page.mouse.click()` 会把坐标截成
+    整数（`483`），而 `hitTest` 的判据是 `d <= max(_sr,4)+3` —— 扫描点若落在某个圆的边缘 1px 内，
+    截断后正好出圈、命中它的父圆，于是「探针说 A、真实点击选中 B」。
+    症状极具欺骗性：private 那份恰好不踩（483→523 换了位置），**只有 public 那份红 2 条**
+    （`click selected a node` 与 `breadcrumb has clickable ancestors`），而且退回提交版照样复现
+    —— 是测试自身的问题，不是渲染缺陷。现在从 `Math.ceil(...)` 起算、步长 5 全是整数。
+    教训：**凡是「先探针取坐标、再真实 mouse.click」的用例，坐标必须整数**，否则会在圆边缘随机假红。
+
 ---
 
 ## 5. 调参地图
