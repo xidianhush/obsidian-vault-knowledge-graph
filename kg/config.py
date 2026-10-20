@@ -70,7 +70,7 @@ DEFAULTS: dict = {
         "raw_edge_width": 1.0,
         "raw_marker_min_len": 6,
     },
-    "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}, "note_edge": "#E6EDF3"},
+    "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}, "raw_edge": "#E6EDF3"},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
     "candidates_file": "candidates.yaml",
@@ -163,9 +163,12 @@ def _validate(cfg: dict):
     fallback = cfg["theme"].get("fallback", "#8B949E")
     if not _HEX_RE.match(str(fallback)):
         _fail(f"theme.fallback 颜色格式应为 #RRGGBB，收到 {fallback!r}")
-    note_edge = cfg["theme"].get("note_edge", "#E6EDF3")
-    if not _HEX_RE.match(str(note_edge)):
-        _fail(f"theme.note_edge 颜色格式应为 #RRGGBB，收到 {note_edge!r}")
+    if "note_edge" in cfg["theme"]:
+        _fail("theme.note_edge 已改名为 theme.raw_edge（2026-10-20 起 raw 模式统一配色，"
+              "不再按整篇级/标题级分色），请把 config.yaml 里的键改名")
+    raw_edge = cfg["theme"].get("raw_edge", "#E6EDF3")
+    if not _HEX_RE.match(str(raw_edge)):
+        _fail(f"theme.raw_edge 颜色格式应为 #RRGGBB，收到 {raw_edge!r}")
     for name, color in cfg["theme"].get("edges", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.edges.{name} 颜色格式应为 #RRGGBB，收到 {color!r}")

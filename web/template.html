@@ -112,9 +112,10 @@
   #legend {
     position: absolute; left: 12px; bottom: 12px; z-index: 10;
     background: rgba(22,26,34,.9); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 12px; font-size: 12px; max-width: 280px;
+    padding: 8px 12px; font-size: 12px; max-width: 280px;
     /* 兜底：窗口再矮也不许把图例顶进 46px 的顶栏（它原来能涨到 863px 高、
-       y=25，前 21px 躲在顶栏底下）。正常 900px 视口下这条不会触发。 */
+       y=25，前 21px 躲在顶栏底下）。正常 900px 视口下这条不触发 —— 一旦触发就说明
+       内容又长过 max-height 了，面板内部会出现滚动条，那时该压缩垂直留白而不是删信息。 */
     max-height: calc(100% - 58px); overflow-y: auto;
   }
   /* 图例可收起：说明文字很长（可见约 24 行），挡住画布左下角时能折成一条。
@@ -137,9 +138,9 @@
   #legend .sw { width: 22px; height: 3px; border-radius: 2px; flex: none; margin-top: 8px; }
   #legend .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; margin-top: 4px; }
   #legend .row svg { flex: none; margin-top: 5px; }
-  #legend h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 600; }
-  #legend section + section { margin-top: 9px; }
-  #legend .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  #legend h4 { margin: 0 0 4px; font-size: 11px; color: var(--muted); font-weight: 600; }
+  #legend section + section { margin-top: 7px; }
+  #legend .hint { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 6px; }
 
   #tooltip {
     position: absolute; pointer-events: none; z-index: 30; display: none;
@@ -229,10 +230,9 @@
   </section>
   <section id="legend-rel-raw">
     <h4>关系（每处 [[链接]] 各画一条细线，任何尺度都在）</h4>
-    <div class="row"><span class="sw" style="background:#E6EDF3"></span><span class="tx">近白 = 整篇级链接 [[笔记]]（一条线可能代表了正文里多处这样的链接）</span></div>
-    <div class="row"><span class="sw" style="background:#4C8DFF"></span><span class="tx">彩色 = 标题级链接 [[笔记#标题]]，颜色按关系类型：蓝=引用 / 灰=前置</span></div>
-    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span><span class="tx">并列/对比（方向未知）</span></div>
-    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
+    <div class="row"><span class="sw" style="background:#E6EDF3"></span><span class="tx">所有链接<strong>统一近白细线</strong>：整篇级 [[笔记]] 与标题级 [[笔记#标题]] 同色 —— 文件夹/笔记/标题只是存储结构，不参与配色；类型看线型与端点标记</span></div>
+    <div class="row"><span class="sw" style="background:#E6EDF3;height:0;border-top:2px dashed #E6EDF3"></span><span class="tx">并列/对比（方向未知）—— 虚线段，两端都只标圆点</span></div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#e1e7ee"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#E6EDF3" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#e1e7ee"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
     <div class="row"><span class="tx"><b>同一对元素之间线的条数 = 关联强度</b>：缩到文件级时两篇笔记之间那一束细线，就是它们互相引用的分量</span></div>
     <div class="row"><span class="tx">缩放<b>只改线的长度和形状</b>，不改颜色、不改浓淡、不减少条数 —— 链接本来就是从一个标题指向一个标题的，不该因为缩小而消失</span></div>
     <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span><span class="tx">包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</span></div>

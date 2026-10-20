@@ -169,12 +169,16 @@
     }
     var MARK_RGB = {};
     Object.keys(EDGE_RGB).forEach(function (k) { MARK_RGB[k] = tintLight(EDGE_RGB[k]); });
-    // raw 模式按**粒度**上色：note→note 的整篇级链接走近白色，heading→heading 仍按
-    // 关系类型走 EDGE_RGB。两者在同一对笔记之间会同屏出现（一篇笔记里多处
-    // [[另一篇#标题]] 链接 + 正文里裸写的 [[另一篇]]），不给整篇级一个独立颜色就
-    // 分不清哪条是哪一级的。
-    var NOTE_EDGE_RGB = hexToRgb(THEME.note_edge || '#E6EDF3');
-    var NOTE_MARK_RGB = tintLight(NOTE_EDGE_RGB);
+    // raw 模式**统一配色**（2026-10-20 起）：所有语义链接线用同一个颜色，端点标记由它
+    // tintLight 派生。整篇级 [[笔记]] 与标题级 [[笔记#标题]] 不再靠颜色区分 —— 文件夹/
+    // 笔记/标题只是人为的**存储结构**，这张图表达的是知识内在的包含关系与连接关系，
+    // 存储粒度不该参与视觉编码（决定与来龙去脉见 HANDOFF §4 坑 34）。
+    // 信息没有丢：关系类型仍由**线型**（contrast = 虚线）与**端点标记**（只有 derives /
+    // prerequisite 画箭头，contrast 两端都只画点）表达，侧栏 `.tag` 与 hover 气泡也
+    // 照旧标出每条边的类型与来源。
+    // 改色请改 config.yaml 的 theme.raw_edge，别在这里写死。
+    var RAW_EDGE_RGB = hexToRgb(THEME.raw_edge || '#E6EDF3');
+    var RAW_MARK_RGB = tintLight(RAW_EDGE_RGB);
     // raw 模式的线宽与端点标记门槛。线宽**刻意不含 zoom 因子**：raw 的契约就是
     // 「缩放只改长度，不改粗细浓淡」。标记门槛独立于 agg 的 MARK_MIN（20px）：raw 的
     // 端点是真实节点自己，低缩放下大量线只有几 px，沿用 20px 会让它们全都没箭头，等于
@@ -868,8 +872,9 @@
         var hot = selN ? hs : !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
         var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
         if (hs) stats.focusEdges++;
-        var rgb = e._nl ? NOTE_EDGE_RGB : (EDGE_RGB[e.type] || EDGE_RGB.derives || [76, 141, 255]);
-        var mrgb = e._nl ? NOTE_MARK_RGB : (MARK_RGB[e.type] || MARK_RGB.derives || rgb);
+        // raw 统一配色：不再按 _nl（整篇级 / 标题级）或关系类型分色（见 RAW_EDGE_RGB 处注释）
+        var rgb = RAW_EDGE_RGB;
+        var mrgb = RAW_MARK_RGB;
         var laid = drawRawSegment(aA, aB, dim, hot ? RAW_LW + 0.8 : RAW_LW,
                                   rgb, mrgb, e.type);
         if (laid) drawn++;
@@ -1132,11 +1137,14 @@
         // 粒度后缀只在 raw 模式下加，免得扰动 agg 模式既有的分组行为。必要性：
         // note 级边「LTI→Calculus」和 heading 级边「LTI#CTFT→Calculus#定积分」在
         // 文件级会解析到同一对锚点、同为 derives，不加后缀就被并成一条。
+        // ⚠️ 配色统一（2026-10-20）之后这个后缀**仍然要保留** —— 它现在不负责上色，
+        // 只负责让两种粒度各自成组（`stats.focusEdges` 数的是「屏幕上的线」，并成
+        // 一条会少算一条，7b/7d 的读数会整体漂移）。
         var nl = !!(raw && d.e._nl);
         var key = kA + '\u0000' + kB + '\u0000' + d.e.type + (nl ? '\u0000n' : '');
         var g = groups.get(key);
         if (!g) {
-          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id, nl: nl };
+          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id };
           groups.set(key, g);
         }
         g.count += 1;
@@ -1151,8 +1159,11 @@
         }
         if (!g.aA.on && !g.aB.on) return;
         if (g.aA.on && g.aB.on && g.aA.node.id === g.aB.node.id) return;
-        var rgb = g.nl ? NOTE_EDGE_RGB : (EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255]);
-        var mrgb = g.nl ? NOTE_MARK_RGB : (MARK_RGB[g.type] || MARK_RGB.derives || rgb);
+        // raw 统一配色；agg 那半边仍按关系类型上色（两种画法的配色规则各管各的）
+        var rgb = raw ? RAW_EDGE_RGB
+                      : (EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255]);
+        var mrgb = raw ? RAW_MARK_RGB
+                       : (MARK_RGB[g.type] || MARK_RGB.derives || rgb);
         // raw 不按 count 加粗（强度改由「有几条线」表达），线宽恒为 RAW_LW + 0.8
         var lw = raw ? RAW_LW + 0.8
                      : Math.min(4, 0.6 + 1.8 * Math.log(1 + g.count) / Math.LN2) + 0.8;
