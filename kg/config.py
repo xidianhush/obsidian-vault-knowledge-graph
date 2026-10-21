@@ -151,6 +151,20 @@ def _validate(cfg: dict):
         _fail("lod.min_px 必须是正数（一个圆值得被画出来所需的最小屏幕半径）")
     if not isinstance(lod.get("label_alpha"), (int, float)) or not 0 < lod["label_alpha"] <= 1:
         _fail("lod.label_alpha 必须在 (0, 1] 之间（参与标签竞争所需的淡入进度）")
+    # 2026-10-21：标签一律画在圆内、字号跟着圆长大，下面三个键随之退役。
+    # 直接报错而不是静默忽略 —— 免得有人改了它们却以为生效了。
+    for retired in ("label_font_ref", "label_max_width", "label_smooth_dim"):
+        if retired in lod:
+            _fail(f"lod.{retired} 已退役（2026-10-21 起标签只画在圆内、字号 = "
+                  f"label_font_scale × 屏幕半径 与「塞进圆的最大字号」取小），请删掉这个键")
+    scale = lod.get("label_font_scale")
+    if not isinstance(scale, (int, float)) or isinstance(scale, bool) or not scale > 0:
+        _fail(f"lod.label_font_scale 必须是正数（字号 / 屏幕半径 的比例，默认 0.3），收到 {scale!r}")
+    fs_min, fs_max = lod.get("label_font_min"), lod.get("label_font_max")
+    if not isinstance(fs_min, (int, float)) or isinstance(fs_min, bool) or fs_min <= 0:
+        _fail(f"lod.label_font_min 必须是正数，收到 {fs_min!r}")
+    if not isinstance(fs_max, (int, float)) or isinstance(fs_max, bool) or fs_max < fs_min:
+        _fail(f"lod.label_font_max 必须 ≥ label_font_min，收到 {fs_max!r}")
     if not isinstance(lod.get("fade_span"), (int, float)) or not lod["fade_span"] >= 1:
         _fail("lod.fade_span 必须是 ≥1 的倍率（1 = 硬切，不淡入）")
     for key in ("focus_edge_dim", "hover_edge_dim"):

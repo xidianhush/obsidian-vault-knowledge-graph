@@ -110,18 +110,22 @@
     var AGG = DATA.aggregates;
 
     var MIN_PX = LOD.min_px || 18;
-    // 标签门槛是「淡入进度」而不是「屏幕像素间距」，而且它不能读压暗后的 alpha ——
-    // 祖先层被 parent_dim 压到底图浓度之后就永远够不到门槛，最粗视图（最该有
-    // 标签的视图）会一个标签都没有。
-    var LABEL_A = LOD.label_alpha == null ? 0.55 : LOD.label_alpha;
-    // 标签字号绑「屏幕半径」而不是 depth —— 见 labelFontSize 的注释。
+    // 标签门槛是「淡入进度」。2026-10-21 起标签与圆**同进同出**（用户要求）：门槛降到
+    // 0.02，且落笔浓度直接用圆这一帧的 alpha（见 drawLabels 里的 alpha.get）。
+    // 仍然不能读压暗后的 alpha 当门槛 —— 祖先层被 parent_dim 压到底图浓度之后永远够不到。
+    var LABEL_A = LOD.label_alpha == null ? 0.02 : LOD.label_alpha;
+    // 标签字号（2026-10-21，方案「丙」）：
+    //   fs = clamp(min(label_font_scale × 屏幕半径, 塞得进圆的最大字号), 下限, 上限)
+    // 旧版是对数插值封顶 22px —— 实测一个直径 3000px 的圆里那行字只占 4%，满屏只剩
+    // 纯色。现在字号跟着圆长大，长标题再被「塞得下」这一项自动缩小。
     // 一律 == null 兜默认（0 是合法值，|| 会把它吃掉）。
     var LABEL_FS_MIN = LOD.label_font_min == null ? 11 : LOD.label_font_min;
-    var LABEL_FS_MAX = LOD.label_font_max == null ? 22 : LOD.label_font_max;
-    var LABEL_FS_REF = LOD.label_font_ref == null ? 300 : LOD.label_font_ref;
+    var LABEL_FS_MAX = LOD.label_font_max == null ? 64 : LOD.label_font_max;
+    var LABEL_FS_SCALE = LOD.label_font_scale == null ? 0.3 : LOD.label_font_scale;
+    // 圆内可用宽度占直径的比例。0.8 × 直径 = 竖直方向居中处弦长的 0.8 倍，
+    // 左右各留 10% 让文字不贴到描边上。
+    var LABEL_AVAIL = 0.8;
     var LABEL_BOLD_DEPTH = LOD.label_bold_depth == null ? 2 : LOD.label_bold_depth;
-    var LABEL_MAX_W = LOD.label_max_width == null ? 180 : LOD.label_max_width;
-    var LABEL_SMOOTH_DIM = LOD.label_smooth_dim == null ? true : LOD.label_smooth_dim;
     var FADE = LOD.fade_span || 1.35;
     var WEAK = LOD.weak_edge_min_count || 2;
     // 焦点模式的压暗系数。必须用 == null 而不是 ||：0（彻底不画无关连线）是合法值，
@@ -477,52 +481,44 @@
       return v;
     }
 
-    // 标签字号 = 屏幕半径的函数，**不是 depth 的函数**。两条理由，都别改回去：
-    //  1) depth 是复合轴 —— heading.depth = 所属笔记 depth + 标题级别（kg/graph.py），
-    //     所以 depth 6..10 并不对应固定的 h1..h5，同一档里混着不同类别的东西；
-    //  2) 同 depth 的屏幕尺寸能差 16.22 倍 —— 六个学科根都是 depth-1，世界半径却是
-    //     Science and Tech 717.2 / Projects 172.0 / ... / Medical and Health 44.2。
-    //     按 depth 分档会让「铺满全屏的根」和「20px 小圆点」用同一个字号，
-    //     正是这套字号要消除的不协调。
-    // 屏幕半径本来就是系统既有的屏幕空间 LOD 语义（minzoom、圆内/圆外摆放、视口裁剪
-    // 都读它），再加一个消费者是一致的；又因 r 沿包含链严格递减 ⇒ 屏幕半径档位天然
-    // 就是层级档位，「字号与层级绑定」自动成立，只是测量方式更准。
-    // 对数插值 ⇒ 尺度不变，和本项目「无量纲系数、不写死绝对 zoom」的做法一致。
+    // 标签字号（2026-10-21 重写，方案「丙」）：
+    //   fs = clamp(min(label_font_scale × 屏幕半径, 塞得进这个圆的最大字号), 下限, 上限)
+    // 两条腿各管一件事：
+    //   * `scale × sr` 让字号跟着圆长大 —— 旧版对数插值封顶 22px，实测直径 3135px 的
+    //     圆里那行字只占 4%，看着就是一整片纯色（用户报的「满屏大片实心圆」）。
+    //   * 「塞得进这个圆」保证长标题（heading 常二三十字）不溢出圆，短名字在大圆里
+    //     则会被放大到接近上限、把那块空地填满。
+    // 仍然**不按 depth 分档**：depth 是复合轴（heading.depth = 笔记 depth + 标题级别），
+    // 而同为 depth-1 的六个学科根世界半径能差十几倍，按 depth 分档会让铺满全屏的根和
+    // 20px 小圆点用同一个字号。
     // **必须取整**：measure() 的缓存 key 是 font 字符串，连续字号会让缓存条目和
     // measureText 调用量随帧数无界增长；取整同时消除缩放过程中的字形抖动。
-    function labelFontSize(sr) {
-      if (!(sr > 0) || LABEL_FS_REF <= MIN_PX) return LABEL_FS_MIN;
-      var t = Math.log(sr / MIN_PX) / Math.log(LABEL_FS_REF / MIN_PX);
-      var fs = LABEL_FS_MIN + (LABEL_FS_MAX - LABEL_FS_MIN) * t;
-      return Math.round(clamp(fs, LABEL_FS_MIN, LABEL_FS_MAX));
+    function fitFontFor(sr, text, weight) {
+      if (!(sr > 0)) return LABEL_FS_MIN;
+      var availW = LABEL_AVAIL * 2 * sr;
+      var want = Math.round(clamp(sr * LABEL_FS_SCALE, LABEL_FS_MIN, LABEL_FS_MAX));
+      while (want > LABEL_FS_MIN &&
+             measure(text, weight + want + 'px ' + FONT) + 6 > availW) want--;
+      return want;
     }
 
-    // 字宽收口：字号再大也不许让文字溢出它所属的圆（「文字与圆形元素的相对大小」）。
-    // 整数逐级下调，下限停在 LABEL_FS_MIN —— 宁可让 24px 碰撞网格去淘汰它，
-    // 也不要把字缩到读不了。weight 必须一起进 key：600 半粗比常规宽，
-    // 拿常规宽度去判半粗标签会漏判溢出。
-    function fitFont(text, fs, weight, availW) {
-      while (fs > LABEL_FS_MIN && measure(text, weight + fs + 'px ' + FONT) + 6 > availW) fs--;
-      return fs;
-    }
-
-    // 圆外标签的硬收口：字号缩到下限还超 label_max_width 就截断加省略号。不截断的
-    // 话一条六十字的标题会以 11px 横扫半屏、压过邻圆和连线 —— 正是「文字与圆形元素
-    // 相对大小」要防的乱。完整名字仍在悬停 tooltip 与搜索里，信息不丢。
-    // 结果按 (节点, font) 缓存：圆外可用宽是常数 label_max_width，而圆外字号只落在
-    // 屏幕半径 < LABEL_INSIDE_PX 对应的少数几档上，缓存条目有界；不缓存的话二分过程
-    // 里每个前缀都会进 measure 缓存，随帧数无界增长。
+    // 圆内标签的超宽收口：字号降到下限仍塞不进这个圆，就截断加省略号。
+    // 不截断的话一条六十字的标题会以 11px 横向溢出、「压过」自己的圆描边和邻圆。
+    // 完整名字仍在悬停 tooltip 与搜索里，信息不丢。
+    // 结果按 (节点, font, 可用宽) 缓存：可用宽由屏幕半径取整而来，同屏标签的
+    // 字号档位有界，所以缓存条目有界；不缓存的话二分过程里每个前缀都会进 measure
+    // 缓存，随帧数无界增长。
     var clipCache = new Map();
-    function clipLabel(id, text, font) {
-      var key = id + '|' + font;
+    function clipToWidth(id, text, font, availW) {
+      var key = id + '|' + font + '|' + (availW | 0);
       var hit = clipCache.get(key);
       if (hit !== undefined) return hit;
       var out = text;
-      if (measure(text, font) + 6 > LABEL_MAX_W) {
+      if (measure(text, font) + 6 > availW) {
         var lo = 0, hi = text.length;
         while (lo < hi) {
           var mid = (lo + hi + 1) >> 1;
-          if (measure(text.slice(0, mid) + '…', font) + 6 <= LABEL_MAX_W) lo = mid;
+          if (measure(text.slice(0, mid) + '…', font) + 6 <= availW) lo = mid;
           else hi = mid - 1;
         }
         out = text.slice(0, lo) + '…';
@@ -1446,38 +1442,33 @@
         var m = cands[j];
         var text = m.label || m.id;
         var sr = m._sr;
-        // 大容器：标签居中压在圆内顶部（省名写在省的范围内，地图就这么干）；
-        // 小圆点：标签挂在右侧，免得盖住圆本身。
-        var inside = sr >= LABEL_INSIDE_PX;
+        // ── 只画在圆内（2026-10-21，用户要求）──────────────────────────
+        // 圆外标签会压到兄弟圆上（「有的还进入了其他元素内部」），而且看上去像是
+        // 一堆浮在圆边上的小字。现在一律压在圆内、水平垂直都居中，把那块空地填满。
+        // 半径小到放不下哪怕最小字号的圆**不挂标签** —— 它会在放大过程中自己长够；
+        // 这比在圆外挂一串互相打架的小字干净得多。
+        if (sr < LABEL_INSIDE_PX) continue;
         // 粗细是「类别」信号（浅层骨架 vs 深层细节），字号是「尺度」信号，两者不冲突。
-        // 可用宽度：圆内标签不许溢出自己的圆（1.8 × sr ≈ 内接弦的九成）；
-        // 圆外标签没有圆的约束，受 label_max_width 收口，仍超宽的截断（clipLabel）。
         var weight = m.depth <= LABEL_BOLD_DEPTH ? '600 ' : '';
-        // 圆内连下限字号都装不下的长名字改挂圆外：硬塞只会让字压过圆描边、盖住里面
-        // 的子节点。改挂圆外后它受 label_max_width 收口，不会横扫半屏。
-        if (inside && measure(text, weight + LABEL_FS_MIN + 'px ' + FONT) + 6 > 1.8 * sr) inside = false;
-        var fs = fitFont(text, labelFontSize(sr), weight, inside ? 1.8 * sr : LABEL_MAX_W);
+        var availW = LABEL_AVAIL * 2 * sr;
+        var fs = fitFontFor(sr, text, weight);
         var font = weight + fs + 'px ' + FONT;
-        if (!inside) text = clipLabel(m.id, text, font);
+        // 字号已经压到下限还塞不进圆 → 截断加省略号（完整名字在 tooltip / 搜索里）
+        var full = text;
+        text = clipToWidth(m.id, text, font, availW);
+        // 截到只剩一个字符 + 省略号就不是标签了，是噪声（圆太小 / 名字太长）→ 不画。
+        // 原本就很短的名字（「模电」「DSP」）不受影响：它们没被截断，不会带省略号。
+        if (text.length <= 2 && text !== full) continue;
         var wpx = measure(text, font) + 6;
         var hpx = fs + 4;
-        var cxs = w2sx(m.x), cys = w2sy(m.y);
-        var sx, sy, x0, x1;
-        if (inside) {
-          // 顶边距随字号走：sy - hpx/2 = cys - sr + 2，任何字号下文字上边界都离圆的
-          // 描边 2px，不会被切到。fs=11 时偏移 9.5 ≈ 原来写死的 10
-          sx = cxs; sy = cys - sr + fs * 0.5 + 4;
-          x0 = Math.floor((sx - wpx / 2) / LABEL_CELL);
-          x1 = Math.floor((sx + wpx / 2) / LABEL_CELL);
-        } else {
-          sx = cxs + sr + 4; sy = cys;
-          x0 = Math.floor(sx / LABEL_CELL);
-          x1 = Math.floor((sx + wpx) / LABEL_CELL);
-        }
+        // 居中：文字压在圆心。大圆里的字号也大（fitFontFor 的正比项），于是标签会
+        // 跟着圆一起长大、把那片空地填住，不再出现「直径 3000px 的圆里一行 22px 小字」。
+        var sx = w2sx(m.x), sy = w2sy(m.y);
+        var bx0 = sx - wpx / 2, bx1 = sx + wpx / 2;
+        var x0 = Math.floor(bx0 / LABEL_CELL), x1 = Math.floor(bx1 / LABEL_CELL);
         var y0 = Math.floor((sy - hpx / 2) / LABEL_CELL), y1 = Math.floor((sy + hpx / 2) / LABEL_CELL);
         // 锚点落在屏幕外的标签（铺满视口停画的容器、圆心在屏外的大圆）既不该占
         // LABEL_BUDGET，也不该进碰撞网格把真标签挤掉
-        var bx0 = inside ? sx - wpx / 2 : sx, bx1 = inside ? sx + wpx / 2 : sx + wpx;
         if (bx1 < 0 || bx0 > W || sy + hpx / 2 < 0 || sy - hpx / 2 > H) continue;
         var rank = forcedRank(m);
         var clash = false;
@@ -1492,14 +1483,11 @@
         for (var gx2 = x0; gx2 <= x1; gx2++) {
           for (var gy2 = y0; gy2 <= y1; gy2++) occupied.set(gx2 + ',' + gy2, 1);
         }
-        // 渲染用的 alpha 走平滑压暗：alphaOf 在 cam.zoom 越过 _gate 时把祖先 alpha
-        // 从 ~1.0 瞬跳到 parent_dim，文字会「啪」地变淡。fillAlphaOf 让压暗跟着最先
-        // 浮现的那个孩子同步渐变（圆的填充早就这么干了，见 fillAlphaOf 的注释）。
-        // 排序仍读 alpha.get()（含硬压暗）—— 那是「谁该抢到标签位」的既有语义，
-        // 已人眼验收过，本轮只换落笔浓度、不换竞争顺序。
-        var al = clamp(LABEL_SMOOTH_DIM ? fillAlphaOf(m) : alpha.get(m.id), 0, 1);
+        // 浓度直接取**圆这一帧的 alpha**（同进同出，用户要求）：圆淡到多少，字就淡到
+        // 多少。这个值已经含了层级带淡入与可读性地板，不再单独乘压暗系数。
+        var al = clamp(alpha.get(m.id), 0, 1);
         ctx.font = font;
-        ctx.textAlign = inside ? 'center' : 'left';
+        ctx.textAlign = 'center';
         ctx.globalAlpha = al * 0.9;
         ctx.fillStyle = 'rgba(15,17,22,0.85)';
         ctx.fillText(text, sx + 1, sy + 1);
