@@ -66,6 +66,7 @@ DEFAULTS: dict = {
         "weak_edge_min_count": 2,
         "focus_edge_dim": 0.07,
         "hover_edge_dim": 0.75,
+        "idle_edge_dim": 0.45,
         "edge_trim_clearance": 2,
         "edge_marker_min_len": 20,
         "edge_marker_tint": 0.55,
@@ -167,7 +168,7 @@ def _validate(cfg: dict):
         _fail(f"lod.label_font_max 必须 ≥ label_font_min，收到 {fs_max!r}")
     if not isinstance(lod.get("fade_span"), (int, float)) or not lod["fade_span"] >= 1:
         _fail("lod.fade_span 必须是 ≥1 的倍率（1 = 硬切，不淡入）")
-    for key in ("focus_edge_dim", "hover_edge_dim"):
+    for key in ("focus_edge_dim", "hover_edge_dim", "idle_edge_dim"):
         v = lod.get(key)
         if not isinstance(v, (int, float)) or not 0 <= v <= 1:
             _fail(f"lod.{key} 必须在 [0, 1] 之间（0 = 完全不画无关连线，1 = 不压暗）")

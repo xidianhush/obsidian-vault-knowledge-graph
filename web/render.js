@@ -132,6 +132,10 @@
     // 会被 || 当成假值吃掉。
     var FOCUS_DIM = LOD.focus_edge_dim == null ? 0.07 : LOD.focus_edge_dim;
     var HOVER_DIM = LOD.hover_edge_dim == null ? 0.75 : LOD.hover_edge_dim;
+    // 静息态（既没选中、也没悬停）的连线浓度。2026-10-21 起与 hover 分开：原先两者共用
+    // HOVER_DIM(0.75)，于是「刚打开界面」也是满屏 0.75 的白线，首屏显得很吵。
+    // 用户要的是：首屏安静，**只有选中浅层大元素时**才靠 1.0 vs FOCUS_DIM 的对比出网线感。
+    var IDLE_DIM = LOD.idle_edge_dim == null ? 0.45 : LOD.idle_edge_dim;
     // 端点标记。TRIM 是连线在两端圆边界处截断后留的间隙；MARK_MIN 是「短到不画标记」
     // 的屏幕长度门槛；TINT 是标记向浅色提亮的比例 —— 必须提亮，因为 derives 的边色
     // 和 Science and Tech 的节点色是同一个 hex，同色标记落在同色圆边上等于隐形。
@@ -780,7 +784,7 @@
         // 「位置稳定 + 上下文稳定」是这个渲染器的设计契约，硬删边会丢掉「这片区域
         // 连得多密」的环境感知。
         var hot = selN ? p.hs : p.hh;
-        var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
+        var dim = hot ? 1 : (selN ? FOCUS_DIM : (hovN ? HOVER_DIM : IDLE_DIM));
         if (p.hs) stats.focusEdges++;
         var ea = clamp(p.a * dim, 0, 1);
         ctx.globalAlpha = ea;
@@ -895,7 +899,7 @@
         // 父圆内部，位置信息由线承担，见 drawEmphasis 的注释）。
         if (sF !== tF) hotNeighbors.add(sF ? B.id : A.id);
         var hot = selN ? hs : !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
-        var dim = hot ? 1 : (selN ? FOCUS_DIM : HOVER_DIM);
+        var dim = hot ? 1 : (selN ? FOCUS_DIM : (hovN ? HOVER_DIM : IDLE_DIM));
         if (hs) stats.focusEdges++;
         // raw 统一配色：不再按 _nl（整篇级 / 标题级）或关系类型分色（见 RAW_EDGE_RGB 处注释）
         var rgb = RAW_EDGE_RGB;
