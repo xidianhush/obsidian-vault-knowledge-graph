@@ -278,7 +278,20 @@ with sync_playwright() as p:
           "%s vs %s" % (st["level"], meta["homeLayer"]))
     check("initial zoom == zHome", abs(st["zoom"] - meta["zHome"]) < 0.01,
           "%s vs %s" % (st["zoom"], meta["zHome"]))
-    check("initial shownNodes in 40..120", 40 <= st["shownNodes"] <= 120, str(st["shownNodes"]))
+    # 层级带之后（2026-10-21）home 只画到 home_layer 层，落笔数从旧的 55 掉到 ~17，
+    # 写死区间没有意义了。改成从 payload / 渲染器现场推出来的判据：
+    #   ① 有内容；② 只画到 home_layer 层；③ 不超过 home_layer 以内的节点总数。
+    check("initial shownNodes > 0", st["shownNodes"] > 0, str(st["shownNodes"]))
+    deeper0 = page.evaluate("""(h) => {
+        const R = window.KG.renderer;
+        return [...R.byId.values()].filter(n => n.depth > h && R.alphaOf(n.id) > 0).length;
+    }""", meta["homeLayer"])
+    check("home shows nothing deeper than home_layer", deeper0 == 0, str(deeper0))
+    max_home = page.evaluate(
+        "(h) => [...window.KG.renderer.byId.values()].filter(n => n.depth <= h).length",
+        meta["homeLayer"])
+    check("home node count fits inside the home layers",
+          st["shownNodes"] <= max_home, "%d vs %d" % (st["shownNodes"], max_home))
 
     painted = page.evaluate("""() => {
         const cv = document.getElementById('cv'); const g = cv.getContext('2d');
@@ -755,7 +768,10 @@ with sync_playwright() as p:
     pick = page.evaluate("""() => {
         const R = window.KG.renderer;
         const keep = R.selected;
-        const cand = R.NODES.filter(n => R.alphaOf(n.id) > 0.95);
+        // 门槛 0.2 而不是 0.95：层级带之后 home 上最大的 alpha 只有约 0.5（第 2 层正
+        // 落在淡入带半程），旧门槛会把候选集筛空、整段被静默跳过。0.2 仍然要求
+        // 「在画面上明确可见」，只是不再要求饱和。
+        const cand = R.NODES.filter(n => R.alphaOf(n.id) > 0.2).slice(0, 300);
         let hit = null;
         for (const n of cand) {
             R.selected = n.id; R.draw();
@@ -903,6 +919,19 @@ with sync_playwright() as p:
         check("markers never exceed two per drawn edge",
               st0["marks"] <= 2 * base_edges,
               "%d marks / %d edges" % (st0["marks"], base_edges))
+
+        # 靶子探测挪到**第 4 层**：层级带之后 home（第 2 层）只落笔 ~17 个圆，且屏上
+        # 这些圆的邻居大多还没浮现 ⇒ focusNeighbors 恒为 0、相关边在 home 尺度下短于
+        # RAW_MARK_MIN，取样集为空（整段会被 weaken 掉甚至假红）。第 4 层既够深（邻居
+        # 已落笔）又够浅（同屏圆够多），是这段判据的合适取样点。
+        # 前面那几条「home 视图必须有标记」的断言已经在 home 上跑过了，这里只换取样点。
+        page.evaluate("() => window.KG.setLevel(4)")
+        page.wait_for_timeout(900)
+        st0 = page.evaluate(STATE)
+        base_edges = st0["shownEdges"]
+        print("    probe baseline (level %d): shownNodes=%d shownEdges=%d zoom=%.4f"
+              % (st0["level"], st0["shownNodes"], base_edges, st0["zoom"]))
+        check("focus probe view still has edges", base_edges > 0, str(base_edges))
 
         # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
         # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。

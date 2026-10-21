@@ -32,6 +32,8 @@ DEFAULTS: dict = {
         "zoom_in_ceiling": 1.35,
         "zoom_out_floor": 1.05,
         "home_fit": 1.08,
+        "home_level": 2,
+        "home_band": 0.5,
     },
     "weight": {
         "wiki_link": 1.0,
@@ -117,6 +119,12 @@ def _validate(cfg: dict):
               "这个地标含义就没了。注意滚轮本身已不再被 zMin 夹住，这条守的是地标值，不是滚轮）")
     if not isinstance(zoom.get("home_fit"), (int, float)) or zoom["home_fit"] <= 0:
         _fail("zoom.home_fit 必须是正数（初始视图相对「刚好装下全图」的放大倍数）")
+    hl = zoom.get("home_level")
+    if not isinstance(hl, int) or isinstance(hl, bool) or hl < 1:
+        _fail(f"zoom.home_level 必须是 ≥1 的整数（初始视图停在第几层，默认 2），收到 {hl!r}")
+    hb = zoom.get("home_band")
+    if not isinstance(hb, (int, float)) or isinstance(hb, bool) or not 0 <= hb <= 1:
+        _fail(f"zoom.home_band 必须在 [0, 1] 之间（home 落在该层淡入带的哪个位置），收到 {hb!r}")
     if zoom["transition_ms"] < 0:
         _fail("zoom.transition_ms 不能为负")
     lcfg = cfg["layout"]

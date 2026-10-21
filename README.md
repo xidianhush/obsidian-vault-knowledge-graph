@@ -49,7 +49,7 @@ python build.py scope  --scope public     # 打印公开那份的镜像清单（
 
 ```
 python build.py verify      # 数据侧断言
-python browser_check.py     # 浏览器侧 162 项断言（Playwright + 本机 Chrome，自动截图）
+python browser_check.py     # 浏览器侧约 166 项断言（Playwright + 本机 Chrome，自动截图）
 ```
 
 ---
@@ -349,23 +349,41 @@ $t | Set-ScheduledTask
 
 这个方向是布局的**几何构造**，不是靠补丁凑出来的：circle packing 下子圆严格落在父圆内部、
 且半径一定更小（父半径 ≥ 最大子圆 × `layout.level_ratio` = 1.5），所以沿任何一条包含链，
-世界半径 `r` 严格递减 ⇒ `minzoom` 严格递增 ⇒ 孩子永远比父母更晚浮现。
+世界半径 `r` 严格递减、深度严格递增。
 
-### 每个节点自己决定何时浮现
+### 每一层自己决定何时浮现（2026-10-21 起）
 
-构建期给每个节点算一个世界半径 `r`（= 它在知识树里占的地盘），渲染期：
+**浮现时机由「属于第几层」决定，不由节点自己的半径决定。** 构建期给 10 层各算一个入口：
 
 ```
-minzoom = lod.min_px / r               # 屏幕半径达到 min_px 像素时开始浮现
-alpha   = smoothstep(minzoom/fade_span, minzoom, zoom)   # 在 fade_span 倍率带宽内淡入
+enter[L-1]        = 第 L 层开始淡入的 zoom        # 以 home 锚定的等比阶梯
+M[L] = enter[L-1] × fade_span  = 第 L 层「成熟」（全部满不透明）的 zoom
+alpha(node at depth L) = smoothstep(enter[L-1], M[L], zoom) × 父圆压暗系数
 ```
 
-`lod.min_px = 18` 读作「一个圆值得被画出来的最小屏幕**半径**」。它同时决定 `zMin`：
-最小学科根在 `zMin` 处恰好是 `min_px × zoom_out_floor`。
+于是**同一层的所有节点共用一个 alpha**：同时开始浮现、同时变深、成熟后颜色完全一致。
+这就是「扫一眼周围实心圆颜色的深浅，就能判断哪些元素属于同一层级」的实现方式。
+半径 `r` 从此只决定「同一层里画多大」，不再决定「什么时候出现」——这也是「文件夹 / 笔记 /
+标题只是人为的存储结构」这条设计观的延续（存储粒度不参与时机，也不参与配色）。
 
-所以**淡入淡出是 per-node 的连续过程，不是 per-layer 的开关**。放大时深层节点从各自的
-位置逐个「长出来」；因为叶子半径随路径上的累积缩放而分散，浮现被摊开到十几格滚轮上
-（单格滚轮最大涌入 10%），不会齐刷刷弹出一片。
+父圆在**下一层成熟**时压暗到 `zoom.parent_dim`（0.22）：`M[L]` 与第 L+1 层的淡入带端点
+重合，所以「省淡出、市淡入」是同一次动作的两面。相邻两层的带**不重叠**
+（`M[L] < enter[L]`，构建期断言），因此同一时刻最多只有一层处在淡入过程中 —— 这是
+「同层同色」的前提。
+
+代价（**已知并接受**）：因为同一时刻基本只看得到 1~1.5 层，旧版那种「3~4 层以不同浓度
+同时叠着」的层次感没有了；再叠加第 2 层内部 39.7× 的半径差，首屏会看到几块较大、同浓度的
+圆叠在一起（用户 2026-10-21 验收后选择接受，后续另有改动处理观感）。
+
+另外两条硬约束：
+- **可读性地板**：屏幕半径 < `0.5 × lod.min_px`（9px）的节点不画；从 0.5× 到 1× 之间
+  线性淡入。同层里最小那批因此会比兄弟晚一点变实（不会硬跳）。
+- `lod.min_px = 18` 仍然决定 `zMin`：最小学科根在 `zMin` 处恰好是 `min_px × zoom_out_floor`。
+
+层级阶梯是**以 home 视角锚定**的等比序列，所以加一篇笔记不会让所有层级的门槛一起跳
+（旧算法用每层 minzoom 中位数，会跟着内容漂）。两个旋钮：
+`zoom.home_level`（home 停在第几层，默认 2）与 `zoom.home_band`（home 落在该层淡入带的
+哪个位置，默认 0.5 = 半程；**别填 1**，整层满不透明会把父圆结构糊掉）。
 
 父层节点由 `zoom.parent_dim`（0.22）压暗但保留，作为上下文。嵌套实心圆下**父圆填充就是
 子圆的「底色」**，压得不够狠会把子圆整体一起压暗；0.22 才留得住「省 = 浅色面、
@@ -442,8 +460,10 @@ fs = clamp(F_MIN + (F_MAX - F_MIN) × ln(sr / min_px) / ln(ref / min_px), F_MIN,
 1. **层级预聚合（generalization）** —— 构建期已算好 `aggregates[L]`：任意两个元素之间的
    关系，在第 L 层表现为「各自在第 L 层的祖先」之间的一条聚合边。所以一条 heading→heading
    的链接**在每个尺度上都有一个唯一确定的代表**，不需要在渲染期临时决定端点。
-2. **per-node minzoom** —— 就是 Mapbox vector tile 里那个 `minzoom` 字段，由节点自己的
-   世界半径 `r` 决定。端点自己决定什么时候浮现，**边的 alpha 直接取两端点 alpha 的最小值**。
+2. **per-layer 淡入带** —— 端点「属于第几层」决定它什么时候浮现（`enter[L-1]` 起、
+   `M[L]` 成熟，见上文），**边的 alpha 直接取两端点 alpha 的最小值**。
+   （2026-10-21 前这里是 per-node 的 `minzoom`；改成层级带之后端点仍然各自决定，
+   只是同一层的端点一定同步。）
 
 于是：「这条边现在画在哪两个点之间」由 (1) 决定，「它现在该不该出现、多透明」由 (2) 决定。
 **边本身不做独立的淡入淡出——那是它两端点的事。** 两端都在淡入带里时，边跟着一起淡。
@@ -467,14 +487,15 @@ fs = clamp(F_MIN + (F_MAX - F_MIN) × ln(sr / min_px) / ln(ref / min_px), F_MIN,
 
 - **层级胶囊**（顶栏 1..10）点一下就跳到那层；**`[` `]`** 逐层换；
   **`zoomToDepth(d)`** 是控制台入口。
-- 每个层级有一个 `enter[L]` 缩放值（= 该层 minzoom 中位数沿深度取前缀最大），
-  它只用于两件事：HUD 上「第几层」的读数、以及跳层的相机目标。它**不**反过来给节点封顶 ——
-  一个内容特别多的子圆 minzoom 低于本层中位数是正确行为，它本来就该更早被看见。
+- 每个层级有两个缩放值：`enter[L-1]`（该层**开始淡入**）与 `M[L] = enter[L-1] × fade_span`
+  （该层**成熟**、全部满不透明）。HUD 上「第几层」的读数取 `max{L : enter[L-1] ≤ zoom}`；
+  **跳层落点用 `M[L]` 而不是 `enter`** —— 落到入口处该层几乎还是透明的（alpha≈0.06）。
+  `focusOn` / `fitPair` 也一样按「层成熟」算，否则会跳到一个目标还没浮现的尺度。
 - **zoom 是唯一真源**，层级读数由 zoom 单向派生，所以不存在「视角收窄 → zoom 变大 →
   又跳回深层」的正反馈震荡。
-- **双击空白处**回到 home 视角（实测停在**第 1 层**，`home_zoom = 0.4612`，
-  由 `zoom.home_fit` = 1.08 决定；它的硬上限是 `layout.padding` = 1.12，
-  再大就会把 Science and Tech 裁出屏幕）。
+- **双击空白处**回到 home 视角（落在**第 2 层**：`home_zoom = 0.4612` 正好是第 2 层淡入带
+  的半程；由 `zoom.home_fit` = 1.08 与 `zoom.home_level` = 2 决定，`home_fit` 的硬上限是
+  `layout.padding` = 1.12）。home 只画到第 2 层 —— 缩到最外层 `zMin` 时只剩 6 个学科根。
 - 落在没有内容的地方时（两个方向都可能 —— 缩太远、或放大到 maxzoom 停画），画布上有兜底
   提示文字，`Home` / 双击空白 / 顶栏「重置」都能一键回到 home 视角（见 §5、§10）。
   判据是 `stats.painted`（真的落了笔的节点数），**不是**候选集大小 —— 用错就会「画布全黑
@@ -587,7 +608,7 @@ knowledge-graph/
 ├── config.yaml            构建入口：scope_file / scopes（哪几份、各输出到哪）/ 缩放 / 权重 / 布局 / LOD / 配色
 ├── build.py               CLI：scan | suggest | build | verify | watch | scope（都支持 --scope private|public|all）
 ├── verify.py              数据侧自动校验（断言式，无测试框架）
-├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，162 项断言 + 截图，默认查 private 那份）
+├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，~166 项断言 + 截图，默认查 private 那份）
 ├── sync-graph.ps1         计划任务包装脚本（防重入 + python 检查 + UTF-8 + 日志裁剪；建本地两份 `--scope all`）
 ├── kg/                    数据管道
 │   ├── config.py          配置加载与校验（读 public-scope.yaml、解析各 scope；非法配置给中文报错）
@@ -768,7 +789,7 @@ knowledge-graph/
 公开范围之外，这条边在 public 里就不存在。本次快照正好有一处笔记→笔记链接是这样
 （**09:07 那轮** `scan` 里 private 46 条、public 45 条），差的就是它。**别把「两份语义边相等」当契约。**
 
-### `python browser_check.py`（浏览器侧，162 项断言）
+### `python browser_check.py`（浏览器侧，约 166 项断言）
 
 Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`，无需起服务器。
 默认查 private 那份（`dist/knowledge-graph.html`）；两份共用 `web/*.js`，只是 payload 不同，
@@ -842,7 +863,7 @@ public **62 fps**）、20 格滚轮耗时（实测约 **1.1 s**：1104 / 1091 ms
 截图落在 `%TEMP%\kg_*.png`（可用 `KG_SHOT_DIR` 改），**改完视觉要自己看图**。
 深缩放那几段用例的 fixture 节点是按**后缀**在图里现查的，不写完整路径 —— 笔记改名不会让
 整段用例静默跳过（真跳过了，唯一信号是 `[ok]` 总数从 162 掉下来，所以每次都要看这个数）。
-两份**条数相同，都是 162 ok / 0 fail**；另有 **2** 条 warn，都是条件跳过而不是失败：天花板处
+两份条数**不再相同**（条件跳过不同）：private **166 ok**、public **167 ok**，各 0 fail；另有条件跳过的 warn：天花板处
 找不到空视口（`bug B`，两份都跳）一条，没探到超 `CHIP_MAX` 的屏外目标（`+k` chip 折叠分支）
 **只剩 agg 一侧报一条**（raw 侧真测到了 2 组折叠，早先「两种模式各一条 → 3 条 warn」已过期）。
 空视口本身已经由 2b / 3c / 3d 三段从「缩太远」「放太大」与「任何缩放 × 任何平移」三个角度

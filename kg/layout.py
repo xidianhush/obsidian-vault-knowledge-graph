@@ -399,14 +399,10 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
         return min_px / max(nodes[node_id]["r"], 1e-9)
 
     layers = []
-    enter: list[float] = []
-    running = 0.0
     for depth in range(1, max_depth + 1):
         members = by_depth.get(depth, [])
         rs = sorted(nodes[m]["r"] for m in members)
         mz = sorted(minzoom(m) for m in members)
-        if mz:
-            running = max(running, _median(mz))
         layers.append({
             "depth": depth,
             "count": len(members),
@@ -415,13 +411,53 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
             "r_max": round(rs[-1], 4) if rs else 0.0,
             "minzoom_median": round(_median(mz), 6) if mz else 0.0,
         })
-        enter.append(running)
+
+    # ── 层级带（2026-10-21 起，取代 per-node 门槛当「浮现时机」）──────────
+    # 同深度的节点共用一条淡入带 ⇒ 同层同时浮现、同色；父圆在「下一层成熟」时
+    # 压暗。半径从此只决定「在同层里画多大」，不再决定「什么时候出现」。
+    # 动机见 HANDOFF §4 坑 39：per-node 门槛下，同一层的兄弟会因为半径差 9~40 倍
+    # 而错开五六个滚轮格，顶层学科也会因为各自孩子的大小不同而深浅不一。
+    #
+    # 阶梯形状：把 home 视角锚定在第 home_level 层（默认 2），上下按等比 rung 铺到
+    # zMax。rung 由「从 home_level 到最深层的 zoom 跨度」反解 —— 层数固定时整条
+    # 阶梯与 vault 内容无关，加一篇笔记不会让所有层级的门槛一起跳（旧算法用
+    # minzoom 中位数，会跟着内容漂）。
+    fade = float(cfg.get("lod", {}).get("fade_span", 1.35))
+    ceiling = float(cfg.get("zoom", {}).get("zoom_in_ceiling", 1.35))
+    home_level = int(cfg.get("zoom", {}).get("home_level", 2))
+    home_level = max(1, min(home_level, max_depth))
+    # home 落在第 home_level 层淡入带的哪个位置（0 = 刚开始浮现，1 = 完全成熟）。
+    # 取 0 会让 home 看起来还是上一层；取 1 会让该层全部满不透明 —— 而层内半径差
+    # 能到 40 倍，满不透明时最大的那几个会把父圆结构整个糊掉。0.5 是实测能同时
+    # 保住「层级可读」与「父圆还透得出来」的位置。
+    home_band = min(1.0, max(0.0, float(cfg.get("zoom", {}).get("home_band", 0.5))))
 
     home_zoom = NOMINAL_FIT_RADIUS / root_radius * home_fit if root_radius > 0 else 0.0
-    home_layer = 1
-    for depth in range(1, max_depth + 1):
-        if enter[depth - 1] <= home_zoom:
-            home_layer = depth
+    all_r = [nodes[nid]["r"] for nid in nodes if nodes[nid]["r"] > 0]
+    max_mz = min_px / min(all_r) if all_r else 1.0
+    z_hi = max_mz * ceiling
+    # 反解锚点：home 在带 [M/fade, M] 上的进度 home_band ⇒ M = home·fade / (1 + p(fade-1))
+    anchor = (home_zoom * fade / (1.0 + home_band * (fade - 1.0))) if home_zoom > 0 else 1.0
+    steps = max_depth - home_level
+    rung = (z_hi / anchor) ** (1.0 / steps) if (steps > 0 and anchor > 0) else 1.0
+    # 每层至少跨一条淡入带，否则相邻两层的带会叠在一起、又变成「同时出现」。
+    rung = max(rung, fade * 1.02)
+
+    mature = [anchor * (rung ** (depth - home_level))
+              for depth in range(1, max_depth + 1)]
+    # 第 1 层必须在**最外层（zMin）之前**就成熟，否则「缩到最小都看不见学科根」。
+    # 两个 scope 的 zMin 差别很大（private 0.367 / public 0.142，由各自最小根决定），
+    # 而阶梯是以 home 锚定的，两者不必自然相容 —— 所以这里直接把 M[1] 压到 zMin 以下。
+    # 只动第 1 层：M[2..] 与 home 锚定保持不变，单调性也不受影响。
+    zoom_out_floor = float(cfg.get("zoom", {}).get("zoom_out_floor", 1.05))
+    roots = by_depth.get(1, [])
+    if roots:
+        z_lo = min_px / max(nodes[r]["r"] for r in roots) * zoom_out_floor
+        mature[0] = min(mature[0], z_lo)
+    # enter[L-1] = 第 L 层「开始淡入」的 zoom（成熟点 / fade_span）。
+    # 渲染侧 alpha = smoothstep(enter[L-1], enter[L-1] * fade_span, zoom)。
+    enter = [m / fade for m in mature]
+    home_layer = home_level
 
     return layers, enter, home_layer, root_radius
 

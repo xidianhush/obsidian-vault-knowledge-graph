@@ -231,26 +231,9 @@
       for (var j = n.depth; j < MAXD; j++) { ch[j] = n.id; }
       n._chain = ch;
     });
-    // 父节点在「所有子节点都已浮现」之后压暗，把视觉重量让给细节。
-    // _gate 给 alphaOf 用（边、标签、api 都读它）；_cLo/_cHi 给填充用 ——
-    // 孩子里最先浮现的那一个的淡入区间，父圆跟着它同步退成底图。
-    kids.forEach(function (list, pid) {
-      var p = byId.get(pid);
-      if (!p) return;
-      var g = 0, lo = Infinity;
-      for (var i = 0; i < list.length; i++) {
-        var c = byId.get(list[i]);
-        if (!c) continue;
-        if (c._mz > g) g = c._mz;
-        if (c._mz < lo) lo = c._mz;
-      }
-      p._gate = g;
-      p._cHi = lo;
-      p._cLo = lo / FADE;
-    });
-    NODES.forEach(function (n) {
-      if (n._cHi == null) { n._cHi = Infinity; n._cLo = Infinity; }
-    });
+    // 父圆压暗与「何时浮现」已经整体交给下面的层级带（levelFade / dimFactor），
+    // 不再按「孩子自己的 minzoom」算 _gate / _cLo / _cHi —— 那套是 per-node 门槛
+    // 时代的产物，会让同层的兄弟因为半径不同而各自为政（见 HANDOFF §4 坑 39）。
 
     // 语义边（contains 不画：包含关系已经由半径几何表达，画出来只会糊成一团）
     var SEM = EDGES.filter(function (e) { return e.type !== 'contains'; });
@@ -402,27 +385,49 @@
       zoomAt(sx, sy, z);
     }
 
+    // ── 层级带（2026-10-21）──────────────────────────────────────────────
+    // 浮现时机不再看节点自己的半径，而看它**属于第几层**：
+    //   ENTER[L-1]        = 第 L 层开始淡入的 zoom（构建期按 home 锚定的等比阶梯算好）
+    //   ENTER[L-1] * FADE = 第 L 层完全成熟的 zoom
+    // 同一层的所有节点共用这条带 ⇒ 同时出现、同时变深、成熟后颜色完全一致；
+    // 父圆在自己下一层成熟时被压暗（「省淡出、市淡入」的交接点也统一到同一个 zoom）。
+    // 半径从此只决定「同层里画多大」，不再决定「什么时候出现」。
+    function levelFade(depth, z) {
+      var e = ENTER[Math.max(0, depth - 1)];
+      if (e == null) return 1;                 // 超出表就不管（理论上不会）
+      return smoothstep(e, e * FADE, z);
+    }
+    // 该层「成熟」的 zoom = 该层全部满不透明的那一档。跳层落点、focusOn、
+    // fitPair 都用它 —— 用 _mz 会落到「本层还没开始淡入」的地方。
+    function levelMature(depth) {
+      var e = ENTER[Math.max(0, depth - 1)];
+      return e == null ? 0 : e * FADE;
+    }
+    // 该深度的节点在哪个 zoom 上被压暗 = 下一层的成熟点
+    function levelDimAt(depth) {
+      var e = ENTER[depth];                    // ENTER[depth] = M[depth+1] / FADE
+      return e == null ? Infinity : e * FADE;
+    }
+    function dimFactor(depth, z) {
+      var at = levelDimAt(depth);
+      if (at === Infinity) return 1;
+      // 压暗跟着**下一层的淡入带**同步渐变（起点 at/FADE、终点 at），
+      // 于是「父圆退成底图」和「孩子长出来」是同一个动作的两个面，不会跳。
+      return 1 - smoothstep(at / FADE, at, z) * (1 - PARENT_DIM);
+    }
+
     function alphaOf(n) {
-      var a = smoothstep(n._mz / FADE, n._mz, cam.zoom);
+      var a = levelFade(n.depth, cam.zoom) * dimFactor(n.depth, cam.zoom);
       if (a <= 0.01) return 0;
-      if (n._gate && cam.zoom >= n._gate) a *= PARENT_DIM;
       if (filterSet && !filterSet.has(n.id)) return 0;
       return a;
     }
 
-    // 填充用的 alpha。和 alphaOf 的区别只在一处：压暗不再是「全部孩子浮现后」
-    // 的一次性跳变，而是跟着**最先浮现的那个孩子**同步渐变。
-    // 旧同心环布局里节点互不嵌套，alphaOf 在 [_mz, _gate] 区间保持 1.0 是对的；
-    // packing 下父圆真的套着子圆，那段平台会让父圆变成不透明色块、把正在淡入的
-    // 同色孩子整个吃掉。改成同步渐变之后，「省淡出、市淡入」才真的接得上。
-    // 端点行为与 alphaOf 一致：孩子没浮现时 = 淡入进度，全部浮现后 = 进度 × parent_dim。
+    // 填充用的 alpha。层级带之后它与 alphaOf 已经是同一条曲线（压暗不再是
+    // 「孩子全浮现」的跳变，而是跟着下一层的淡入带渐变），保留独立函数只为让
+    // 调用点语义清楚：读填充的走这个，读「这个节点算不算在屏」的走 alphaOf。
     function fillAlphaOf(n) {
-      var base = smoothstep(n._mz / FADE, n._mz, cam.zoom);
-      if (base <= 0.01) return 0;
-      if (filterSet && !filterSet.has(n.id)) return 0;
-      if (n._cHi === Infinity) return base;
-      var c = smoothstep(n._cLo, n._cHi, cam.zoom);
-      return base * (1 - c * (1 - PARENT_DIM));
+      return alphaOf(n);
     }
 
     // HUD 上的层级读数：max{ L : enter[L] ≤ zoom }
@@ -432,15 +437,15 @@
       return Math.max(1, L);
     }
 
-    // 端点沿祖先链「当前浮现在哪一层」：alpha 沿链单调不增（r 沿包含链严格递减
-    // ⇒ minzoom 严格递增），所以从浅往深扫，遇到第一个不可见的就停。
+    // 端点沿祖先链「当前浮现在哪一层」：层级带下 alpha 沿链天然单调不增
+    // （深度越大越晚成熟），所以从浅往深扫，遇到第一个未开始的就停。
     function visibleLayer(n) {
       var ch = n._chain, L = 1;
       for (var i = 0; i < n.depth; i++) {
         var a = byId.get(ch[i]);
         if (!a) break;
         if (filterSet && !filterSet.has(a.id)) break;
-        if (smoothstep(a._mz / FADE, a._mz, cam.zoom) <= 0.01) break;
+        if (levelFade(a.depth, cam.zoom) <= 0.01) break;
         L = i + 1;
       }
       return L;
@@ -457,13 +462,12 @@
       return !!n && !!F && n._chain[F.depth - 1] === F.id;
     }
 
-    // 未被 parent_dim 压暗的淡入进度。给强调环用：alphaOf 在 cam.zoom >= n._gate
-    // 时会乘 PARENT_DIM，而粗尺度下的邻居代表**几乎总是**这种「孩子全浮现了的
-    // 祖先」⇒ 直接读 alpha 会让环掉到两成浓度、基本看不见。同 pitfall 8
-    // （fillAlphaOf 与 alphaOf 不能共用），也同 label_alpha 那条注释讲的道理：
-    // 压暗只是降低视觉重量，不该顺带把强调藏掉。
+    // 未被压暗的淡入进度。给强调环用：alphaOf 会把「已经有下一层在展开」的祖先
+    // 乘上 PARENT_DIM，而粗尺度下的邻居代表**几乎总是**这种祖先 ⇒ 直接读 alpha
+    // 会让环掉到两成浓度、基本看不见（pitfall 19）。层级带下它就是本层的 levelFade，
+    // 与压暗解耦，正好是环需要的量。
     function fadeInOf(n) {
-      return smoothstep(n._mz / FADE, n._mz, cam.zoom);
+      return levelFade(n.depth, cam.zoom);
     }
 
     function measure(s, font) {
@@ -550,6 +554,12 @@
             cy + sr < -CULL_MARGIN || cy - sr > H + CULL_MARGIN) continue;
         var a = alphaOf(n);
         if (a <= 0) continue;
+        // 可读性地板：同层同时开始浮现之后，层里最小那批的屏幕半径可能远小于
+        // min_px。低于 0.5×min_px 的直接不画（否则是一片亚像素点），
+        // 从 0.5×min_px 到 min_px 线性淡入 —— 它们比同层兄弟晚一点变实，但不会硬跳。
+        if (sr < MIN_PX * 0.5) continue;
+        a *= smoothstep(MIN_PX * 0.5, MIN_PX, sr);
+        if (a <= 0.01) continue;
         n._sr = sr;
         alpha.set(n.id, a);
         drawn.push(n);
@@ -558,8 +568,9 @@
         // 由还没铺满视口的最内层圆提供「你在哪个区域里」的界线 —— 省界退出屏幕
         // 后只剩市界，正是地图的做法。节点仍留在 drawn 里供命中测试与标签。
         if (sr >= farCornerDist(cx, cy)) continue;
-        // 已经有孩子开始浮现 → 它是「区域」；否则它是当前尺度上的「点」
-        if (n._cHi !== Infinity && smoothstep(n._cLo, n._cHi, zoom) > 0.01) wash.push(n);
+        // 「区域」还是「点」也按层级算：下一层已经开始淡入 ⇒ 本层退成底图。
+        // 同一层的所有节点在同一帧里一起切换，不会出现半层是面、半层是点。
+        if (n.depth < MAXD && levelFade(n.depth + 1, zoom) > 0.01) wash.push(n);
         else front.push(n);
       }
       // 子盖父：深度升序，同深度大圆先画
@@ -968,6 +979,11 @@
       // 冷边的 alpha 就是 dim（焦点模式 0.07 / 悬停模式 0.75），过不了 0.1 的门槛，
       // 于是被压暗的无关边不会冒出标记来添乱 —— 与 agg 模式同一套取舍。
       if (a < 0.1) return true;
+      // ⚠️ 标记**不**要求端点圆这一帧被画出来。曾经试过「端点没落笔就不挂标记」
+      // （2026-10-21，层级带第一版），结果是浅缩放下所有语义边的端点都还没浮现，
+      // 箭头全灭 —— 「看不出线从谁到谁」正是用户当初要求箭头要解决的原始痛点。
+      // 代价是粗尺度下会出现「指向虚空的箭头」，这是 raw 契约（圆可消失、线要留下）
+      // 的固有后果，接受它，别拿功能换观感。
       var dot = clamp(1.6 + lw * 0.5, 2, 4);
       var s = clamp(5 + lw * 1.6, 7, 14);
       // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml 的
@@ -1398,9 +1414,10 @@
         var forced = forceAll || (matchSet && matchSet.has(n.id)) ||
                      n.id === selectedId || n.id === hoverId;
         if (!forced) {
-          // 用未被 parent_dim 压暗的淡入进度做门槛。压暗是「把视觉重量让给细节」的手段，
-          // 不是藏标签的手段 —— 共用同一个 alpha 会让祖先层在任何 zoom 下都拿不到标签。
-          if (smoothstep(n._mz / FADE, n._mz, cam.zoom) < LABEL_A) continue;
+          // 用未被压暗的淡入进度（= 本层的 levelFade）做门槛。压暗是「把视觉重量
+          // 让给细节」的手段，不是藏标签的手段 —— 共用带压暗的 alpha 会让祖先层
+          // 在任何 zoom 下都拿不到标签（pitfall 8）。
+          if (levelFade(n.depth, cam.zoom) < LABEL_A) continue;
         }
         cands.push(n);
       }
@@ -1530,14 +1547,17 @@
       var n = byId.get(id);
       if (!n) return;
       mult = mult || 1.25;
-      // 两个下限：它自己得浮现（_mz × mult），而且得占满大半屏（0.7 × fit / r）——
-      // 后者是新几何带来的：一个 r 很大的文件夹光「浮现」远不够看清它。
-      var z = clamp(Math.max(cam.zoom, n._mz * mult, 0.7 * fitRadius() / n._r), zMin, zMax);
+      // 两个下限：它那一层得**成熟**（M[depth] × mult），而且得占满大半屏（0.7 × fit / r）
+      // —— 后者是新几何带来的：一个 r 很大的文件夹光「浮现」远不够看清它。
+      // ⚠️ 这里必须用 M[depth] 而不是 n._mz：层级带之后 _mz 只决定「它在本层里多大」，
+      // 与可见性脱钩了；拿 _mz 当落点会跳到一个它所在层还没开始淡入的 zoom（alpha≈0）。
+      var z = clamp(Math.max(cam.zoom, levelMature(n.depth) * mult, 0.7 * fitRadius() / n._r),
+                    zMin, zMax);
       tweenTo({ zoom: z, panX: W / 2 - n.x * z, panY: (H - FOOTER_H) / 2 - n.y * z },
               ms == null ? TRANSITION : ms);
     }
 
-    // 框住链接两端：zoom 先取两端里较大的浮现 zoom ×1.15（保证两端都过了淡入门），
+    // 框住链接两端：zoom 先取两端所在层「都已成熟」的 zoom ×1.15，
     // 再用「两个包围圆一起进视口」封顶 —— 在屏优先于淡入。给侧栏边行点击用：
     // 用户点一条边就是想亲眼看「这条链接连的是哪两个元素」，一次 tween 框住两端。
     function fitPair(idA, idB, ms) {
@@ -1548,7 +1568,8 @@
       var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
       var rx = (maxX - minX) / 2, ry = (maxY - minY) / 2;
       var rr = Math.sqrt(rx * rx + ry * ry) || 1;
-      var z = clamp(Math.max(a._mz, b._mz) * 1.15, zMin, zMax);
+      // 同样以「层成熟」为准，否则两端可能在屏幕上根本还没浮现
+      var z = clamp(Math.max(levelMature(a.depth), levelMature(b.depth)) * 1.15, zMin, zMax);
       z = clamp(Math.min(z, 0.9 * fitRadius() / rr), zMin, zMax);
       tweenTo({ zoom: z, panX: W / 2 - cx * z, panY: (H - FOOTER_H) / 2 - cy * z },
               ms == null ? TRANSITION : ms);
@@ -1692,7 +1713,9 @@
       setZoom: setZoom,
       zoomBy: function (f) { setZoom(cam.zoom * f); },
       zoomToDepth: function (L) {
-        var z = (ENTER[L - 1] || zMax) * 1.05;
+        // 层级胶囊 / KG.setLevel / [ ] 的落点：该层**成熟**的 zoom（= M[L]），
+        // 不是「刚开始淡入」的 zoom —— 后者落下去该层几乎还是透明的（alpha≈0.06）。
+        var z = ENTER[L - 1] == null ? zMax : levelMature(L);
         tweenTo({ zoom: clamp(z, zMin, zMax), panX: W / 2, panY: (H - FOOTER_H) / 2 }, TRANSITION);
       },
       // 键盘平移（方向键）。panBy 收屏幕 px 增量，panStep 给出「一步」有多远。

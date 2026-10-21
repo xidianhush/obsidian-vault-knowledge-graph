@@ -229,18 +229,16 @@ def run(cfg, payload_path=None):
            f"{sibling_pairs} 对兄弟圆互不相交（重叠 {len(overlap)} 对）", failures)
 
     # ── LOD r：按缩放裁剪细节的依据 ─────────────────────────────────────
-    # minzoom_n = min_px / r_n：世界半径越大，越早（在越小的 zoom 下）就够 min_px。
-    # 于是「放大 = 更深」不再需要人为补丁，它直接来自 ②：沿包含链 r 严格递减 ⇒
-    # minzoom 严格递增 ⇒ 孩子绝不会比祖先先浮现。这就是被删掉的
-    # _reveal/_clamp_to_ancestors/_apply_depth_floor 三个补丁原来在硬凑的东西。
-    print("\n[LOD r] 世界半径直接决定「该在多大缩放下出现」")
+    # r 是布局契约：沿包含链严格递减 ⇒ 子圆永远装在父圆内部。
+    # 2026-10-21 起它**不再**决定「何时浮现」——浮现时机改由「深度的层级带」决定
+    # （见下面的 [LOD 层级带]）。r 仍然决定「同一层里画多大」，以及可读性地板。
+    print("\n[LOD r] 世界半径沿包含链严格递减（布局契约：子圆永远在父圆内）")
     min_px = float(cfg["lod"]["min_px"])
     fade = float(cfg["lod"]["fade_span"])
     viol = [n["id"] for n in data["nodes"]
             if n["parent"] in nodes and n["r"] >= nodes[n["parent"]]["r"] * (1 - REL_TOL)]
     _check(not viol,
-           f"r 沿包含链严格递减 —— 子节点不会比祖先先出现（违反 {len(viol)} 个）",
-           failures)
+           f"r 沿包含链严格递减（违反 {len(viol)} 个）", failures)
 
     need = sorted(min_px / n["r"] for n in data["nodes"])   # = minzoom
     root_need = max(min_px / n["r"] for n in data["nodes"] if n["depth"] == 1)
@@ -250,24 +248,29 @@ def run(cfg, payload_path=None):
     _check(root_need <= need[-1],
            "顶层学科全部出现所需的缩放，不大于最挤节点所需的缩放", failures)
 
-    # ── enter：按深度的解锁门槛，即「放大 = 更深」的方向锁 ───────────────
-    # enter[L] = 第 L 层 minzoom 的中位数沿深度取前缀最大。packing 下它只用于两件事：
-    # HUD 上「第几层」的读数、以及 zoomToDepth(L) 的跳转目标。它不再反过来给节点封顶
-    # （那是 _apply_depth_floor 干的、已删），所以这里**不**断言 minzoom_n ≥ enter[depth_n]：
-    # 一个很大的子圆（如 Science and Tech/Electronic engineering，r=391）minzoom 远低于
-    # 本层中位数是正确行为 —— 它内容多，本来就该更早被看见（用户要求 1）。
-    print("\n[LOD enter] 按深度单调的解锁门槛（方向锁）")
+    # ── 层级带：浮现时机由「深度」决定（2026-10-21 起）────────────────────
+    # enter[L-1] = 第 L 层**开始淡入**的 zoom；M[L] = enter[L-1] × fade_span =
+    # 该层**成熟**（全部满不透明）的 zoom。同一层的所有节点共用这条带 ⇒
+    # 同层同时出现、同色；父圆在「下一层的成熟点」压暗。
+    # 阶梯是「以 home 视角锚定的等比序列」（kg/layout.py），所以加一篇笔记不会让
+    # 所有层级门槛一起跳 —— 这是它取代 per-node 门槛（min_px/r）的主要理由之二。
+    print("\n[LOD 层级带] 按深度的淡入带（同层同时出现、同色）")
     lod = meta.get("lod", {})
     enter = lod.get("enter") or []
     home = lod.get("home_layer")
+    home_band = float(cfg["zoom"].get("home_band", 0.5))
+    mature = [e * fade for e in enter]
     depth1 = [n for n in data["nodes"] if n["depth"] == 1]
     _check(len(enter) == max_depth,
            f"enter 覆盖 depth 1..{max_depth}（实到 {len(enter)} 项）", failures)
-    _check(all(b >= a - 1e-9 for a, b in zip(enter, enter[1:])),
-           "enter 沿深度单调不减 —— 越深的层越晚解锁", failures)
-    _check(bool(enter) and enter[-1] <= z_hi,
-           f"放到最大（z={z_hi:.3f}）时最深层已解锁"
-           f"（enter[{max_depth}]={enter[-1] if enter else 0:.3f}）", failures)
+    _check(all(b > a + 1e-9 for a, b in zip(enter, enter[1:])),
+           "enter 严格递增 —— 每层都有自己的入口 zoom，HUD 上能逐层区分", failures)
+    _check(all(mature[i] < enter[i + 1] - 1e-9 for i in range(len(enter) - 1)),
+           "相邻两层的带不重叠（M[L] < enter[L+1]）—— 这是「同层同色」的前提："
+           "同一时刻最多只有一层正处在淡入过程中", failures)
+    _check(bool(enter) and abs(mature[-1] - z_hi) < 1e-6 * max(1.0, z_hi),
+           f"最深层的成熟点 M[{max_depth}]={mature[-1] if mature else 0:.4f} "
+           f"== zMax={z_hi:.4f}（阶梯构造等式）", failures)
 
     # home 的定义：整张图缩到「布局根圆恰好贴合视口」再乘 home_fit 的余量。
     # home_fit 的硬上限是 padding（= 布局根半径 / 最大包围盒半径），config._validate
@@ -281,23 +284,44 @@ def run(cfg, payload_path=None):
     home_zoom = fit / root_radius * home_fit
     cand = [d for d in range(1, max_depth + 1) if enter[d - 1] <= home_zoom] if enter else []
     _check(home == (max(cand) if cand else 1),
-           f"home_layer={home} 是 home_zoom={home_zoom:.4f} 下已解锁的最深一层"
+           f"home_layer={home} 是 home_zoom={home_zoom:.4f} 下**已开始淡入**的最深一层"
            f"（布局根半径 {root_radius:.0f}，候选 {cand}）", failures)
+    if home and 1 <= home <= len(enter):
+        lo, hi = enter[home - 1], mature[home - 1]
+        _check(lo <= home_zoom <= hi,
+               f"home_zoom={home_zoom:.4f} 落在第 {home} 层的淡入带 [{lo:.4f}, {hi:.4f}] 内",
+               failures)
+        p = (home_zoom - lo) / (hi - lo) if hi > lo else 0.0
+        _check(abs(p - home_band) < 1e-3,
+               f"home 在第 {home} 层带上的进度 {p:.3f} ≈ zoom.home_band={home_band}"
+               f"（0 = 刚开始浮现，1 = 完全成熟）", failures)
 
     r_median_of = {row["depth"]: row["r_median"] for row in layers}
     print(f"         {'层':>3}{'节点':>7}{'r中位':>10}{'r最小':>9}{'r最大':>10}"
-          f"{'minzoom中位':>12}{'enter':>10}")
+          f"{'enter(开始)':>12}{'M(成熟)':>11}")
     for row in layers:
         print(f"         {row['depth']:>3}{row['count']:>7}{row['r_median']:>10.2f}"
               f"{row['r_min']:>9.2f}{row['r_max']:>10.2f}"
-              f"{row['minzoom_median']:>12.4f}{enter[row['depth'] - 1]:>10.4f}")
+              f"{enter[row['depth'] - 1]:>12.4f}{mature[row['depth'] - 1]:>11.4f}")
     distinct = len({round(v, 4) for v in enter})
     print(f"         enter 有 {distinct}/{len(enter)} 个互不相同的取值"
-          + ("（每层在 HUD 上都能区分开）" if distinct == len(enter) else "（有层共用门槛）"))
+          + ("（每层在 HUD 上都能区分开）" if distinct == len(enter) else "（有层共用入口）"))
 
-    # ── 可见数随缩放的变化 ──────────────────────────────────────────────
-    def visible(z):
-        return [n for n in data["nodes"] if n["r"] * z >= min_px]
+    # ── 「落笔」的解析复刻（与 render.js 的 draw() 判据对齐）─────────────
+    # 一个节点这一帧会被画出来，当且仅当：
+    #   ① 它所属的层已经开始淡入：z > enter[depth-1]
+    #   ② 屏幕半径 ≥ 0.5×min_px（可读性地板；render.js 里低于它直接 continue）
+    # 注意 ① 用的是**层**的入口，不是节点自己的 minzoom —— 后者只决定「同层里多大」，
+    # 已经与可见性脱钩（这正是 2026-10-21 那次改动的核心）。
+    def painted(z):
+        out = []
+        for n in data["nodes"]:
+            if z <= enter[n["depth"] - 1]:
+                continue
+            if n["r"] * z < 0.5 * min_px:
+                continue
+            out.append(n)
+        return out
 
     steps = 40
     prev = -1
@@ -305,29 +329,34 @@ def run(cfg, payload_path=None):
     nonmono = 0
     for i in range(steps + 1):
         z = z_lo * (z_hi / z_lo) ** (i / steps)
-        vis = len(visible(z))
-        counts.append(vis)
-        if vis < prev:
+        cnt = len(painted(z))
+        counts.append(cnt)
+        if cnt < prev:
             nonmono += 1
-        prev = vis
-    _check(nonmono == 0, f"可见节点数随缩放单调不减（回退 {nonmono} 次）", failures)
+        prev = cnt
+    _check(nonmono == 0, f"落笔节点数随缩放单调不减（回退 {nonmono} 次）", failures)
     _check(counts[-1] == len(data["nodes"]),
            f"放到最内见全部 {counts[-1]} 个节点", failures)
 
-    at_root_ids = {n["id"] for n in visible(z_lo)}
-    missing_roots = [n["id"] for n in depth1 if n["id"] not in at_root_ids]
+    at_lo = painted(z_lo)
+    at_lo_ids = {n["id"] for n in at_lo}
+    missing_roots = [n["id"] for n in depth1 if n["id"] not in at_lo_ids]
     _check(not missing_roots,
            f"缩到最小（z={z_lo:.4f}）时 {len(depth1)} 个顶层学科全部可见"
            f"（缺 {len(missing_roots)} 个）", failures)
-    # 注意：z_lo 处可见的**不止** 6 个学科根 —— 这是 packing 与同心环的根本区别。
-    # 同心环时代「缩到最小 = 只剩 6 个点」，因为每圈半径是全局等比的；packing 下
-    # 大学科根的孩子（如 Science and Tech/Electronic engineering，r=391）在世界尺度
-    # 上比小学科根（Medical and Health，r=44）还大得多，它当然应该一起可见。
-    # 「内容多的元素更大、更早被看见」正是用户要求 1，所以这里不断言恰好 6 个。
-    at_home = len(visible(home_zoom))
-    _check(20 <= at_home <= 400,
-           f"home 视图（z={home_zoom:.4f}）可见 {at_home} 个节点，"
-           f"是「整个 vault 的骨架」而不是空白或糊团", failures)
+    deeper_at_lo = [n["id"] for n in at_lo if n["depth"] > 1]
+    _check(not deeper_at_lo,
+           f"缩到最外层**只剩第 1 层**（z={z_lo:.4f} 时更深的节点一个都没开始淡入，"
+           f"越界 {len(deeper_at_lo)} 个）—— 层级带的核心契约", failures)
+    # 2026-10-21 前这里是「z_lo 处可见的不止 6 个根」—— 那是 per-node 门槛的后果
+    # （大孩子的 minzoom 远低于小学科根）。层级带之后 z_lo 恰好只剩 6 个根。
+    at_home = painted(home_zoom)
+    too_deep_home = [n["id"] for n in at_home if n["depth"] > (home or 1)]
+    _check(bool(at_home),
+           f"home 视图（z={home_zoom:.4f}）有内容（落笔 {len(at_home)} 个）", failures)
+    _check(not too_deep_home,
+           f"home 视图只画出 depth≤{home} 的元素（越界 {len(too_deep_home)} 个）—— "
+           f"home 落在第 {home} 层", failures)
 
     # 用户要求 2/4 的守门条件：home 视图下每个学科根都必须大到看得见。
     # 这条同时把 size_exponent 钉住了 —— 调大到 0.6，最小的 Medical and Health
@@ -338,26 +367,30 @@ def run(cfg, payload_path=None):
            f"（最小 {min(n['r'] for n in depth1) * home_zoom:.2f}px、"
            f"最大 {max(n['r'] for n in depth1) * home_zoom:.1f}px）", failures)
 
-    # 判据：滚轮一格不能齐刷刷弹出一大片。旧同心环模型下最深几圈的 enter 会饱和，
-    # 一格滚轮直接弹出 66% 的节点（2308/3481）—— 那不是「语义缩放」，是一次全开。
-    # packing 下叶子半径随所在路径的缩放系数分散开，同一层的 minzoom 铺成一个区间，
-    # 于是涌入被摊平。20% 是实测值（18%）留一点余量。
+    # 判据：滚轮一格不能齐刷刷弹出一大片。
+    # ⚠️ 2026-10-21 的口径变更：层级带**有意**让同一层一起开始淡入，所以这条不再
+    # 用「alpha>0 的节点数」（那样每一层入口都会一次涌入 26%），而是用**真正落笔**
+    # 的节点数（层已开始 且 屏幕半径 ≥ 0.5×min_px）—— 后者才是用户眼睛看到的量。
+    # 上限从 20% 放宽到 35%：这是设计变更（同层同现）的直接代价，淡入带 fade_span
+    # 把它摊在约 2.6 格滚轮上。实测约 24%，仍远低于同心环时代的 66%。
     wheel_step = float(cfg["zoom"]["wheel_step"])
     total = len(data["nodes"])
     notch_counts = []
     z = z_lo
     while z < z_hi * (1 + 1e-9):
-        notch_counts.append(len(visible(z)))
+        notch_counts.append(len(painted(z)))
         z *= wheel_step
     notch_counts.append(total)
     jumps = [b - a for a, b in zip(notch_counts, notch_counts[1:])]
     worst = max(jumps) / total if jumps else 0.0
-    _check(worst <= 0.20,
-           f"滚轮单格最大涌入 {worst:.0%}（{max(jumps)}/{total} 个节点，"
-           f"共 {len(jumps)} 格），不超过 20%", failures)
+    _check(worst <= 0.35,
+           f"滚轮单格最大落笔涌入 {worst:.0%}（{max(jumps)}/{total} 个节点，"
+           f"共 {len(jumps)} 格），不超过 35%", failures)
 
-    # 抽验 ①+③ 推出的那条定理：屏幕上任意两个互不包含的可见圆，中心距 ≥ 2×min_px。
-    # 只在可见集很小的两个 zoom 上做全对检查（z_hi 处 3482 个节点两两配对要 600 万次，
+    # 抽验 packing 的间距定理：屏幕上任意两个互不包含的**落笔**圆，圆心距 ≥ min_px。
+    # （未交叠 ⇒ 屏幕距离 ≥ 两者屏幕半径之和；而落笔的前提是各自 ≥ 0.5×min_px，
+    #   所以和 ≥ min_px。2026-10-21 前落笔门槛是 min_px，那时这条是 2×min_px。）
+    # 只在落笔集很小的两个 zoom 上做全对检查（z_hi 处 3500 个节点两两配对要 600 万次，
     # 而这个性质上面已经证过了，抽样只是防实现走样）。
     def ancestors(nid):
         out = set()
@@ -369,7 +402,7 @@ def run(cfg, payload_path=None):
 
     spacing_bad = []
     for z in (z_lo, home_zoom):
-        vis = visible(z)
+        vis = painted(z)
         anc = {n["id"]: ancestors(n["id"]) for n in vis}
         for i in range(len(vis)):
             for j in range(i + 1, len(vis)):
@@ -377,10 +410,10 @@ def run(cfg, payload_path=None):
                 if b["id"] in anc[a["id"]] or a["id"] in anc[b["id"]]:
                     continue        # 嵌套关系，本来就该一个套在另一个里
                 d = math.hypot(a["x"] - b["x"], a["y"] - b["y"]) * z
-                if d < 2 * min_px * (1 - REL_TOL):
+                if d < min_px * (1 - REL_TOL):
                     spacing_bad.append((round(z, 4), a["id"], b["id"], round(d, 2)))
     _check(not spacing_bad,
-           f"z_lo 与 home 两处，可见的非嵌套圆屏幕中心距都 ≥ 2×min_px={2 * min_px}"
+           f"z_lo 与 home 两处，落笔的非嵌套圆屏幕中心距都 ≥ min_px={min_px}"
            f"（不足 {len(spacing_bad)} 对）", failures)
 
     notch = math.log(z_hi / z_lo) / math.log(wheel_step)
@@ -389,12 +422,15 @@ def run(cfg, payload_path=None):
           f"跨度 {max(n['r'] for n in data['nodes']) / min(n['r'] for n in data['nodes']):.0f} 倍")
     print(f"         缩放区间 [{z_lo:.4f}, {z_hi:.4f}] = {z_hi / z_lo:.0f} 倍，"
           f"滚轮约 {notch:.0f} 格（每层平均 {notch / len(layers):.1f} 格）")
-    print(f"         home 视图 z={home_zoom:.4f} 可见 {at_home} 个；"
-          f"缩到最小 z={z_lo:.4f} 可见 {len(at_root_ids)} 个")
-    print(f"         单格涌入峰值 {worst:.0%}（第 {jumps.index(max(jumps)) + 1} 格）；"
+    print(f"         home 视图 z={home_zoom:.4f} 落笔 {len(at_home)} 个（第 {home} 层）；"
+          f"缩到最小 z={z_lo:.4f} 落笔 {len(at_lo)} 个（只剩第 1 层）")
+    print(f"         单格涌入峰值 {worst:.0%}（第 {jumps.index(max(jumps)) + 1} 格，按落笔口径）；"
           f"视口理论容量约 (视口半径/min_px)² = ({fit:.0f}/{min_px:.0f})² ≈ {(fit / min_px) ** 2:.0f} 个圆")
-    print(f"         淡入带宽 fade_span={fade}（zoom 从 minzoom/{fade} 到 minzoom，"
-          f"alpha 0→1，约 {math.log(fade) / math.log(wheel_step):.1f} 格滚轮）")
+    if len(enter) >= 3:
+        step_ratio = enter[2] / enter[1]
+        print(f"         相邻层入口比 {step_ratio:.2f}×（约 "
+              f"{math.log(step_ratio) / math.log(wheel_step):.1f} 格滚轮/层）；"
+              f"第 1 层被压到 zMin 以下成熟（M[1]={mature[0]:.4f} < z_lo={z_lo:.4f}）")
 
     # 跨层（父→子）半径比只做信息输出：它衡量「包含关系在视觉上有多明显」。
     # 独子链是下界情形 —— 只有一个孩子时 s 被 level_ratio 那一项夹住，
