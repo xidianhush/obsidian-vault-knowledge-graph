@@ -649,7 +649,7 @@ with sync_playwright() as p:
             const R = window.KG.renderer;
             let best = null, fallback = null;
             for (const n of R.NODES) {
-                if (n.kind !== 'heading' || !n.leaf || !n.hasText) continue;
+                if (n.kind !== 'heading' || !n.hasText || !(n.tlen > 0)) continue;
                 const note = R.byId.get(n.note) || {};
                 const p = note.preview || '';
                 const hasImg = p.indexOf('<img') >= 0;
@@ -668,10 +668,11 @@ with sync_playwright() as p:
             }
             return best || fallback;
         }""")
+        # 没有正文的节点（tlen==0）绝不该挂药丸 —— 不管有没有子元素
         nonleaf = page.evaluate("""() => {
             const R = window.KG.renderer;
             for (const n of R.NODES) {
-                if (n.kind === 'heading' && !n.leaf) return {id: n.id, x: n.x, y: n.y, r: n._r || n.r};
+                if (n.kind === 'heading' && !n.hasText) return {id: n.id, x: n.x, y: n.y, r: n._r || n.r};
             }
             return null;
         }""")
@@ -720,7 +721,7 @@ with sync_playwright() as p:
             center_on(nonleaf, z_nl)
             st2 = page.evaluate(STATE)
             jobs2 = page.evaluate("() => window.KG.renderer.linkJobs || []")
-            check("非叶子节点（有子元素）不挂药丸",
+            check("没有正文的节点不挂药丸",
                   not any(x["t"] == nonleaf["id"] for x in jobs2),
                   "z=%.2f 该节点药丸=%d" % (z_nl, sum(1 for x in jobs2 if x["t"] == nonleaf["id"])))
 
@@ -788,9 +789,11 @@ with sync_playwright() as p:
         # ⑥ 圆太小（sr≈20px）不挂药丸
         z_small = 20.0 / max(tgt["r"], 1e-6)
         center_on(tgt, z_small)
-        st3 = page.evaluate(STATE)
-        check("圆小于 44px 时不挂药丸", (st3.get("links") or 0) == 0,
-              "z=%.2f links=%s" % (z_small, st3.get("links")))
+        small_jobs = page.evaluate("() => window.KG.renderer.linkJobs || []")
+        check("靶子圆小于 44px 时它自己不再挂药丸",
+              not any(x["t"] == tgt["id"] for x in small_jobs),
+              "z=%.2f 该节点药丸=%d（一屏其它大圆可能有药丸，属正常）"
+              % (z_small, sum(1 for x in small_jobs if x["t"] == tgt["id"])))
 
         page.evaluate("() => window.KG.renderer.resetView()")
         page.wait_for_timeout(700)

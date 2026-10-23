@@ -347,21 +347,22 @@ def run(cfg, payload_path=None):
         _check(all(l.get("t") in node_ids for l in all_links),
                f"预览里的链接目标都落在图上节点（{len(all_links)} 条）", failures)
         # ── 叶子 / 正文长度 / 锚点（第四轮新增）────────────────────────────
-        leaves = [n for n in all_nodes
-                  if n.get("leaf") and n.get("hasText") and (n.get("tlen") or 0) > 0]
-        _check(len(leaves) > 0,
-               f"有正文的叶子元素 {len(leaves)} 个（药丸就画在这些圆里）", failures)
-        _check(all(n.get("kind") in ("note", "heading") for n in leaves),
-               "叶子药丸只给笔记/标题节点，文件夹不挂", failures)
+        texted = [n for n in all_nodes
+                  if n.get("kind") in ("note", "heading")
+                  and n.get("hasText") and (n.get("tlen") or 0) > 0]
+        _check(len(texted) > 0,
+               f"含正文的节点 {len(texted)} 个（药丸就画在这些圆里）", failures)
         kids = {}
         for n in all_nodes:
             p = n.get("parent")
             if p:
                 kids[p] = kids.get(p, 0) + 1
-        bad_leaf = [n["id"] for n in all_nodes
-                    if bool(n.get("leaf")) != (kids.get(n["id"], 0) == 0)]
-        _check(not bad_leaf,
-               f"leaf 标记与「没有子节点」严格一致（不一致 {len(bad_leaf)} 个）", failures)
+        mixed = [n for n in texted if kids.get(n["id"], 0) > 0]
+        # 用户 2026-10-23 补充：「有子元素但自己也带一段导语」的节点也要挂药丸
+        _check(len(mixed) > 0,
+               f"其中有子元素但仍带导语的 {len(mixed)} 个（第四轮补充要覆盖）", failures)
+        _check(all(n.get("kind") in ("note", "heading") for n in texted),
+               "药丸只给笔记/标题节点，文件夹不挂", failures)
         anchors = [n.get("anchor") for n in heads if n.get("anchor")]
         # 锚点只在**同一篇笔记的预览 HTML 内**唯一（每篇都从 pv-h0 起，跨笔记重复是正常的）
         per_note_anchor = {}
@@ -390,10 +391,10 @@ def run(cfg, payload_path=None):
                f"含正文的标题里 {len(with_anchor)}/{len(with_text)} 有锚点"
                f"（≥95%：python-markdown 与我们的标题解析口径允许极少数差异，"
                f"没锚点的会退回预览顶部）", failures)
-        n_leaf_head = len([n for n in leaves if n["kind"] == "heading"])
-        n_leaf_note = len(leaves) - n_leaf_head
-        print(f"         叶子+正文 {len(leaves)} 个（标题 {n_leaf_head} / 笔记 {n_leaf_note}）；"
-              f"锚点 {len(anchors)} 个；预览 {total} 字；出站链接 {len(all_links)} 条")
+        n_h = len([n for n in texted if n["kind"] == "heading"])
+        print(f"         含正文 {len(texted)} 个（标题 {n_h} / 笔记 {len(texted) - n_h}，"
+              f"其中非叶子 {len(mixed)}）；锚点 {len(anchors)} 个；预览 {total} 字；"
+              f"出站链接 {len(all_links)} 条")
 
     # ── 「落笔」的解析复刻（与 render.js 的 draw() 判据对齐）─────────────
     # 一个节点这一帧会被画出来，当且仅当：

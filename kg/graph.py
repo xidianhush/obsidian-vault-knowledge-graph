@@ -219,19 +219,15 @@ class GraphBuilder:
                     continue
                 hn["tlen"] = _textlen(sections.get(h.id, ""))
                 hn["anchor"] = anchors[i] if i < len(anchors) else ""
-        # leaf = 没有任何子节点（笔记没有标题、或标题没有子标题）。药丸只画在
-        # 「leaf && tlen > 0」的圆里 —— 用户口径：只有「下一级直接是正文」的元素才挂。
-        kids = {}
+        # 药丸的判据只有一条：**这个元素自己直接含正文**（tlen > 0）。是否还有子元素
+        # 不再影响挂不挂 —— 用户 2026-10-23 补充：「但凡元素内部包含了正文，都应该有
+        # 药丸可以点」（章下面先有一段导语、再是小节，那段导语也要能看）。
         for n in self.nodes.values():
-            p = n.get("parent")
-            if p:
-                kids[p] = kids.get(p, 0) + 1
-        for nid, n in self.nodes.items():
-            n["leaf"] = kids.get(nid, 0) == 0
             n["hasText"] = (n.get("tlen") or 0) > 0
         self.stats["preview_chars"] = total
-        self.stats["leaf_text_count"] = sum(
-            1 for n in self.nodes.values() if n.get("leaf") and n.get("hasText"))
+        self.stats["text_nodes"] = sum(
+            1 for n in self.nodes.values()
+            if n.get("hasText") and n.get("kind") in ("note", "heading"))
 
     def _heading_at_line(self, note_id: str, line):
         """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。

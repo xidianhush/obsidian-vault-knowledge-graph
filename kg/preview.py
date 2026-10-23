@@ -26,7 +26,7 @@ HIGHLIGHT_RE = re.compile(r"==([^=\n]+?)==")
 COMMENT_RE = re.compile(r"%%.+?%%", re.S)
 # 坏掉的嵌入：`![[x.pdf]`（少一个右括号）、`![[图3-10 …]]`（写的是说明文字不是文件名）。
 # 这两种既不是链接也不是图片，留着只会变成正文里的噪声。
-BAD_EMBED_RE = re.compile(r"!\[\[[^\[\]]*\.[A-Za-z0-9]{2,5}\]")
+BAD_EMBED_RE = re.compile(r"!\[\[[^\[\]]*\.[A-Za-z0-9]{2,5}\s*\](?!\])")
 IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
 
 # 浮层里的附件占位：非图片附件在预览里只报个名字（点它没意义）
@@ -67,6 +67,26 @@ def _usable(path: str | None) -> bool:
 
 def _escape_math(raw: str) -> str:
     return raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def _outside_fences(text: str, fn) -> str:
+    """逐行处理，但**跳过代码围栏里的内容**（围栏里的 `![[x.png]]`、`==高亮==` 是代码，
+    不该被替换：替换出的 HTML 在代码块里会被 markdown 转义成字面量，屏幕上就会看到
+    `<span class="pv-attach">…` 这种字样）。"""
+    out = []
+    fence = None
+    for line in text.split("\n"):
+        m = FENCE_RE.match(line)
+        if m:
+            marker = m.group(1)
+            fence = marker if fence is None else (None if fence == marker else fence)
+            out.append(line)
+            continue
+        out.append(line if fence is not None else fn(line))
+    return "\n".join(out)
 
 
 def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, list, list]:
@@ -117,9 +137,14 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
 
     body = note.body
     body = COMMENT_RE.sub("", body)
-    body = BAD_EMBED_RE.sub(lambda m: ATTACH_TPL.format(name=os.path.basename(m.group(0)[3:-1])), body)
-    body = WIKI_EMBED_RE.sub(sub, body)
-    body = HIGHLIGHT_RE.sub(r"<mark>\1</mark>", body)
+    # 顺序很重要：先把**完整**的 ![[...]] 替换掉，再用「少一个右括号」的容错规则收尾。
+    # 反过来的话容错规则会把正常图片吃掉一个 ]，651 个图片链接里有 631 个因此退化成
+    # 附件文字（2026-10-23 用户截图里的元凶之一）。
+    body = _outside_fences(body, lambda line: WIKI_EMBED_RE.sub(sub, line))
+    body = _outside_fences(body, lambda line: BAD_EMBED_RE.sub(
+        lambda m: ATTACH_TPL.format(
+            name=os.path.basename(m.group(0)[3:].strip().rstrip("]").strip())), line))
+    body = _outside_fences(body, lambda line: HIGHLIGHT_RE.sub(r"<mark>\1</mark>", line))
     # 公式先「保护」起来：nl2br 会把 $$…$$ 里的换行变 <br>，定界符被拆进不同元素，
     # 运行时的 auto-render 就匹配不到（spike 实测踩到过）。
     store = []
@@ -143,8 +168,13 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         if not src_m:
             return tag
         src = src_m.group(1)
-        if "://" in src or src.startswith("data:"):
+        if src.startswith("data:"):
             return tag
+        if "://" in src:
+            # 外链图片：**不加载**（离线/内网会一直转圈并报 console error），
+            # 退化成可点的链接文字。
+            return ('<span class="pv-attach">外链图片：<a href="%s" target="_blank" '
+                    'rel="noopener">%s</a></span>' % (src, src[:60]))
         path = index.get(os.path.basename(src).lower())
         if _usable(path):
             real = _rel(path, base_dir).replace('"', "%22")

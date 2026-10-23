@@ -1565,8 +1565,9 @@
       linkJobs = [];
       for (var i = 0; i < drawn.length; i++) {
         var n = drawn[i];
-        // 只给「叶子 + 直接含正文」的圆挂；文件夹永远不挂
-        if (!n.leaf || !n.hasText || !(n.tlen > 0)) continue;
+        // 判据只有一条：这个元素自己直接含正文（有子元素也可以 —— 章导语也算）。
+        // 文件夹永远不挂。
+        if (!n.hasText || !(n.tlen > 0)) continue;
         if (n.kind !== 'heading' && n.kind !== 'note') continue;
         var sr = n._sr;
         if (!(sr >= PILL_IN)) continue;
