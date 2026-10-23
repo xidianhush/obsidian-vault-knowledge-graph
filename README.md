@@ -43,13 +43,15 @@ python build.py scope  --scope public     # 打印公开那份的镜像清单（
 `ConvertFrom-Json`），想给人看范围概览请用 `scan`。`build --scope all` 两份都建；
 `watch` 一次只能盯一份（`--scope all` 会被拒绝）。
 
-只用到一个第三方依赖：`PyYAML`（`pip install pyyaml`）。Python ≥ 3.9。
+第三方依赖只有两个，而且都是**构建期**的：`PyYAML`（`pip install pyyaml`）与
+`markdown`（`pip install markdown`，把笔记渲成预览 HTML 用）。**运行时仍然零依赖**，
+唯一内联的第三方是 KaTeX（`web/vendor/katex/`，Obsidian 式预览要渲公式，见 §4「第 11 带」）。
 
 回归验证：
 
 ```
 python build.py verify      # 数据侧断言
-python browser_check.py     # 浏览器侧约 166 项断言（Playwright + 本机 Chrome，自动截图）
+python browser_check.py     # 浏览器侧约 176 项断言（Playwright + 本机 Chrome，自动截图）
 ```
 
 ---
@@ -418,7 +420,10 @@ alpha(node at depth L) = smoothstep(enter[L-1], M[L], zoom) × 父圆压暗系�
    目标端一个箭头。**必须**排在实心圆之后：packing 布局里圆是相切的，箭头正落在邻圆边界上，
    先画就被整个盖掉（这是箭头「明明有却看不见」的主因之一，见 HANDOFF §4）；
    又必须排在强调环之前，让选中白环 / 邻居蓝环仍然压过它。
-6. **标签**（一律压在圆内、字号随屏幕半径增长，见下面「标签」一节）。
+6. **第 11 带链接药丸**（`drawLinks`，2026-10-22 第三轮，见下节）：只在链接带之内、只画
+   视口中心那篇笔记的出站 `[[链接]]`。药丸是**屏幕空间常量大小**的 HUD 层（可点的入口，
+   不随缩放长大），所以排在连线/端点标记之后、强调环与标签之前。
+7. **标签**（一律压在圆内、字号随屏幕半径增长，见下面「标签」一节）。
 
 强调环（掌握度 / 搜索命中 / 选中）单独一趟，永远在世界内容之上、标签之下。
 
@@ -458,6 +463,47 @@ fs   = 从 want 逐级下调，直到 measure(text, fs) + 6 ≤ 0.8 × 直径   
 与可读性地板），圆淡到多少字就淡到多少；门槛 `lod.label_alpha`(0.02) 只是「开始参与竞争」
 的开关，不再是硬切。标签另受 24px 碰撞网格与每帧 400 条预算限制。
 
+
+### 第 11 带：链接药丸 + Obsidian 式预览（2026-10-22 第三轮）
+
+用户的实验想法（第二轮之后）：放大到最深一层（六级标题）之后**继续放大**，把这层知识底下的
+**正文**呈现出来，「于是这张图把全部笔记知识完整呈现了」。第二轮直接在 canvas 上排正文，
+用户验收结论是「只是能用」——canvas 排不出段落/表格/图片/公式。第三轮换成 Obsidian 的做法：
+
+1. **深缩放 → 链接药丸**：超过一条门槛后，视口中心那个节点所属笔记的**出站 `[[链接]]`**
+   以药丸形式浮在画布上（一屏最多 10 枚，其余折成「+k 条链接」）。
+2. **按住 Ctrl 悬停药丸 → HTML 预览浮层**：真排版（标题/列表/表格/代码/引用）、
+   **KaTeX 公式**（构建期内联，打开时只渲当前这一篇）、**图片**（按相对路径引用 vault）。
+
+它不是第 11 个**节点深度**（`lod.enter[]` 仍是 10 项，那是与 `max_depth` 对齐的数据契约），
+而是接在 **h6 成熟点（`M[10] = zMax`）之后**的一条独立窗口，用同一条等比阶梯铺：
+
+```
+淡入 [enter, mature] → 满 [mature, hold] → 淡出 [hold, exit]
+private: 95.21 → 128.53 → 236.59 → 319.40
+```
+
+- **为什么把正文从 canvas 上撤掉**：canvas 的 `fillText` 没有段落、列表、表格、代码块、
+  图片，更不可能排公式；第二轮实测 721 个公式全部只能显示成 `$$U_{CEQ}$$` 这样的原字符。
+  HTML 浮层把这些全交给浏览器、公式交给 KaTeX —— 这是「够用」与「好用」的分界。
+- **预览内容在构建期生成**（`kg/preview.py`）：markdown → HTML（公式先「保护」起来，
+  避免 `nl2br` 把 `$$…$$` 拆开、运行时的 auto-render 匹配不到）、`![[图.png]]` → `<img>`
+  相对路径、`![[附件.pdf]]` → 文字占位、`[[笔记#标题|别名]]` → 可点的链接 span。
+  **图片不内联**：vault 里被引用的图共 **519MB**（699 次引用 / 660 个文件），只能按路径引用
+  （file:// 下实测可以加载）。
+- **体积**：114 篇预览共 104 万字 HTML ≈ +1.4MB；KaTeX 内联（js 269KB + css/字体 0.35MB）
+  ≈ +0.6MB；单文件 **11.1MB**（原来 9.7MB）。
+- **越过 `exit`** 会回到空视口 + 兜底提示，并在画布中央提示「已越过链接带」（第二轮教训：
+  用户滚到 z≈845 时画面还有巨大的标题圆、不算空视口，看起来像功能坏了）。
+- 预览浮层跟着光标、clamp 在视口内、内部可滚动；浮层里的 `[[链接]]` 也能点（选中目标）。
+
+数据链：`kg/preview.py`（渲染 + 链接解析）→ `kg/graph.py:attach_previews()` 挂到笔记节点的
+`preview` / `links` 字段 → `kg/layout.py` 把窗口点写进 `lod.links` → `render.js` 画药丸、
+`app.js` 弹浮层。开关 `preview.enabled`（关掉 = 完全回到第 10 带为止，payload 也不存预览）。
+
+**已知限制**：预览是整篇笔记（长笔记要滚动）；公式用 KaTeX 而非 Obsidian 的 MathJax，
+极少数宏可能不认（`throwOnError: false`，坏公式显示成原文）；vault 里把「说明文字」写成
+图片链接的坏引用只能显示「缺失图片」占位。
 
 ### 跨层级链接怎么办（这是你问的那个疑惑）
 
@@ -529,6 +575,7 @@ fs   = 从 want 逐级下调，直到 measure(text, fs) + 6 ≤ 0.8 × 直径   
 | `L` / 图例右上角「收起」 | 收起 / 展开左侧图例面板（展开态约 838px 高，挡住画布时折成一条 42px）。状态记进 `localStorage` 键 `kg.legendCollapsed`，下次打开还是那个状态 |
 | 侧栏入边/出边的边行点击 | 相机一次动画框住这条链接的两端（`fitPair`）；一端当前在屏外也能到了就直接看见连接箭头 |
 | 侧栏「在 Obsidian 打开」 | `obsidian://open?…` 跳回 Obsidian |
+| **按住 `Ctrl` 悬停在链接药丸上** | 弹出一个 HTML 浮层预览那枚链接指向的笔记：真排版的 markdown、KaTeX 公式、按路径加载的图片；浮层可滚动、跟着光标、`Esc` 或松开 `Ctrl` 关闭（2026-10-22 第三轮） |
 | `Esc` | 取消选中并恢复全部连线 |
 
 **缩丢了怎么办。** 缩放上下限放开之后，画布会出现空视口，两个方向都可能：
@@ -615,7 +662,9 @@ knowledge-graph/
 ├── config.yaml            构建入口：scope_file / scopes（哪几份、各输出到哪）/ 缩放 / 权重 / 布局 / LOD / 配色
 ├── build.py               CLI：scan | suggest | build | verify | watch | scope（都支持 --scope private|public|all）
 ├── verify.py              数据侧自动校验（断言式，无测试框架）
-├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，~166 项断言 + 截图，默认查 private 那份）
+├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，~176 项断言 + 截图，默认查 private 那份）
+├── kg/preview.py          Obsidian 式预览：markdown → HTML、图片/链接解析、KaTeX 资产内联（2026-10-22）
+├── web/vendor/katex/      vendored KaTeX 0.16.11（js/css/auto-render/woff2 字体，约 0.55MB，含 LICENSE）
 ├── sync-graph.ps1         计划任务包装脚本（防重入 + python 检查 + UTF-8 + 日志裁剪；建本地两份 `--scope all`）
 ├── kg/                    数据管道
 │   ├── config.py          配置加载与校验（读 public-scope.yaml、解析各 scope；非法配置给中文报错）
@@ -794,7 +843,7 @@ knowledge-graph/
 公开范围之外，这条边在 public 里就不存在。本次快照正好有一处笔记→笔记链接是这样
 （**09:07 那轮** `scan` 里 private 46 条、public 45 条），差的就是它。**别把「两份语义边相等」当契约。**
 
-### `python browser_check.py`（浏览器侧，约 166 项断言）
+### `python browser_check.py`（浏览器侧，约 176 项断言）
 
 Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`，无需起服务器。
 默认查 private 那份（`dist/knowledge-graph.html`）；两份共用 `web/*.js`，只是 payload 不同，
@@ -868,7 +917,7 @@ public **62 fps**）、20 格滚轮耗时（实测约 **1.1 s**：1104 / 1091 ms
 截图落在 `%TEMP%\kg_*.png`（可用 `KG_SHOT_DIR` 改），**改完视觉要自己看图**。
 深缩放那几段用例的 fixture 节点是按**后缀**在图里现查的，不写完整路径 —— 笔记改名不会让
 整段用例静默跳过（真跳过了，唯一信号是 `[ok]` 总数从 162 掉下来，所以每次都要看这个数）。
-两份条数**不再相同**（条件跳过不同）：private **166 ok**、public **167 ok**，各 0 fail；另有条件跳过的 warn：天花板处
+两份条数**不再相同**（条件跳过不同）：private **176 ok**、public **177 ok**，各 0 fail；另有条件跳过的 warn：天花板处
 找不到空视口（`bug B`，两份都跳）一条，没探到超 `CHIP_MAX` 的屏外目标（`+k` chip 折叠分支）
 **只剩 agg 一侧报一条**（raw 侧真测到了 2 组折叠，早先「两种模式各一条 → 3 条 warn」已过期）。
 空视口本身已经由 2b / 3c / 3d 三段从「缩太远」「放太大」与「任何缩放 × 任何平移」三个角度

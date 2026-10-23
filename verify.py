@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -306,6 +307,68 @@ def run(cfg, payload_path=None):
     distinct = len({round(v, 4) for v in enter})
     print(f"         enter 有 {distinct}/{len(enter)} 个互不相同的取值"
           + ("（每层在 HUD 上都能区分开）" if distinct == len(enter) else "（有层共用入口）"))
+
+    # ── 第 11 带：链接带 + Obsidian 式预览（2026-10-22 第三轮）───────────────
+    # 正文不再画在画布上（canvas 排不出段落/表格/图片/公式，只是「能用」），改成：
+    # 深缩放出链接药丸，Ctrl 悬停弹 HTML 浮层（真排版 + KaTeX + 图片）。
+    # 这里守数据侧：预览 HTML 都渲染出来了、图片引用都存在、链接都能落到图上节点、
+    # 窗口点自成一条等比阶梯且会退场。
+    pv_cfg = cfg.get("preview") or {}
+    links_band = lod.get("links")
+    if pv_cfg.get("enabled"):
+        print("\n[预览/链接带] 第 11 带：Obsidian 式悬浮预览 + 链接药丸")
+        _check(isinstance(links_band, dict), "lod.links 存在（preview.enabled=true）", failures)
+        if isinstance(links_band, dict):
+            le = float(links_band.get("enter") or 0)
+            lm = float(links_band.get("mature") or 0)
+            lh = float(links_band.get("hold") or 0)
+            lx = float(links_band.get("exit") or 0)
+            rung = enter[-1] / enter[-2] if len(enter) > 1 and enter[-2] else 1.0
+            _check(le > mature[-1] + 1e-9,
+                   f"链接带在 h6 成熟点之后才开始（enter={le:.4f} > "
+                   f"M[{max_depth}]={mature[-1]:.4f}）", failures)
+            _check(abs(lm - le * fade) < 1e-6 * max(1.0, lm),
+                   f"链接带成熟点 {lm:.4f} == enter × fade_span={fade}", failures)
+            _check(abs(lh - lm * rung) < 1e-4 * max(1.0, lh),
+                   f"链接带满档保持到下一级成熟点（hold={lh:.4f} == mature×rung）", failures)
+            _check(abs(lx - lh * fade) < 1e-6 * max(1.0, lx),
+                   f"链接带在再下一级淡出（exit={lx:.4f} == hold×fade_span）", failures)
+            _check(lm < lh < lx,
+                   f"链接带窗口单调：mature={lm:.4f} < hold={lh:.4f} < exit={lx:.4f}", failures)
+            print(f"         链接带窗口 {le:.2f} → {lm:.2f}（满）→ {lh:.2f}（开始淡出）"
+                  f"→ {lx:.2f}（消失）")
+        notes = [n for n in data["nodes"] if n["kind"] == "note"]
+        previews = [n.get("preview") or "" for n in notes]
+        _check(all(previews), f"{len(notes)} 篇笔记都有预览 HTML", failures)
+        total = sum(len(p) for p in previews)
+        _check(total > 0, f"预览 HTML 总字符 {total}", failures)
+        # 只查「正文文本」里的残留：代码块里的 `np.array([[1, 2]])` 天然带双中括号，
+        # 那是内容不是语法残留（第二轮 verify 因此假红过一次）。
+        text_only = [re.sub(r"<(pre|code)\b[^>]*>.*?</\1>", "", p, flags=re.S) for p in previews]
+        _check(not any("[[" in p for p in text_only),
+               "预览正文里没有残留 [[ ]] 语法（代码块不算）", failures)
+        _check(not any(p.lstrip().startswith("---") for p in previews),
+               "预览里没有残留 frontmatter", failures)
+        _check(any("$" in p for p in previews),
+               "预览里保留了公式定界符（交给运行时 KaTeX 渲染）", failures)
+        # 图片引用按「相对 dist/」写出，必须真能找到文件（519MB 不内联，只能引用）
+        dist_dir = os.path.dirname(os.path.join(cfg["root"], cfg["output"]["html"]))
+        bad = []
+        for p in previews:
+            for mm in re.finditer(r'<img[^>]+src="([^"]+)"', p):
+                src = mm.group(1)
+                if "://" in src or src.startswith("data:"):
+                    continue
+                if not os.path.isfile(os.path.normpath(os.path.join(dist_dir, src))):
+                    bad.append(src)
+        _check(not bad, f"预览里的图片引用都能找到文件（缺失 {len(bad)} 个）", failures)
+        node_ids = {n["id"] for n in data["nodes"]}
+        all_links = [l for n in notes for l in (n.get("links") or [])]
+        _check(all(l.get("t") in node_ids for l in all_links),
+               f"预览里的链接目标都落在图上节点（{len(all_links)} 条）", failures)
+        _check(all(l.get("l") for l in all_links), "每个链接都有显示文字", failures)
+        print(f"         预览 HTML {total} 字（{len(notes)} 篇，最长 "
+              f"{max(len(p) for p in previews)} 字）；出站链接 {len(all_links)} 条")
 
     # ── 「落笔」的解析复刻（与 render.js 的 draw() 判据对齐）─────────────
     # 一个节点这一帧会被画出来，当且仅当：

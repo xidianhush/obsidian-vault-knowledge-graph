@@ -2,7 +2,7 @@
 dist/
 
 # 第三方库（Cytoscape vendored；已弃用后不再需要）
-vendor/
+/vendor/   # 只忽略仓库根的第三方库目录；web/vendor/katex 是要入库的（KaTeX，见 README §4）
 
 # Python
 __pycache__/

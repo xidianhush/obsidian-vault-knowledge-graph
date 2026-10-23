@@ -171,6 +171,49 @@
   #hits .hit:last-child { border-bottom: none; }
   #hits .hit:hover { background: var(--panel-2); }
   #hits .hit .why { color: var(--muted); font-size: 11px; }
+
+  /* ── KaTeX（构建期内联，字体已换 base64）──────────────────────────── */
+  /*__KATEX_CSS__*/
+
+  /* ── Obsidian 式悬停预览浮层（2026-10-22 第三轮）─────────────────────
+     第 11 带（链接带）里按住 Ctrl 悬停链药丸 → 这个浮层。
+     排版交给浏览器（不是 canvas fillText），所以标题/列表/表格/代码/图片/公式
+     都能正常排 —— 这是「够用」升级到「好用」的关键。 */
+  #preview {
+    position: fixed; z-index: 60; display: none;
+    width: 700px; max-width: calc(100vw - 32px); max-height: 74vh; overflow-y: auto;
+    background: #1e1e24; color: #d6dbe4;
+    border: 1px solid #2d3138; border-radius: 10px;
+    box-shadow: 0 18px 48px rgba(0,0,0,.6);
+    padding: 16px 20px 20px;
+    font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    overscroll-behavior: contain;
+  }
+  #preview.show { display: block; }
+  #preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6 {
+    color: #e6edf3; line-height: 1.4; margin: 16px 0 8px; font-weight: 600;
+  }
+  #preview h1 { font-size: 22px; } #preview h2 { font-size: 19px; }
+  #preview h3 { font-size: 17px; } #preview h4, #preview h5, #preview h6 { font-size: 15px; }
+  #preview > :first-child { margin-top: 0; }
+  #preview p { margin: 8px 0; }
+  #preview ul, #preview ol { margin: 8px 0 8px 22px; }
+  #preview li { margin: 3px 0; }
+  #preview img.pv-img { max-width: 100%; border-radius: 6px; margin: 8px 0; display: block; }
+  #preview code { background: #2a2e36; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  #preview pre { background: #161a20; padding: 10px 12px; border-radius: 6px; overflow: auto; }
+  #preview pre code { background: none; padding: 0; }
+  #preview table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  #preview th, #preview td { border: 1px solid #33383f; padding: 5px 9px; }
+  #preview th { background: #262a31; }
+  #preview blockquote { border-left: 3px solid #3b4048; margin: 8px 0; padding: 2px 12px; color: #9aa4b2; }
+  #preview mark { background: rgba(65,132,88,.45); color: #e6edf3; border-radius: 3px; padding: 0 2px; }
+  #preview a { color: #7ea6ff; }
+  #preview .pv-wl { color: #7ea6ff; border-bottom: 1px dashed rgba(126,166,255,.45); cursor: pointer; }
+  #preview .pv-wl.pv-unresolved { color: var(--muted); border-bottom-color: rgba(126,135,154,.35); cursor: default; }
+  #preview .pv-attach { color: #7e879a; background: #262a31; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+  #preview .pv-missing { color: #f85149; font-size: 12px; }
+  #preview .pv-hint { color: var(--muted); font-size: 11px; border-top: 1px solid #2d3138; margin-top: 14px; padding-top: 8px; }
 </style>
 </head>
 <body>
@@ -257,10 +300,13 @@
 
 <div id="tooltip"></div>
 <div id="toast"></div>
+<div id="preview" role="dialog" aria-label="笔记预览"></div>
 <footer id="footer">
   生成于 __GENERATED__ · 数据来自 Obsidian vault（本地构建，无服务器）
 </footer>
 
+<script>/*__KATEX_JS__*/</script>
+<script>/*__KATEX_AUTO__*/</script>
 <script>/*__RENDER__*/</script>
 <script type="application/json" id="graph-data">/*__DATA__*/</script>
 <script>/*__APP__*/</script>

@@ -180,6 +180,30 @@ class GraphBuilder:
                 count += 1
         self.stats["heading_nodes"] = count
 
+    def attach_previews(self, cfg: dict, base_dir: str):
+        """给每个笔记节点挂两样东西（2026-10-22 第三轮：Obsidian 式悬浮预览）：
+
+        * `preview`：构建期渲染好的 HTML 片段（markdown → HTML，公式保留 `$…$` 定界符
+          交给运行时 KaTeX，图片按相对路径引用 vault）；
+        * `links`：出站 `[[链接]]` 表（`[{"t": 节点 id, "l": 显示文字}]`），给「链接带」
+          画药丸用 —— 只留能解析到图上节点的、去重。
+        """
+        from . import preview as preview_mod
+
+        if not (cfg.get("preview") or {}).get("enabled"):
+            return
+        index = preview_mod.build_attachment_index(cfg["vault"])
+        total = 0
+        for note in self.notes:
+            node = self.nodes.get(note.file.id)
+            if node is None:
+                continue
+            html, links = preview_mod.render(note, cfg, index, base_dir, self.resolve)
+            node["preview"] = html
+            node["links"] = links
+            total += len(html)
+        self.stats["preview_chars"] = total
+
     def _heading_at_line(self, note_id: str, line):
         """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。
 

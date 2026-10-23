@@ -43,6 +43,7 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 | `cb65d2b` | 标签**一律画在圆内、居中**，字号跟着圆长大（`fs = min(0.3×屏幕半径, 塞得下)`, 夹 [11,64]） | 标签全重写 + 退役 3 个键 |
 | `40a9e92` | **raw 连线改画在实心圆之上**（agg 仍在圆下）；祖先点线跟着提上去 | 只动绘制顺序 |
 | `5a3528d` | **静息态**（未选中、未悬停）连线浓度单独成档 `0.45` | 配置 + 两处取浓度 |
+| 本轮（见 `git log`） | **第 11 带「链接药丸 + Obsidian 式预览」**（2026-10-22，三轮）：第二轮「正文直接画在 canvas 上」被验收为「只是能用」（排版差、公式没渲染、图片没加载）→ 第三轮改成：深缩放画该笔记的**出站 `[[链接]]` 药丸**，**Ctrl 悬停 → HTML 浮层预览**（构建期 markdown→HTML + 运行时 KaTeX + 图片按相对路径引用 vault）。窗口 `95.2 → 128.5 → 236.6 → 319.4`，越过退场并提示「已越过链接带」 | 新 `kg/preview.py` + `web/vendor/katex/`（唯一内联第三方）+ 渲染新趟次 + 判据（3c 判据同步、新增 3e 段；`[ok]` 166/167 → 176/177） |
 
 ---
 
@@ -59,6 +60,8 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 | `lod.label_font_max` | `64` | 标签字号上限（旧值 22 已弃用：大圆里那行字只占直径 4%） |
 | `lod.label_alpha` | `0.02` | 标签参与竞争的门槛（标签与圆同进同出） |
 | `lod.idle_edge_dim` | `0.45` | **静息态**连线浓度；悬停仍 `hover_edge_dim`(0.75)、选中 `focus_edge_dim`(0.07)、相关边 1.0 |
+| `preview.enabled` | `true` | **第 11 带「链接带」+ Obsidian 式预览**总开关（见 §4、坑 41）。false = 完全回到「到第 10 带为止」，payload 不存预览 HTML、KaTeX 也不内联 |
+| `preview.max_note_chars` | `0` | 0 = 预览整篇不截断 |
 
 **已退役（`kg/config.py` 见到会 `_fail` 并提示，不静默忽略）**：
 `theme.note_edge`、`lod.label_font_ref`、`lod.label_max_width`、`lod.label_smooth_dim`。
@@ -76,6 +79,8 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 **标签**：一律画在自己圆内、**居中**；只给屏幕半径 ≥ 28px 的圆挂；字号 `min(0.3×sr, 塞得下)` 夹 [11,64]；塞不进就截断加 `…`，只剩 1 个字符则不画。**没有圆外标签了，别加回来。**
 
+**第 11 带（链接药丸 + 预览，2026-10-22 第三轮）**：`lod.links = {enter, mature, hold, exit}` 接在 `M[10] = zMax` 之后，`淡入 → 满 → 淡出`，**越过 `exit` 就整条退场**（并在画布中央提示「已越过链接带」）—— zMax 之外「放大到极端会空 + 兜底提示照画」的契约不变。带内只画**视口中心命中节点所属笔记**的出站链接药丸（屏幕空间常量大小、最多 10 枚 + `+k`，锚点必须 clamp 到屏幕中心 +90px 内）；**Ctrl 悬停药丸** → `#preview` HTML 浮层（构建期 `kg/preview.py` 渲好的整篇笔记 + 运行时 KaTeX + 图片按相对路径引用 vault）。`stats.links` 是药丸数、`stats.linkTarget` 是所属笔记；兜底判据是 `painted == 0 && links == 0`。机制、六条「别改回去」与已知限制见 HANDOFF 坑 41。
+
 **连线**：`agg` 画在实心圆**之下**（聚合边少、强度靠线宽）；`raw`（默认）画在实心圆**之上**（否则浅层 68 条里有 53 条整条被圆盖住）。端点仍用 `rawAnchor` + `TRIM` 在各自圆边界截断。
 
 **图例**：可折叠（`L` 或面板右上角按钮），状态存 `localStorage: kg.legendCollapsed`；折叠只切 `.collapsed` 类，**绝不动** `#legend-rel-raw` / `#legend-rel-agg` 的 `hidden`（1c 段直接断言它）。
@@ -87,11 +92,13 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 | 项 | 值 |
 |---|---|
 | `verify --scope private` / `--scope public` | 两份「✓ 全部自动校验通过」 |
-| `browser_check` private | **166 [ok] / 0 FAIL / 2 warn**（warn 是条件跳过） |
-| `browser_check` public | **167 [ok] / 0 FAIL / 1 warn** |
-| private payload 快照 | 节点 **3538** / 边 **3629** / `home_layer=2` / `max_depth=10` |
-| public payload 快照 | 节点 **3494** / 边 **3587** |
+| `browser_check` private | **176 [ok] / 0 FAIL / 2 warn**（warn 是条件跳过） |
+| `browser_check` public | **177 [ok] / 0 FAIL / 1 warn** |
+| private payload 快照 | 节点 **3538** / 边 **3629** / `home_layer=2` / `max_depth=10` / 预览 HTML **104 万字** / 出站链接 79 条 |
+| public payload 快照 | 节点 **3494** / 边 **3587** / 预览 HTML 108 万字 / 出站链接 78 条 |
 | `enter[]`（private 快照） | `[0.0195, 0.3925, 0.7224, 1.3298, 2.4478, 4.5056, 8.2935, 15.2659, 28.1001, 51.7241]` |
+| `lod.links`（private / public） | `95.21 → 128.53 → 236.59 → 319.40` / `94.96 → 128.20 → 235.91 → 318.48`（淡入、满、开始淡出、消失） |
+| 单文件体积 | private **11.05 MB** / public **11.01 MB**（预览 +1.4MB、KaTeX 内联 +0.6MB；原 9.7MB） |
 
 两份 `[ok]` 数**不再相等**是正常的：条件跳过不同（public 那次在天花板处找到了空视口，bug B 那条真跑了）。**`[ok]` 数掉下去 = 有用例被静默跳过，必须查。**
 
@@ -151,6 +158,7 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 - **P2** `candidates.yaml` 有 321 条候选边**全 pending**，缺审核流程（页面内审核 + 导出 YAML，或 `build.py review`）。
 - **P4** 14 处 `[[笔记#标题]]` 锚点未命中（Obsidian 的锚点匹配更宽松；放宽逻辑在 `kg/graph.py` 的 `_normalize_heading()`）。
 - 用户明确说过「**后续还有一版改动解决首屏观感**」—— 动手前问清楚他要什么，别自己猜。
+- **P0（本轮已落地、等用户验收）** 第 11 带「链接药丸 + Obsidian 式预览」（见坑 41）。后续可做：① 预览浮层是**整篇静态 HTML**，长笔记要滚动、没有搜索/折叠；② KaTeX 极少数宏不认（`throwOnError:false` 显示红色原文）；③ 出站链接只有 79 条能落到图上节点（其余是附件或跨 scope），如果想「链接越界也能看」要另设交互；④ 图片按路径引用 vault，**把 HTML 单独发给别人时图会缺**，需要的话得生成缩略图副本。
 
 ---
 

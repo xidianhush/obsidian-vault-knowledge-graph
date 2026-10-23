@@ -73,6 +73,12 @@ DEFAULTS: dict = {
         "raw_edge_width": 1.0,
         "raw_marker_min_len": 6,
     },
+    # Obsidian 式预览 / 第 11 带「链接带」（2026-10-22 第三轮）。
+    # 关掉它 = 完全回到「到第 10 带为止」：payload 不存预览 HTML、lod 里没有 links。
+    "preview": {
+        "enabled": True,
+        "max_note_chars": 0,   # 0 = 不截断（预览是整篇笔记，用户口径）
+    },
     "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}, "raw_edge": "#E6EDF3"},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
@@ -128,6 +134,14 @@ def _validate(cfg: dict):
         _fail(f"zoom.home_band 必须在 [0, 1] 之间（home 落在该层淡入带的哪个位置），收到 {hb!r}")
     if zoom["transition_ms"] < 0:
         _fail("zoom.transition_ms 不能为负")
+    pv = cfg.get("preview") or {}
+    if not isinstance(pv, dict):
+        _fail("preview 必须是字典（Obsidian 式预览 / 第 11 带「链接带」的开关组）")
+    if not isinstance(pv.get("enabled"), bool):
+        _fail(f"preview.enabled 必须是布尔值（默认 true），收到 {pv.get('enabled')!r}")
+    mc = pv.get("max_note_chars", 0)
+    if not isinstance(mc, int) or isinstance(mc, bool) or mc < 0:
+        _fail(f"preview.max_note_chars 必须是 ≥0 的整数（0 = 整篇不截断），收到 {mc!r}")
     lcfg = cfg["layout"]
     if not isinstance(lcfg.get("leaf_radius"), (int, float)) or lcfg["leaf_radius"] <= 0:
         _fail("layout.leaf_radius 必须是正数（退化子树与孤点的兜底半径）")

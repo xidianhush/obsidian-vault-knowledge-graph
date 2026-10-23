@@ -68,11 +68,24 @@ def build_html(cfg, payload, quiet=False):
             raise EmitError(f"缺少前端源文件 {path}")
     if "/*__DATA__*/" not in template:
         raise EmitError("web/template.html 缺少占位符 /*__DATA__*/")
+    # KaTeX（Obsidian 式预览里的公式渲染）只在 preview.enabled 时内联：关掉实验功能
+    # 就不该为它背 0.6MB。三个占位符要么一起在、要么一起不在，避免半套页面。
+    katex = None
+    if (cfg.get("preview") or {}).get("enabled"):
+        for marker in ("/*__KATEX_CSS__*/", "/*__KATEX_JS__*/", "/*__KATEX_AUTO__*/"):
+            if marker not in template:
+                raise EmitError(f"web/template.html 缺少占位符 {marker}")
+        from .preview import katex_assets
+        katex = katex_assets(root)
 
     html = template
     html = html.replace("/*__DATA__*/", data)
     for marker, path in parts:
         html = html.replace(marker, _read(path))
+    if katex:
+        html = html.replace("/*__KATEX_CSS__*/", katex["css"])
+        html = html.replace("/*__KATEX_JS__*/", katex["js"])
+        html = html.replace("/*__KATEX_AUTO__*/", katex["auto"])
     html = html.replace("__PAGE_TITLE__", cfg.get("page_title", "知识图谱"))
     html = html.replace("__GENERATED__", datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
 

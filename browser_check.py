@@ -598,10 +598,13 @@ with sync_playwright() as p:
         page.evaluate("() => window.KG.renderer.zoomBy(4)")
         page.wait_for_timeout(90)
         st = page.evaluate(STATE)
+        # 判据是「painted 与 bodyChars **同时**为 0」：第 11 带（正文）开启之后，
+        # 正文只画字、不画圆，光看 painted 会把「满屏正文」误判成空。而兜底提示本来
+        # 就只在两者都为空时才落笔（render.js draw() 末尾的判据同步改了）。
         # 判据必须是 stats.painted（几何精确的落笔数），**不能**用 shownNodes：
         # 那是候选集大小，会被「中心远在屏外、半径极大的圆」撑住 —— public 在 z=1e6 时
         # shownNodes 恒为 1，而画布上其实一无所有、提示正常画着（见 3d 的说明）。
-        if st["painted"] == 0:
+        if st["painted"] == 0 and not st.get("links"):
             empty_at = page.evaluate("() => window.KG.renderer.camera.zoom")
             break
     print("    home z=%.3f -> 空于 z=%s（%s× home，%s× zMax）" % (
@@ -624,6 +627,125 @@ with sync_playwright() as p:
     check("Home key recovers from the empty state back to the home view",
           abs(home_after - meta["zHome"]) < 1e-6,
           "%.6f vs zHome %.6f" % (home_after, meta["zHome"]))
+
+    print("\n=== 3e. 第 11 带：链接带 + Ctrl 悬停预览（Obsidian 式） ===")
+    # 用户验收第二轮「正文直接铺在画布上」后的结论是「只是能用」，要求改成 Obsidian
+    # 的做法：深缩放 → 出链接药丸；按住 Ctrl 悬停药丸 → HTML 浮层预览（真排版 +
+    # KaTeX 公式 + 图片）。见 config.yaml 的 preview / HANDOFF 坑 41。
+    # 这段钉五件事：① 带之前没有药丸；② 带内药丸出现且属于中心那篇笔记；
+    # ③ Ctrl 悬停弹出浮层且公式/图片真的渲染；④ 松开 Ctrl 浮层收起；
+    # ⑤ 越过 exit 后没有药丸、画布提示「已越过链接带」。
+    band = page.evaluate("() => window.KG.renderer.linkBand")
+    if not band:
+        warns.append("preview 未启用（lod.links 缺失）-> 跳过第 11 带（链接带/预览）断言")
+        print("    !! preview disabled; skipping link-band checks")
+    else:
+        # 靶子数据驱动：优先「链接多 + 有图片 + 有公式」的笔记（预览浮层才验得出东西）
+        tgt = page.evaluate("""() => {
+            const R = window.KG.renderer;
+            let best = null;
+            for (const n of R.NODES) {
+                if (n.kind !== 'note' || !n.preview || !(n.links || []).length) continue;
+                const score = (n.links || []).length
+                    + (n.preview.indexOf('<img') >= 0 ? 100 : 0)
+                    + (n.preview.indexOf('$') >= 0 ? 50 : 0);
+                if (!best || score > best.score) best = {id: n.id, x: n.x, y: n.y, score: score,
+                                                         links: (n.links || []).length};
+            }
+            return best;
+        }""")
+
+        def center_on(z):
+            page.evaluate("""(a) => {
+                const R = window.KG.renderer;
+                R.setZoom(a.z);
+                const W = window.innerWidth, H = window.innerHeight;
+                R.camera.panX = W / 2 - a.x * R.camera.zoom;
+                R.camera.panY = (H - 46) / 2 - a.y * R.camera.zoom;
+                R.draw();
+            }""", {"z": z, "x": tgt["x"], "y": tgt["y"]})
+            page.wait_for_timeout(200)
+
+        print("    链接带 enter=%.2f mature=%.2f hold=%.2f exit=%.2f | 靶子 %s（%d 条链接）"
+              % (band["enter"], band["mature"], band["hold"], band["exit"],
+                 tgt["id"], tgt["links"]))
+
+        center_on(band["enter"] * 0.97)
+        st = page.evaluate(STATE)
+        check("链接带之前没有链接药丸", not st.get("links"),
+              "z=%.2f links=%s" % (band["enter"] * 0.97, st.get("links")))
+
+        center_on(band["mature"])
+        st = page.evaluate(STATE)
+        check("链接带之内出现链接药丸", (st.get("links") or 0) > 0,
+              "z=%.2f links=%s" % (band["mature"], st.get("links")))
+        check("药丸属于中心那篇笔记", st.get("linkTarget") == tgt["id"],
+              "linkTarget=%s 期望=%s" % (st.get("linkTarget"), tgt["id"]))
+        # 每枚药丸带上「目标笔记预览里有没有图片/公式」，挑一枚两者都有的来验 ——
+        # 第一版固定悬停第一枚，而它指向的 Calculus 那篇没有图片，断言就假红了。
+        jobs = page.evaluate("""() => window.KG.renderer.linkJobs.map(j => {
+            const R = window.KG.renderer;
+            const n = R.byId.get(j.t) || {};
+            const note = n.kind === 'note' ? n : (R.byId.get(n.note) || {});
+            const p = note.preview || '';
+            return {x: j.x + j.w / 2, y: j.y + j.h / 2, t: j.t, l: j.label,
+                    imgs: p.indexOf('<img') >= 0, math: p.indexOf('$') >= 0};
+        })""")
+        print("    药丸:", [(j["l"][:16], j["t"].rsplit("/", 1)[-1][:18],
+                            ("图" if j["imgs"] else "") + ("式" if j["math"] else ""))
+                           for j in jobs[:5]])
+        pick = next((j for j in jobs if j["imgs"] and j["math"]),
+                    next((j for j in jobs if j["imgs"] or j["math"]), jobs[0]))
+
+        # Ctrl + 悬停那枚药丸 → 浮层
+        page.keyboard.down("Control")
+        page.mouse.move(pick["x"], pick["y"])
+        page.wait_for_timeout(1000)                    # 等 KaTeX 把这一篇的公式渲完
+        pv = page.evaluate("""() => {
+            const el = document.getElementById('preview');
+            if (!el || !el.classList.contains('show')) return null;
+            const imgs = [...el.querySelectorAll('img')];
+            return {
+                katex: el.querySelectorAll('.katex').length,
+                display: el.querySelectorAll('.katex-display').length,
+                imgs: imgs.length,
+                broken: imgs.filter(i => !i.naturalWidth).length,
+                w: el.offsetWidth, h: el.offsetHeight,
+                inViewport: el.getBoundingClientRect().left >= 0 &&
+                            el.getBoundingClientRect().top >= 0 &&
+                            el.getBoundingClientRect().right <= window.innerWidth + 1 &&
+                            el.getBoundingClientRect().bottom <= window.innerHeight + 1,
+            };
+        }""")
+        check("Ctrl 悬停打开了预览浮层", pv is not None, pick["l"][:24])
+        if pv:
+            if pick["math"]:
+                check("预览里的 KaTeX 公式真的渲染了", pv["katex"] > 0,
+                      "katex=%d（块级 %d）" % (pv["katex"], pv["display"]))
+            else:
+                warns.append("靶子笔记没有公式 -> KaTeX 断言跳过")
+            if pick["imgs"]:
+                check("预览里的图片真的加载了", pv["imgs"] > 0 and pv["broken"] == 0,
+                      "imgs=%d broken=%d" % (pv["imgs"], pv["broken"]))
+            else:
+                warns.append("靶子笔记没有图片 -> 图片加载断言跳过")
+            check("预览浮层没有超出视口", pv["inViewport"], "%dx%d" % (pv["w"], pv["h"]))
+        shot("15_preview")
+        page.keyboard.up("Control")
+        page.wait_for_timeout(350)
+        gone = page.evaluate("() => !document.getElementById('preview').classList.contains('show')")
+        check("松开 Ctrl 后浮层收起", gone)
+
+        center_on(band["exit"] * 1.05)
+        st = page.evaluate(STATE)
+        check("越过 exit 后没有链接药丸", not st.get("links"),
+              "z=%.2f links=%s" % (band["exit"] * 1.05, st.get("links")))
+        hint_n4 = page.evaluate(HINT_PIXELS)
+        check("越过 exit 后画布提示「已越过链接带」", hint_n4 > 50,
+              "中心带非背景像素=%d" % hint_n4)
+
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(700)
 
     print("\n=== 3d. no zoom/pan may leave a blank canvas without the hint ===")
     # 这是 3c 的真正用途，也是放开缩放的前提条件：画布**肉眼全空**时必须有兜底提示。

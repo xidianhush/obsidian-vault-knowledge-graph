@@ -12,8 +12,6 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 WIKILINK_RE = re.compile(r"(!?)\[\[([^\[\]]+?)\]\]")
 INLINE_LINK_RE = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
 CODE_SPAN_RE = re.compile(r"`[^`]*`")
-
-
 class Heading:
     __slots__ = ("level", "title", "line", "path", "id", "parent")
 

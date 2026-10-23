@@ -70,9 +70,14 @@ def build_payload(cfg, quiet=False):
     builder.build_frontmatter_edges()
     builder.build_annotation_edges(annotations)
     builder.build_candidate_edges(cand_doc)
+    # Obsidian 式预览：构建期把每篇 markdown 渲成 HTML 片段（公式留给运行时 KaTeX），
+    # 同时算好出站链接表（链接带画药丸用）。base_dir 取输出 HTML 所在目录 ——
+    # 预览里的图片按「相对 HTML 的路径」引用 vault，file:// 下实测可加载。
+    out_html = os.path.join(cfg["root"], cfg["output"]["html"])
+    builder.attach_previews(cfg, os.path.dirname(out_html))
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
-    layers, enter, home_layer, root_radius = layout.compute(builder.nodes, cfg, max_depth)
+    layers, enter, home_layer, root_radius, links_band = layout.compute(builder.nodes, cfg, max_depth)
     aggregates = builder.build_aggregates(max_depth)
     levels = builder.levels_table(aggregates)
 
@@ -83,6 +88,14 @@ def build_payload(cfg, quiet=False):
         item.pop("aliases", None)
         by_kind[item["kind"]] = by_kind.get(item["kind"], 0) + 1
         nodes.append(item)
+
+    # 第 11 带（链接带）的窗口点单独挂 lod.links；enter[] 仍是 10 项，
+    # 「节点深度 = 10 层」这条数据契约（verify 直接断言）不动。
+    lod_payload = dict(cfg.get("lod", {}),
+                       enter=[round(v, 6) for v in enter],
+                       home_layer=home_layer)
+    if links_band:
+        lod_payload["links"] = links_band
 
     meta = {
         "generated": time.strftime("%Y-%m-%d %H:%M"),
@@ -101,9 +114,7 @@ def build_payload(cfg, quiet=False):
         "layout_root_radius": round(root_radius, 4),
         "nominal_fit_radius": layout.NOMINAL_FIT_RADIUS,
         "zoom": cfg["zoom"],
-        "lod": dict(cfg.get("lod", {}),
-                    enter=[round(v, 6) for v in enter],
-                    home_layer=home_layer),
+        "lod": lod_payload,
         "theme": cfg["theme"],
         "page_title": cfg.get("page_title") or "知识图谱",
         "scan": stats,
