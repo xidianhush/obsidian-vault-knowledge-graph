@@ -628,34 +628,55 @@ with sync_playwright() as p:
           abs(home_after - meta["zHome"]) < 1e-6,
           "%.6f vs zHome %.6f" % (home_after, meta["zHome"]))
 
-    print("\n=== 3e. 第 11 带：链接带 + Ctrl 悬停预览（Obsidian 式） ===")
-    # 用户验收第二轮「正文直接铺在画布上」后的结论是「只是能用」，要求改成 Obsidian
-    # 的做法：深缩放 → 出链接药丸；按住 Ctrl 悬停药丸 → HTML 浮层预览（真排版 +
-    # KaTeX 公式 + 图片）。见 config.yaml 的 preview / HANDOFF 坑 41。
-    # 这段钉五件事：① 带之前没有药丸；② 带内药丸出现且属于中心那篇笔记；
-    # ③ Ctrl 悬停弹出浮层且公式/图片真的渲染；④ 松开 Ctrl 浮层收起；
-    # ⑤ 越过 exit 后没有药丸、画布提示「已越过链接带」。
-    band = page.evaluate("() => window.KG.renderer.linkBand")
-    if not band:
-        warns.append("preview 未启用（lod.links 缺失）-> 跳过第 11 带（链接带/预览）断言")
-        print("    !! preview disabled; skipping link-band checks")
+    print("\n=== 3e. 第 11 带：叶子圆内药丸 + Ctrl 悬停 / 单击预览 ===")
+    # 用户 2026-10-23 的口径：**只有「下一级直接是正文」的元素**（没有子元素、自己直接
+    # 含正文）才在它**自己的实心圆里**挂一枚药丸，出现由该圆自己的屏幕半径决定
+    # （44→64px 淡入），不再有全局缩放带；Ctrl 悬停 / 单击 → 浮层从**这一节的锚点**滚起。
+    # 这段钉六件事：
+    #   ① 有正文的叶子圆：放大到 sr≥64 时**恰好一枚**药丸，且药丸落在该圆内部；
+    #   ② 有子元素的节点（非叶子）绝不挂药丸；
+    #   ③ Ctrl 悬停 → 浮层出现，KaTeX/图片真的渲染（靶子笔记要有）；
+    #   ④ 浮层确实滚到了这一节的锚点（不是永远从顶部开始）；
+    #   ⑤ 单击药丸 → 浮层固定住（移开鼠标不消失），Esc 收起；
+    #   ⑥ 缩小到圆只有十几 px 时不挂药丸（44px 门槛以下）。
+    if not page.evaluate("() => !!(window.KG.renderer.linkAt)") :
+        warns.append("preview 未启用 -> 跳过第 11 带（叶子药丸/预览）断言")
+        print("    !! preview disabled; skipping leaf-pill checks")
     else:
-        # 靶子数据驱动：优先「链接多 + 有图片 + 有公式」的笔记（预览浮层才验得出东西）
+        # 靶子：挑一个有正文、且**所属笔记同时带公式和图片**的叶子标题（数据驱动）。
+        # 第一版只按「有图或有式」打分，结果挑中了没有公式的笔记、KaTeX 断言假红。
         tgt = page.evaluate("""() => {
             const R = window.KG.renderer;
-            let best = null;
+            let best = null, fallback = null;
             for (const n of R.NODES) {
-                if (n.kind !== 'note' || !n.preview || !(n.links || []).length) continue;
-                const score = (n.links || []).length
-                    + (n.preview.indexOf('<img') >= 0 ? 100 : 0)
-                    + (n.preview.indexOf('$') >= 0 ? 50 : 0);
-                if (!best || score > best.score) best = {id: n.id, x: n.x, y: n.y, score: score,
-                                                         links: (n.links || []).length};
+                if (n.kind !== 'heading' || !n.leaf || !n.hasText) continue;
+                const note = R.byId.get(n.note) || {};
+                const p = note.preview || '';
+                const hasImg = p.indexOf('<img') >= 0;
+                // 公式要排除代码块里的 `$`（auto-render 会忽略 <pre>/<code>）
+                const box = document.createElement('div');
+                box.innerHTML = p;
+                box.querySelectorAll('pre,code').forEach(e => e.remove());
+                const txt = box.textContent || '';
+                const hasMath = txt.split('$').length >= 3;
+                const score = (n.tlen || 0) + (hasImg ? 5000 : 0) + (hasMath ? 5000 : 0);
+                const cand = {id: n.id, x: n.x, y: n.y, r: n._r || n.r,
+                              tlen: n.tlen || 0, anchor: n.anchor || '',
+                              img: hasImg, math: hasMath, score: score};
+                if (hasImg && hasMath && (!best || score > best.score)) best = cand;
+                if (!fallback || score > fallback.score) fallback = cand;
             }
-            return best;
+            return best || fallback;
+        }""")
+        nonleaf = page.evaluate("""() => {
+            const R = window.KG.renderer;
+            for (const n of R.NODES) {
+                if (n.kind === 'heading' && !n.leaf) return {id: n.id, x: n.x, y: n.y, r: n._r || n.r};
+            }
+            return null;
         }""")
 
-        def center_on(z):
+        def center_on(node, z):
             page.evaluate("""(a) => {
                 const R = window.KG.renderer;
                 R.setZoom(a.z);
@@ -663,86 +684,113 @@ with sync_playwright() as p:
                 R.camera.panX = W / 2 - a.x * R.camera.zoom;
                 R.camera.panY = (H - 46) / 2 - a.y * R.camera.zoom;
                 R.draw();
-            }""", {"z": z, "x": tgt["x"], "y": tgt["y"]})
-            page.wait_for_timeout(200)
+            }""", {"z": z, "x": node["x"], "y": node["y"]})
+            page.wait_for_timeout(180)
 
-        print("    链接带 enter=%.2f mature=%.2f hold=%.2f exit=%.2f | 靶子 %s（%d 条链接）"
-              % (band["enter"], band["mature"], band["hold"], band["exit"],
-                 tgt["id"], tgt["links"]))
+        print("    靶子叶子: %s（%d 字，anchor=%s，sr≈%.1f @zoom=1）"
+              % (tgt["id"].rsplit("/", 1)[-1][:34], tgt["tlen"], tgt["anchor"], tgt["r"]))
 
-        center_on(band["enter"] * 0.97)
+        # ① 放大到该圆 sr≈80px
+        z_big = 80.0 / max(tgt["r"], 1e-6)
+        center_on(tgt, z_big)
         st = page.evaluate(STATE)
-        check("链接带之前没有链接药丸", not st.get("links"),
-              "z=%.2f links=%s" % (band["enter"] * 0.97, st.get("links")))
+        jobs = page.evaluate("() => window.KG.renderer.linkJobs.map(j => "
+                             "({x: j.x, y: j.y, w: j.w, h: j.h, t: j.t, a: j.a, l: j.l}))")
+        check("叶子圆放大后出现药丸", (st.get("links") or 0) >= 1,
+              "z=%.2f links=%s" % (z_big, st.get("links")))
+        mine = [j for j in jobs if j["t"] == tgt["id"]]
+        check("药丸挂在这个叶子元素的圆里（恰好一枚）", len(mine) == 1,
+              "同 id 药丸 %d 枚" % len(mine))
+        if mine:
+            j = mine[0]
+            VW = page.viewport_size["width"]
+            VH = page.viewport_size["height"]
+            cx = (j["x"] + j["w"] / 2) - VW / 2
+            cy = (j["y"] + j["h"] / 2) - (VH - 46) / 2
+            dist = (cx * cx + cy * cy) ** 0.5
+            check("药丸落在该圆内部（中心距 < 屏幕半径）", dist < 80,
+                  "中心距=%.1fpx（圆半径≈80px）" % dist)
+            check("药丸文案带字数", ("正文" in j["l"]) and ("字" in j["l"]), j["l"])
+            check("药丸带着这一节的锚点", bool(j["a"]), str(j["a"]))
+            pill = j
 
-        center_on(band["mature"])
-        st = page.evaluate(STATE)
-        check("链接带之内出现链接药丸", (st.get("links") or 0) > 0,
-              "z=%.2f links=%s" % (band["mature"], st.get("links")))
-        check("药丸属于中心那篇笔记", st.get("linkTarget") == tgt["id"],
-              "linkTarget=%s 期望=%s" % (st.get("linkTarget"), tgt["id"]))
-        # 每枚药丸带上「目标笔记预览里有没有图片/公式」，挑一枚两者都有的来验 ——
-        # 第一版固定悬停第一枚，而它指向的 Calculus 那篇没有图片，断言就假红了。
-        jobs = page.evaluate("""() => window.KG.renderer.linkJobs.map(j => {
-            const R = window.KG.renderer;
-            const n = R.byId.get(j.t) || {};
-            const note = n.kind === 'note' ? n : (R.byId.get(n.note) || {});
-            const p = note.preview || '';
-            return {x: j.x + j.w / 2, y: j.y + j.h / 2, t: j.t, l: j.label,
-                    imgs: p.indexOf('<img') >= 0, math: p.indexOf('$') >= 0};
-        })""")
-        print("    药丸:", [(j["l"][:16], j["t"].rsplit("/", 1)[-1][:18],
-                            ("图" if j["imgs"] else "") + ("式" if j["math"] else ""))
-                           for j in jobs[:5]])
-        pick = next((j for j in jobs if j["imgs"] and j["math"]),
-                    next((j for j in jobs if j["imgs"] or j["math"]), jobs[0]))
+        # ② 非叶子节点：绝不挂
+        if nonleaf:
+            z_nl = 80.0 / max(nonleaf["r"], 1e-6)
+            center_on(nonleaf, z_nl)
+            st2 = page.evaluate(STATE)
+            jobs2 = page.evaluate("() => window.KG.renderer.linkJobs || []")
+            check("非叶子节点（有子元素）不挂药丸",
+                  not any(x["t"] == nonleaf["id"] for x in jobs2),
+                  "z=%.2f 该节点药丸=%d" % (z_nl, sum(1 for x in jobs2 if x["t"] == nonleaf["id"])))
 
-        # Ctrl + 悬停那枚药丸 → 浮层
+        # ③④ Ctrl 悬停 → 浮层 + 锚点滚动
+        center_on(tgt, z_big)
         page.keyboard.down("Control")
-        page.mouse.move(pick["x"], pick["y"])
-        page.wait_for_timeout(1000)                    # 等 KaTeX 把这一篇的公式渲完
+        page.mouse.move(pill["x"] + pill["w"] / 2, pill["y"] + pill["h"] / 2)
+        page.wait_for_timeout(1100)
         pv = page.evaluate("""() => {
             const el = document.getElementById('preview');
             if (!el || !el.classList.contains('show')) return null;
             const imgs = [...el.querySelectorAll('img')];
+            const a = el.querySelector('#' + %r);
+            const pr = el.getBoundingClientRect();
             return {
                 katex: el.querySelectorAll('.katex').length,
-                display: el.querySelectorAll('.katex-display').length,
                 imgs: imgs.length,
                 broken: imgs.filter(i => !i.naturalWidth).length,
-                w: el.offsetWidth, h: el.offsetHeight,
-                inViewport: el.getBoundingClientRect().left >= 0 &&
-                            el.getBoundingClientRect().top >= 0 &&
+                scrollTop: el.scrollTop,
+                anchorRel: a ? (a.getBoundingClientRect().top - pr.top) : -9999,
+                inViewport: el.getBoundingClientRect().left >= -1 &&
+                            el.getBoundingClientRect().top >= -1 &&
                             el.getBoundingClientRect().right <= window.innerWidth + 1 &&
                             el.getBoundingClientRect().bottom <= window.innerHeight + 1,
             };
-        }""")
-        check("Ctrl 悬停打开了预览浮层", pv is not None, pick["l"][:24])
+        }""" % tgt["anchor"] if tgt["anchor"] else """() => null""")
+        check("Ctrl 悬停打开预览浮层", pv is not None, tgt["id"].rsplit("/", 1)[-1][:28])
         if pv:
-            if pick["math"]:
-                check("预览里的 KaTeX 公式真的渲染了", pv["katex"] > 0,
-                      "katex=%d（块级 %d）" % (pv["katex"], pv["display"]))
+            if tgt.get("math"):
+                check("预览里的 KaTeX 公式真的渲染了", pv["katex"] > 0, "katex=%d" % pv["katex"])
             else:
                 warns.append("靶子笔记没有公式 -> KaTeX 断言跳过")
-            if pick["imgs"]:
+            if tgt.get("img"):
                 check("预览里的图片真的加载了", pv["imgs"] > 0 and pv["broken"] == 0,
                       "imgs=%d broken=%d" % (pv["imgs"], pv["broken"]))
             else:
                 warns.append("靶子笔记没有图片 -> 图片加载断言跳过")
-            check("预览浮层没有超出视口", pv["inViewport"], "%dx%d" % (pv["w"], pv["h"]))
+            # 语义判据：锚点落在浮层可视区顶部附近（±160px 内），而不是「永远从顶部开始」。
+            # 不用 scrollTop 精确相等：图片是异步加载的，加载后上方高度变化会让 scrollTop
+            # 漂几十像素 —— 那是正常的，别让回归卡在像素级。
+            check("预览从这一节的锚点滚起（不是永远从顶部）",
+                  pv["scrollTop"] > 100 and -60 <= pv["anchorRel"] <= 160,
+                  "scrollTop=%d 锚点相对浮层顶部=%dpx" % (pv["scrollTop"], pv["anchorRel"]))
+            check("预览浮层没有超出视口", pv["inViewport"])
         shot("15_preview")
         page.keyboard.up("Control")
         page.wait_for_timeout(350)
-        gone = page.evaluate("() => !document.getElementById('preview').classList.contains('show')")
-        check("松开 Ctrl 后浮层收起", gone)
+        check("松开 Ctrl 后浮层收起",
+              page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
 
-        center_on(band["exit"] * 1.05)
-        st = page.evaluate(STATE)
-        check("越过 exit 后没有链接药丸", not st.get("links"),
-              "z=%.2f links=%s" % (band["exit"] * 1.05, st.get("links")))
-        hint_n4 = page.evaluate(HINT_PIXELS)
-        check("越过 exit 后画布提示「已越过链接带」", hint_n4 > 50,
-              "中心带非背景像素=%d" % hint_n4)
+        # ⑤ 单击 → 固定预览（移开鼠标不消失），Esc 收起
+        page.mouse.click(pill["x"] + pill["w"] / 2, pill["y"] + pill["h"] / 2)
+        page.wait_for_timeout(500)
+        pinned = page.evaluate("() => document.getElementById('preview').classList.contains('show')")
+        page.mouse.move(30, 700)
+        page.wait_for_timeout(350)
+        still = page.evaluate("() => document.getElementById('preview').classList.contains('show')")
+        check("单击药丸打开并固定预览（移开鼠标不消失）", pinned and still,
+              "打开=%s 移开后=%s" % (pinned, still))
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(250)
+        check("Esc 收起固定预览",
+              page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
+
+        # ⑥ 圆太小（sr≈20px）不挂药丸
+        z_small = 20.0 / max(tgt["r"], 1e-6)
+        center_on(tgt, z_small)
+        st3 = page.evaluate(STATE)
+        check("圆小于 44px 时不挂药丸", (st3.get("links") or 0) == 0,
+              "z=%.2f links=%s" % (z_small, st3.get("links")))
 
         page.evaluate("() => window.KG.renderer.resetView()")
         page.wait_for_timeout(700)

@@ -308,42 +308,22 @@ def run(cfg, payload_path=None):
     print(f"         enter 有 {distinct}/{len(enter)} 个互不相同的取值"
           + ("（每层在 HUD 上都能区分开）" if distinct == len(enter) else "（有层共用入口）"))
 
-    # ── 第 11 带：链接带 + Obsidian 式预览（2026-10-22 第三轮）───────────────
-    # 正文不再画在画布上（canvas 排不出段落/表格/图片/公式，只是「能用」），改成：
-    # 深缩放出链接药丸，Ctrl 悬停弹 HTML 浮层（真排版 + KaTeX + 图片）。
-    # 这里守数据侧：预览 HTML 都渲染出来了、图片引用都存在、链接都能落到图上节点、
-    # 窗口点自成一条等比阶梯且会退场。
+    # ── 第 11 带：叶子圆内药丸 + Obsidian 式预览（2026-10-23 第四轮）──────────
+    # 用户口径：**只有「下一级直接是正文」的元素**（没有子元素、自己直接含正文）才在
+    # 它**自己的实心圆里**挂一枚药丸，出现由该圆自己的屏幕半径决定（44→64px 淡入），
+    # 不再有全局缩放带；Ctrl 悬停 / 单击 → 预览浮层并从**这一节的锚点**滚起。
+    # 数据侧守：预览 HTML 完整、叶子标记正确、正文长度/锚点齐全、图片可解析、链接可落地。
     pv_cfg = cfg.get("preview") or {}
-    links_band = lod.get("links")
     if pv_cfg.get("enabled"):
-        print("\n[预览/链接带] 第 11 带：Obsidian 式悬浮预览 + 链接药丸")
-        _check(isinstance(links_band, dict), "lod.links 存在（preview.enabled=true）", failures)
-        if isinstance(links_band, dict):
-            le = float(links_band.get("enter") or 0)
-            lm = float(links_band.get("mature") or 0)
-            lh = float(links_band.get("hold") or 0)
-            lx = float(links_band.get("exit") or 0)
-            rung = enter[-1] / enter[-2] if len(enter) > 1 and enter[-2] else 1.0
-            _check(le > mature[-1] + 1e-9,
-                   f"链接带在 h6 成熟点之后才开始（enter={le:.4f} > "
-                   f"M[{max_depth}]={mature[-1]:.4f}）", failures)
-            _check(abs(lm - le * fade) < 1e-6 * max(1.0, lm),
-                   f"链接带成熟点 {lm:.4f} == enter × fade_span={fade}", failures)
-            _check(abs(lh - lm * rung) < 1e-4 * max(1.0, lh),
-                   f"链接带满档保持到下一级成熟点（hold={lh:.4f} == mature×rung）", failures)
-            _check(abs(lx - lh * fade) < 1e-6 * max(1.0, lx),
-                   f"链接带在再下一级淡出（exit={lx:.4f} == hold×fade_span）", failures)
-            _check(lm < lh < lx,
-                   f"链接带窗口单调：mature={lm:.4f} < hold={lh:.4f} < exit={lx:.4f}", failures)
-            print(f"         链接带窗口 {le:.2f} → {lm:.2f}（满）→ {lh:.2f}（开始淡出）"
-                  f"→ {lx:.2f}（消失）")
-        notes = [n for n in data["nodes"] if n["kind"] == "note"]
+        print("\n[预览/叶子药丸] 第 11 带：叶子元素圆内药丸 + Obsidian 式预览")
+        all_nodes = data["nodes"]
+        notes = [n for n in all_nodes if n["kind"] == "note"]
+        heads = [n for n in all_nodes if n["kind"] == "heading"]
         previews = [n.get("preview") or "" for n in notes]
         _check(all(previews), f"{len(notes)} 篇笔记都有预览 HTML", failures)
         total = sum(len(p) for p in previews)
         _check(total > 0, f"预览 HTML 总字符 {total}", failures)
-        # 只查「正文文本」里的残留：代码块里的 `np.array([[1, 2]])` 天然带双中括号，
-        # 那是内容不是语法残留（第二轮 verify 因此假红过一次）。
+        # 只查「正文文本」里的残留：代码块里的 `np.array([[1, 2]])` 是内容不是语法
         text_only = [re.sub(r"<(pre|code)\b[^>]*>.*?</\1>", "", p, flags=re.S) for p in previews]
         _check(not any("[[" in p for p in text_only),
                "预览正文里没有残留 [[ ]] 语法（代码块不算）", failures)
@@ -362,13 +342,58 @@ def run(cfg, payload_path=None):
                 if not os.path.isfile(os.path.normpath(os.path.join(dist_dir, src))):
                     bad.append(src)
         _check(not bad, f"预览里的图片引用都能找到文件（缺失 {len(bad)} 个）", failures)
-        node_ids = {n["id"] for n in data["nodes"]}
+        node_ids = {n["id"] for n in all_nodes}
         all_links = [l for n in notes for l in (n.get("links") or [])]
         _check(all(l.get("t") in node_ids for l in all_links),
                f"预览里的链接目标都落在图上节点（{len(all_links)} 条）", failures)
-        _check(all(l.get("l") for l in all_links), "每个链接都有显示文字", failures)
-        print(f"         预览 HTML {total} 字（{len(notes)} 篇，最长 "
-              f"{max(len(p) for p in previews)} 字）；出站链接 {len(all_links)} 条")
+        # ── 叶子 / 正文长度 / 锚点（第四轮新增）────────────────────────────
+        leaves = [n for n in all_nodes
+                  if n.get("leaf") and n.get("hasText") and (n.get("tlen") or 0) > 0]
+        _check(len(leaves) > 0,
+               f"有正文的叶子元素 {len(leaves)} 个（药丸就画在这些圆里）", failures)
+        _check(all(n.get("kind") in ("note", "heading") for n in leaves),
+               "叶子药丸只给笔记/标题节点，文件夹不挂", failures)
+        kids = {}
+        for n in all_nodes:
+            p = n.get("parent")
+            if p:
+                kids[p] = kids.get(p, 0) + 1
+        bad_leaf = [n["id"] for n in all_nodes
+                    if bool(n.get("leaf")) != (kids.get(n["id"], 0) == 0)]
+        _check(not bad_leaf,
+               f"leaf 标记与「没有子节点」严格一致（不一致 {len(bad_leaf)} 个）", failures)
+        anchors = [n.get("anchor") for n in heads if n.get("anchor")]
+        # 锚点只在**同一篇笔记的预览 HTML 内**唯一（每篇都从 pv-h0 起，跨笔记重复是正常的）
+        per_note_anchor = {}
+        for n in heads:
+            if n.get("anchor"):
+                per_note_anchor.setdefault(n.get("note"), []).append(n["anchor"])
+        n_dup = [k for k, v in per_note_anchor.items() if len(v) != len(set(v))]
+        _check(not n_dup, f"同一篇笔记内标题锚点不重复（重复 {len(n_dup)} 篇）", failures)
+        per_note = {}
+        for h in heads:
+            if h.get("anchor"):
+                per_note.setdefault(h.get("note"), set()).add(h["anchor"])
+        missing_anchor = []
+        for note in notes:
+            html = note.get("preview") or ""
+            for a in per_note.get(note["id"], ()):
+                if ('id="%s"' % a) not in html:
+                    missing_anchor.append(a)
+        _check(not missing_anchor,
+               f"每个标题锚点都能在所属笔记的预览 HTML 里找到（缺 {len(missing_anchor)} 个）",
+               failures)
+        with_text = [n for n in heads if (n.get("tlen") or 0) > 0]
+        with_anchor = [n for n in with_text if n.get("anchor")]
+        ratio = len(with_anchor) / max(1, len(with_text))
+        _check(ratio >= 0.95,
+               f"含正文的标题里 {len(with_anchor)}/{len(with_text)} 有锚点"
+               f"（≥95%：python-markdown 与我们的标题解析口径允许极少数差异，"
+               f"没锚点的会退回预览顶部）", failures)
+        n_leaf_head = len([n for n in leaves if n["kind"] == "heading"])
+        n_leaf_note = len(leaves) - n_leaf_head
+        print(f"         叶子+正文 {len(leaves)} 个（标题 {n_leaf_head} / 笔记 {n_leaf_note}）；"
+              f"锚点 {len(anchors)} 个；预览 {total} 字；出站链接 {len(all_links)} 条")
 
     # ── 「落笔」的解析复刻（与 render.js 的 draw() 判据对齐）─────────────
     # 一个节点这一帧会被画出来，当且仅当：

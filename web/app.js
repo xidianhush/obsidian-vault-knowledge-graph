@@ -151,18 +151,15 @@
     // 「第几层 + z」放最前面，被省略掉的只会是末尾的计数与提示，而不是缩放值。
     const text = 'LOD ' + lv + '/' + MAX_DEPTH + ' · z=' + zoom.toFixed(3) +
       ' · ' + levelCounts(lv);
-    // 第 11 带（链接带）的读数：它不占层级数字（enter[] 仍是 10 项），所以在提示位
-    // 说一句「现在挂着链接药丸 / 继续滚能看到链接 / 已经越过链接带」。
-    const linkWin = R.linkBand;
+    // 第 11 带（叶子圆内药丸）：不占层级数字（enter[] 仍是 10 项），只在提示位说一句
+    // 「药丸出现了 / 继续放大就会出现」——药丸是**每个叶子圆自己**的，没有全局窗口。
     let hint;
     if (lv < MAX_DEPTH) {
       hint = ' <span style="color:#7e879a">— 继续向上滚可深入</span>';
     } else if (R.stats.links) {
-      hint = ' <span style="color:#7e879a">— 按住 Ctrl 悬停链接可预览笔记</span>';
-    } else if (linkWin && zoom > linkWin.exit) {
-      hint = ' <span style="color:#7e879a">— 已越过链接带，往回滚</span>';
+      hint = ' <span style="color:#7e879a">— Ctrl 悬停 / 单击「正文」药丸可预览</span>';
     } else {
-      hint = ' <span style="color:#7e879a">— 继续向上滚可看链接</span>';
+      hint = ' <span style="color:#7e879a">— 继续放大，叶子圆内会出现「正文」药丸</span>';
     }
     if (text !== lastReadout) {
       lastReadout = text;
@@ -540,15 +537,18 @@
 
   canvas.addEventListener('mouseleave', () => { R.hover = null; hideTooltip(); });
 
-  // ── Obsidian 式预览：Ctrl + 悬停链接药丸（2026-10-22 第三轮）──────────────
-  // 画布负责画药丸（第 11 带），这里负责浮层：
+  // ── Obsidian 式预览：Ctrl 悬停 / 单击「正文」药丸（2026-10-23 第四轮）─────
+  // 画布负责在**叶子元素的圆里**画一枚药丸（drawLeafPills），这里负责浮层：
   //   * 内容 = 构建期渲好的 HTML 片段（markdown 排版、图片按相对路径引用 vault）；
   //   * 公式 = 内联 KaTeX 当场渲染（只渲染当前这一篇，渲染结果按笔记缓存）；
-  //   * 位置 = 光标右下，超出视口就翻到另一侧；浮层内部可滚动。
+  //   * 起点 = 滚到**这一节的锚点**（`pv-hN`，构建期给每个标题打好的 id）；
+  //   * 位置 = 光标右下，超出视口就翻到另一侧；浮层内部可滚动；
+  //   * Ctrl+悬停 = 临时预览（移开就收），单击药丸 = 固定预览（Esc / 点外面收）。
   const PV = $('preview');
   const pvCache = new Map();       // note id → 已含 KaTeX 结果的 innerHTML
   let ctrlDown = false;
   let pvNote = null;
+  let pvPinned = false;
   let pvLast = null;               // 最近一次鼠标位置（按下 Ctrl 那一刻要用）
 
   function hidePreview() {
@@ -556,6 +556,7 @@
     PV.classList.remove('show');
     PV.innerHTML = '';
     pvNote = null;
+    pvPinned = false;
   }
 
   function canvasPoint(evt) {
@@ -563,8 +564,8 @@
     return [evt.clientX - rect.left, evt.clientY - rect.top];
   }
 
-  function showPreview(id, cx, cy) {
-    const node = NODE.get(id);
+  function showPreview(job, cx, cy, pinned) {
+    const node = NODE.get(job.t);
     if (!node) return hidePreview();
     const note = node.kind === 'note' ? node : NODE.get(node.note);
     if (!note || !note.preview) return hidePreview();
@@ -573,7 +574,7 @@
         PV.innerHTML = pvCache.get(note.id);
       } else {
         PV.innerHTML = note.preview +
-          '<div class="pv-hint">按住 Ctrl 悬停链接逐个预览 · Esc 关闭</div>';
+          '<div class="pv-hint">Ctrl 悬停 / 单击药丸预览 · 浮层内链接可点 · Esc 关闭</div>';
         if (window.renderMathInElement) {
           try {
             window.renderMathInElement(PV, {
@@ -592,8 +593,12 @@
       }
       pvNote = note.id;
     }
+    pvPinned = !!pinned;
     hideTooltip();
     PV.classList.add('show');
+    // 从「这一节」滚起：构建期给每个标题打的锚点 id（拿不到就退回顶部）
+    const anchorEl = job.a ? PV.querySelector('#' + job.a) : null;
+    PV.scrollTop = anchorEl ? Math.max(0, anchorEl.offsetTop - 8) : 0;
     const w = PV.offsetWidth, h = PV.offsetHeight;
     let x = cx + 18, y = cy + 18;
     if (x + w > window.innerWidth - 12) x = cx - w - 18;
@@ -605,11 +610,14 @@
   function evalPreview(evt) {
     pvLast = [evt.clientX, evt.clientY];
     if (evt.target && evt.target.closest && evt.target.closest('#preview')) return;
-    if (!ctrlDown) { hidePreview(); return; }
     const p = canvasPoint(evt);
     const job = R.linkAt(p[0], p[1]);
-    if (!job) { hidePreview(); return; }
-    showPreview(job.t, evt.clientX, evt.clientY);
+    if (ctrlDown) {
+      if (job) showPreview(job, evt.clientX, evt.clientY, false);
+      else if (!pvPinned) hidePreview();
+      return;
+    }
+    if (!job && !pvPinned) hidePreview();     // 固定预览只在 Esc / 点外面时收
   }
 
   window.addEventListener('mousemove', evalPreview, true);
@@ -619,14 +627,32 @@
       if (pvLast) {
         const rect = canvas.getBoundingClientRect();
         const job = R.linkAt(pvLast[0] - rect.left, pvLast[1] - rect.top);
-        if (job) showPreview(job.t, pvLast[0], pvLast[1]);
+        if (job) showPreview(job, pvLast[0], pvLast[1], false);
       }
     }
   }, true);
   window.addEventListener('keyup', (evt) => {
-    if (evt.key === 'Control') { ctrlDown = false; hidePreview(); }
+    if (evt.key === 'Control') {
+      ctrlDown = false;
+      if (!pvPinned) hidePreview();
+    }
   });
   window.addEventListener('blur', () => { ctrlDown = false; hidePreview(); });
+
+  // 单击药丸 = 固定预览。用捕获阶段的 document 监听先于画布自己的 click
+  // （画布 click 会选中节点），命中药丸时 stopPropagation 把它吃掉。
+  document.addEventListener('click', (evt) => {
+    if (evt.target && evt.target.closest && evt.target.closest('#preview')) return;
+    const p = canvasPoint(evt);
+    const job = R.linkAt(p[0], p[1]);
+    if (job) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      showPreview(job, evt.clientX, evt.clientY, true);
+      return;
+    }
+    if (pvPinned) hidePreview();
+  }, true);
 
   // 浮层里的 [[链接]] 点击 → 选中目标（与画布上点药丸一致）
   PV.addEventListener('click', (e) => {
@@ -758,9 +784,8 @@
       focusNeighbors: R.stats.focusNeighbors,
       marks: R.stats.marks,
       chips: R.stats.chips,
-      // 第 11 带（链接带）：这一帧画出的链接药丸数，以及药丸属于哪篇笔记
+      // 第 11 带（叶子圆内药丸）：这一帧画出的药丸数（每枚都属于它所在的叶子圆）
       links: R.stats.links,
-      linkTarget: R.stats.linkTarget,
       shownLabels: R.stats.labels,
       selected: R.selected,
       hovered: R.hover,

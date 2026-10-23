@@ -77,7 +77,7 @@ def build_payload(cfg, quiet=False):
     builder.attach_previews(cfg, os.path.dirname(out_html))
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
-    layers, enter, home_layer, root_radius, links_band = layout.compute(builder.nodes, cfg, max_depth)
+    layers, enter, home_layer, root_radius = layout.compute(builder.nodes, cfg, max_depth)
     aggregates = builder.build_aggregates(max_depth)
     levels = builder.levels_table(aggregates)
 
@@ -89,13 +89,11 @@ def build_payload(cfg, quiet=False):
         by_kind[item["kind"]] = by_kind.get(item["kind"], 0) + 1
         nodes.append(item)
 
-    # 第 11 带（链接带）的窗口点单独挂 lod.links；enter[] 仍是 10 项，
-    # 「节点深度 = 10 层」这条数据契约（verify 直接断言）不动。
+    # enter[] 仍是 10 项（「节点深度 = 10 层」的数据契约，verify 直接断言不动）。
+    # 第四轮起没有额外的「链接带」窗口：药丸按叶子圆自己的屏幕半径淡入。
     lod_payload = dict(cfg.get("lod", {}),
                        enter=[round(v, 6) for v in enter],
                        home_layer=home_layer)
-    if links_band:
-        lod_payload["links"] = links_band
 
     meta = {
         "generated": time.strftime("%Y-%m-%d %H:%M"),

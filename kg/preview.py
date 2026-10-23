@@ -31,7 +31,7 @@ IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
 
 # 浮层里的附件占位：非图片附件在预览里只报个名字（点它没意义）
 ATTACH_TPL = '<span class="pv-attach">{name}</span>'
-IMG_TPL = '<img class="pv-img" src="{src}"{style}>'
+IMG_TPL = '<img class="pv-img" src="{src}"{size}{style}>'
 MISSING_TPL = '<span class="pv-missing">[缺失附件 {name}]</span>'
 WL_TPL = '<span class="pv-wl"{target}>{label}</span>'
 WL_PLAIN_TPL = '<span class="pv-wl pv-unresolved">{label}</span>'
@@ -60,15 +60,21 @@ def _rel(src_path: str, base_dir: str) -> str:
     return os.path.relpath(src_path, base_dir).replace("\\", "/")
 
 
+def _usable(path: str | None) -> bool:
+    """文件存在且非空：vault 里真的有 0 字节的图片，内联成 <img> 只会破图。"""
+    return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def _escape_math(raw: str) -> str:
     return raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, list]:
-    """把一篇笔记渲染成预览片段，返回 (html, links)。
+def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, list, list]:
+    """把一篇笔记渲染成预览片段，返回 (html, links, anchors)。
 
-    links 是给「链接带」用的出站链接表：`[{"t": 目标节点 id, "l": 显示文字}, ...]`
-    （去重、只留能解析到图上节点的；附件链接不算）。
+    links：出站链接表 `[{"t": 目标节点 id, "l": 显示文字}, ...]`（去重、只留能解析到
+    图上节点的），也给浮层里的链接 span 用。
+    anchors：预览 HTML 里各标题的锚点 id（`pv-h0`…，文档序），给「从这一节滚起」用。
     """
     by_id = getattr(resolve, "by_id", {})
     links = []
@@ -86,9 +92,10 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         if low.endswith(MEDIA_EXT) or bang and "." in body:
             if low.endswith(IMG_EXT):
                 path = index.get(os.path.basename(low))
-                if not path:
+                if not _usable(path):
                     return MISSING_TPL.format(name=os.path.basename(body))
-                return IMG_TPL.format(src=_rel(path, base_dir).replace('"', "%22"), style=width)
+                return IMG_TPL.format(src=_rel(path, base_dir).replace('"', "%22"),
+                                      size=_img_size_attrs(path), style=width)
             return ATTACH_TPL.format(name=os.path.basename(body))
         # [[笔记#标题|别名]]
         target, _, anchor = body.partition("#")
@@ -139,14 +146,26 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         if "://" in src or src.startswith("data:"):
             return tag
         path = index.get(os.path.basename(src).lower())
-        if path and os.path.isfile(path):
-            return tag.replace(src, _rel(path, base_dir).replace('"', "%22"))
+        if _usable(path):
+            real = _rel(path, base_dir).replace('"', "%22")
+            return tag.replace(src, real).replace(
+                "<img", "<img" + _img_size_attrs(path), 1)
         alt_m = re.search(r'alt="([^"]*)"', tag)
         name = (alt_m.group(1) if alt_m else os.path.basename(src))[:60]
         return MISSING_TPL.format(name=name)
 
     html = IMG_TAG_RE.sub(fix_img, html)
-    return html, links
+    # 给每个标题打一个短锚点 id（`pv-h0`…）：渲染侧据此把浮层滚到「这一节」。
+    # 顺序与 `parse_headings` 一致（python-markdown 按文档序输出标题）；数量对不上时
+    # 调用方只会少拿到几个锚点 —— 滚不动就退回顶部，不会出错。
+    anchors = []
+
+    def add_id(m):
+        anchors.append("pv-h%d" % len(anchors))
+        return '<h%s id="%s"' % (m.group(1), anchors[-1])
+
+    html = re.sub(r"<h([1-6])>", add_id, html)
+    return html, links, anchors
 
 
 def _heading_id(by_id: dict, note_id: str, anchor: str) -> str | None:
@@ -168,6 +187,25 @@ def _heading_id(by_id: dict, note_id: str, anchor: str) -> str | None:
         if t == low:
             return node_id
     return None
+
+
+_IMG_SIZE = {}
+
+
+def _img_size_attrs(path: str) -> str:
+    """读图片真实像素尺寸写进 width/height：预览里图片是异步加载的，不预留高度的话
+    上方一加载完布局就整体位移，浮层会从「这一节」滑走（实测公共版锚点漂了 3000+px）。"""
+    try:
+        from PIL import Image
+        key = (path, os.path.getmtime(path))
+        size = _IMG_SIZE.get(key)
+        if size is None:
+            with Image.open(path) as im:
+                size = im.size
+            _IMG_SIZE[key] = size
+        return ' width="%d" height="%d"' % size
+    except Exception:
+        return ""
 
 
 _KATEX_CACHE = None

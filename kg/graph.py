@@ -14,6 +14,11 @@ TYPE_CONTRAST = "contrast"
 TYPE_CONTAINS = "contains"
 
 
+def _textlen(text: str) -> int:
+    """数「非空白字符」：药丸文案 `正文 · N 字` 与 `hasText` 判据都用它（不存正文）。"""
+    return len(re.sub(r"\s+", "", text or ""))
+
+
 class GraphBuilder:
     def __init__(self, cfg: dict, notes, folders):
         self.cfg = cfg
@@ -198,11 +203,35 @@ class GraphBuilder:
             node = self.nodes.get(note.file.id)
             if node is None:
                 continue
-            html, links = preview_mod.render(note, cfg, index, base_dir, self.resolve)
+            html, links, anchors = preview_mod.render(note, cfg, index, base_dir, self.resolve)
             node["preview"] = html
             node["links"] = links
             total += len(html)
+            # 第四轮：算出「每个元素直接含多少正文」+ 它在预览里的锚点。
+            # 只存字数（不存正文）：药丸文案用 `正文 · N 字`，判据是 `N > 0`。
+            offset = note.text.count("\n") - note.body.count("\n")
+            preamble, sections = parse.section_texts(note.body, note.headings, offset)
+            node["tlen"] = _textlen(preamble)
+            node["anchor"] = ""
+            for i, h in enumerate(note.headings):
+                hn = self.nodes.get(h.id)
+                if hn is None:
+                    continue
+                hn["tlen"] = _textlen(sections.get(h.id, ""))
+                hn["anchor"] = anchors[i] if i < len(anchors) else ""
+        # leaf = 没有任何子节点（笔记没有标题、或标题没有子标题）。药丸只画在
+        # 「leaf && tlen > 0」的圆里 —— 用户口径：只有「下一级直接是正文」的元素才挂。
+        kids = {}
+        for n in self.nodes.values():
+            p = n.get("parent")
+            if p:
+                kids[p] = kids.get(p, 0) + 1
+        for nid, n in self.nodes.items():
+            n["leaf"] = kids.get(nid, 0) == 0
+            n["hasText"] = (n.get("tlen") or 0) > 0
         self.stats["preview_chars"] = total
+        self.stats["leaf_text_count"] = sum(
+            1 for n in self.nodes.values() if n.get("leaf") and n.get("hasText"))
 
     def _heading_at_line(self, note_id: str, line):
         """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。

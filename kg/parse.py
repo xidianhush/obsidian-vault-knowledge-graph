@@ -64,6 +64,27 @@ def split_frontmatter(text: str):
     return {}, text, 0
 
 
+def section_texts(body: str, headings, line_offset: int = 0):
+    """按标题切出每一节**自己的**正文：返回 (前言, {heading.id: 本节正文})。
+
+    「本节」= 该标题行之后、到下一个**任意级别**标题之前的内容；子标题的内容算子节、
+    不重复计入父节。于是「一个标题直接含正文」当且仅当它这一节非空 —— 2026-10-23
+    第四轮「叶子元素圆内药丸」的判据就是 `本节非空 && 没有子元素`。
+    行号口径与 `parse_headings` / `heading.line` 一致。
+    """
+    lines = body.split("\n")
+    base = 1 + line_offset
+    ordered = sorted(headings, key=lambda h: h.line)
+    pre_end = (ordered[0].line - base) if ordered else len(lines)
+    preamble = "\n".join(lines[:max(0, pre_end)])
+    out = {}
+    for i, h in enumerate(ordered):
+        start = max(0, h.line - base + 1)
+        end = (ordered[i + 1].line - base) if i + 1 < len(ordered) else len(lines)
+        out[h.id] = "\n".join(lines[start:max(start, end)])
+    return preamble, out
+
+
 def parse_headings(body: str, note_id: str, line_offset: int = 0):
     """解析标题树，跳过代码块内的 # 行。返回 Heading 列表（文档顺序）。"""
     headings: list[Heading] = []

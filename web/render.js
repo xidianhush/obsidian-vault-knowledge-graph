@@ -160,14 +160,8 @@
     var ZOOM_HARD_LO = 1e-6, ZOOM_HARD_HI = 1e6;
     var ENTER = LOD.enter || [];
     var MAXD = META.max_depth || ENTER.length || 1;
-    // ── 第 11 带：链接带（2026-10-22 第三轮：Obsidian 式悬浮预览）──────────
-    // 不是节点深度，而是接在「h6 成熟」(M[MAXD] = zMax) 之后的一条独立窗口：
-    //   淡入 [enter, mature] → 满 [mature, hold] → 淡出 [hold, exit]
-    // 越过 exit 就整条退场 ⇒ 放大到极端仍是「空视口 + 兜底提示」（3c 契约不变），
-    // 同时画布中央提示「已越过链接带」（第二轮教训：滚过头没提示像坏掉）。
-    // 带内画什么：视口中心命中节点所属**笔记**的出站 [[链接]] 药丸（note.links）；
-    // 按住 Ctrl 悬停药丸 → app.js 弹出 HTML 预览浮层（真排版 + KaTeX + 图片）。
-    var LINKS = LOD.links || null;
+    // 第四轮（2026-10-23）起没有「全局链接带」：药丸改成叶子元素圆内的一枚，
+    // 出现由该圆自己的屏幕半径决定（44px 淡入 / 64px 满），见 drawLeafPills()。
     // 虚拟根的世界半径（构建期落盘）。home 视角 = 让整个根正好铺满可视半径。
     var ROOT_R = META.layout_root_radius || 1000;
 
@@ -301,10 +295,10 @@
                   // painted = 真正按 PAINT_MIN 以上不透明度落了笔的节点数。nodes 是「候选
                   // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
                   painted: 0,
-                  // 第 11 带：这一帧画出的链接药丸数与所属笔记 id。空视口判据是
+                  // 第 11 带（叶子圆内药丸）：这一帧画出的药丸数。空视口判据是
                   // 「painted 为 0 且 links 也为 0」——药丸不画圆，光看 painted
-                  // 会把「满屏链接药丸」误判成空。
-                  links: 0, linkTarget: null };
+                  // 会把「满屏药丸」误判成空。
+                  links: 0 };
     // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
     // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
     // 只用于绘制与计数，不落盘、不参与布局。
@@ -424,12 +418,9 @@
       return e == null ? 0 : e * FADE;
     }
     // 该深度的节点在哪个 zoom 上被压暗 = 下一层的成熟点。
-    // 最深一层（h6）没有「下一层节点」，但第 11 带（链接带）接在它后面：让 h6 在
-    // **链接带读满那一档**压暗成底图 —— 「链接登场、标题退场」和其它层动作一致。
     function levelDimAt(depth) {
       var e = ENTER[depth];                    // ENTER[depth] = M[depth+1] / FADE
-      if (e == null) return (LINKS && depth === MAXD) ? LINKS.mature : Infinity;
-      return e * FADE;
+      return e == null ? Infinity : e * FADE;
     }
     function dimFactor(depth, z) {
       var at = levelDimAt(depth);
@@ -439,13 +430,6 @@
       return 1 - smoothstep(at / FADE, at, z) * (1 - PARENT_DIM);
     }
 
-    // 第 11 带（链接带）的浓度：淡入 → 保持 → 淡出。越过后归零 ⇒ 画布回到空视口。
-    function linkAlpha(z) {
-      if (!LINKS) return 0;
-      var inA = smoothstep(LINKS.enter, LINKS.mature, z);
-      var outA = 1 - smoothstep(LINKS.hold, LINKS.exit, z);
-      return Math.min(inA, outA);
-    }
 
     function alphaOf(n) {
       var a = levelFade(n.depth, cam.zoom) * dimFactor(n.depth, cam.zoom);
@@ -630,8 +614,9 @@
       // 留在圆下会只剩连线可见、点线消失。
       drawChainHighlight();
       drawEdgeMarkers();
-      // 第 11 带：链接药丸。排在连线/标记之后（要可读可点）、强调环与标签之前。
-      drawLinks();
+      // 第 11 带（第四轮）：叶子圆内药丸。排在实心圆之后（要压在圆上、可读可点）、
+      // 强调环与标签之前（选中环仍压过药丸）。
+      drawLeafPills(drawn, alpha);
       drawEmphasis(drawn, alpha);
       drawLabels(drawn, alpha);
       // ⑥ 屏外 chip：屏幕空间的 HUD 覆盖层，压在所有世界内容之上
@@ -654,23 +639,6 @@
         // 要往下滚）。原来只写「向下滚」在缩太远时是反的。
         ctx.fillText('此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角',
                      W / 2, (H - FOOTER_H) / 2);
-        ctx.textAlign = 'left';
-      } else if (LINKS && cam.zoom > LINKS.exit) {
-        // 第 11 带：越过链接带之后**必须说一句**。用户实测一路滚到 z≈845 才反应过来
-        // 「怎么什么都没有」—— 那时画面里还有巨大的标题圆与标签，不算「空视口」，
-        // 兜底提示不会出现，看起来就像功能坏了。这条提示补的就是那个空档。
-        ctx.globalAlpha = 1;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = '13px ' + FONT;
-        // 加一块暗底：这个位置常常正压着被压暗的大标题字，纯文字会被糊掉
-        // （实测截图里这条提示正好和标题标签笔画叠在一起，读不出来）。
-        var hintTxt = '已越过链接带 · 往回滚一点就能看到链接';
-        var tw = ctx.measureText(hintTxt).width;
-        ctx.fillStyle = 'rgba(15,17,22,0.88)';
-        ctx.fillRect(W / 2 - tw / 2 - 11, (H - FOOTER_H) / 2 - 14, tw + 22, 28);
-        ctx.fillStyle = 'rgba(126,135,154,0.95)';
-        ctx.fillText(hintTxt, W / 2, (H - FOOTER_H) / 2);
         ctx.textAlign = 'left';
       }
 
@@ -1571,14 +1539,16 @@
       stats.labels = placed;
     }
 
-    // ── 第 11 带：链接药丸（2026-10-22 第三轮：Obsidian 式悬浮预览）────────
-    // 只画「视口中心命中节点所属笔记」的出站 [[链接]]。药丸是**屏幕空间常量大小**
-    // 的 HUD 层（不像标签那样跟着圆长大）—— 它的作用是「可点的入口」，不是地图内容。
-    // 一屏最多 10 枚，其余折叠成「+k 条链接」一枚。
-    // 第三轮把上一版的正文排版整段删掉了：canvas 排不出段落/表格/图片/公式，
-    // 「能用」但不可能「好用」；正文改由 Ctrl 悬停的 HTML 浮层渲染（app.js + KaTeX）。
+    // ── 第四轮：叶子圆内药丸（2026-10-23）──────────────────────────────────
+    // 用户口径：**只有「下一级直接是正文」的元素**（没有子元素、自己直接含正文）
+    // 才在**它自己的实心圆里**挂一枚药丸；每枚药丸只归它所在的那个圆。
+    // 出现时机由该圆自己的屏幕半径决定（44px 淡入 / 64px 满），不再是全局缩放带 ——
+    // 于是「放大到哪个叶子元素，就在那个圆里看到它」。
+    // 位置：标签下方、圆内偏下（y = cy + 0.42·sr）；宽度 ≤ 1.6·sr 保证不出圆。
+    // 文案：`正文 · N 字`；Ctrl 悬停 / 单击 → 预览浮层并从这一节的锚点滚起。
     var linkJobs = [];
     var linkHover = null;
+    var PILL_IN = 44, PILL_FULL = 64, PILL_H = 20, PILL_FS = 11;
 
     function roundRectPath(x, y, w, h, r) {
       ctx.beginPath();
@@ -1591,77 +1561,45 @@
       ctx.closePath();
     }
 
-    // 沿包含链找最近的笔记节点：链接表挂在笔记上，标题只是它的子节点。
-    function noteOf(n) {
-      if (!n) return null;
-      if (n.kind === 'note') return n;
-      var ch = n._chain || [];
-      for (var i = Math.min(n.depth, ch.length) - 1; i >= 0; i--) {
-        var p = byId.get(ch[i]);
-        if (p && p.kind === 'note') return p;
-      }
-      return null;
-    }
-
-    function drawLinks() {
+    function drawLeafPills(drawn, alpha) {
       linkJobs = [];
-      stats.links = 0;
-      stats.linkTarget = null;
-      if (!LINKS) return;
-      var a = linkAlpha(cam.zoom);
-      if (a <= 0.02) return;
-      var hit = hitTest(W / 2, (H - FOOTER_H) / 2);
-      if (!hit) return;
-      var note = noteOf(hit);
-      if (!note || !note.links || !note.links.length) return;
-      var fsScreen = 12, padX = 11, pillH = 24, gap = 5, maxN = 10;
-      var font = fsScreen + 'px ' + FONT;
-      // 药丸是「你在看的这篇笔记」的 HUD，横向钉在**视口中心**：命中的常常是笔记圆里的
-      // 某个标题，拿它的 x 当锚点会让整列药丸飘到屏幕左边（实测截图就是这样）。
-      var anchorX = W / 2;
-      // 命中的可能是一个铺满屏幕的大圆（笔记圆 _sr 能到几千 px），药丸不能钉在它的
-      // 圆底 —— 那已经在屏幕外了（实测第一版就是这样：linkTarget 有值、links=0）。
-      // 夹到「屏幕中心 + 90px」以内，保证药丸永远看得见。
-      var bottom = w2sy(hit.y) + Math.max(hit._sr || 0, 14) + 10;
-      var y = Math.min(bottom, (H - FOOTER_H) / 2 + 90);
-      if (y < 96) y = 96;
-      ctx.save();
-      ctx.font = font;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      var shown = note.links.slice(0, maxN);
-      var extra = note.links.length - shown.length;
-      for (var i = 0; i <= shown.length; i++) {
-        var isExtra = i === shown.length;
-        if (isExtra && !extra) break;
-        var label = isExtra ? ('+' + extra + ' 条链接') : String(shown[i].l || '');
-        var tid = isExtra ? null : shown[i].t;
-        var w = Math.min(measure(label, font) + padX * 2, Math.min(360, W - 24));
-        var x = anchorX - w / 2;
-        if (x < 12) x = 12;
-        if (x + w > W - 12) x = W - 12 - w;
-        if (y > H || y + pillH < 0) break;
-        var hot = !isExtra && linkHover === tid;
-        roundRectPath(x, y, w, pillH, 6);
-        ctx.globalAlpha = a * (hot ? 1 : 0.94);
-        ctx.fillStyle = hot ? 'rgba(52,64,86,.97)' : 'rgba(30,33,40,.94)';
+      for (var i = 0; i < drawn.length; i++) {
+        var n = drawn[i];
+        // 只给「叶子 + 直接含正文」的圆挂；文件夹永远不挂
+        if (!n.leaf || !n.hasText || !(n.tlen > 0)) continue;
+        if (n.kind !== 'heading' && n.kind !== 'note') continue;
+        var sr = n._sr;
+        if (!(sr >= PILL_IN)) continue;
+        var a = (alpha.get(n.id) || 0) * smoothstep(PILL_IN, PILL_FULL, sr);
+        if (a <= 0.02) continue;
+        var label = '正文 · ' + n.tlen + ' 字';
+        var font = PILL_FS + 'px ' + FONT;
+        var w = Math.min(measure(label, font) + 22, sr * 1.6);
+        var h = PILL_H;
+        var cx = w2sx(n.x), cy = w2sy(n.y);
+        var x = cx - w / 2, y = cy + sr * 0.42;
+        if (x + w < -40 || x > W + 40 || y < -40 || y > H + 40) continue;
+        var hot = linkHover === n.id;
+        ctx.save();
+        ctx.globalAlpha = a * 0.95;
+        roundRectPath(x, y, w, h, Math.min(10, h / 2));
+        ctx.fillStyle = hot ? 'rgba(52,64,86,.98)' : 'rgba(30,33,40,.95)';
         ctx.fill();
-        ctx.strokeStyle = hot ? 'rgba(158,190,255,.95)' : 'rgba(126,166,255,.5)';
+        ctx.strokeStyle = hot ? 'rgba(200,222,255,1)' : 'rgba(150,187,255,.8)';
         ctx.lineWidth = 1;
         ctx.stroke();
-        ctx.fillStyle = isExtra ? 'rgba(126,135,154,.95)' : (hot ? '#eaf1ff' : '#cfe0ff');
-        ctx.fillText(clipToWidth('lnk:' + (tid || 'x') + label, label, font, w - padX * 2),
-                     x + padX, y + pillH / 2 + 0.5);
-        if (!isExtra) linkJobs.push({ x: x, y: y, w: w, h: pillH, t: tid, label: label });
-        y += pillH + gap;
+        ctx.fillStyle = hot ? '#ffffff' : '#e6edf3';
+        ctx.font = font;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(clipToWidth('pv:' + n.id, label, font, w - 12), x + w / 2, y + h / 2 + 0.5);
+        ctx.restore();
+        linkJobs.push({ x: x, y: y, w: w, h: h, t: n.id, l: label, a: n.anchor || '' });
       }
-      ctx.restore();
-      ctx.globalAlpha = 1;
       stats.links = linkJobs.length;
-      stats.linkTarget = note.id;
     }
 
-    // 光标下的药丸（app.js 的 Ctrl 悬停预览用它）
+    // 光标下的药丸（app.js 的 Ctrl 悬停 / 单击预览用它）
     function linkAt(sx, sy) {
       for (var i = linkJobs.length - 1; i >= 0; i--) {
         var j = linkJobs[i];
@@ -1861,13 +1799,10 @@
       draw: draw,
       hitTest: hitTest,
       enterAt: enterAt,
-      // 第 11 带（链接带）：浓度、窗口、药丸命中与清单。自动化验证与 app.js 的
-      // Ctrl 悬停预览都直接读这几个入口，不必在测试里复刻窗口公式。
-      linkAlpha: linkAlpha,
-      linkBand: LINKS,
+      // 第 11 带（叶子圆内药丸）：命中与清单。app.js 的 Ctrl 悬停 / 单击预览
+      // 与自动化验证都直接读这几个入口。
       linkAt: linkAt,
       get linkJobs() { return linkJobs; },
-      noteOf: noteOf,
       alphaOf: function (id) { var n = byId.get(id); return n ? alphaOf(n) : 0; },
       // 兼容别名：payload 字段 reveal 已改名 r（世界半径）
       revealOf: function (id) { var n = byId.get(id); return n ? n.r : 0; },

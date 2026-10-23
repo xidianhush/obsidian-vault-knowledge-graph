@@ -459,30 +459,10 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
     enter = [m / fade for m in mature]
     home_layer = home_level
 
-    # ── 第 11 带：链接带（2026-10-22 第三轮：Obsidian 式悬浮预览）──────────
-    # 「链接带」不是节点深度，所以**不进 enter[]**（那 10 项是与 max_depth 对齐的
-    # 数据契约，verify 直接断言 len(enter)==max_depth）。它在阶梯上再接一级，并且
-    # **在一个窗口内退场**：
-    #     淡入 [enter, mature] → 满 [mature, hold] → 淡出 [hold, exit]
-    # 越过 exit 之后画布回到「空视口 + 兜底提示」，zMax 之外既有的契约原样保留。
-    # 窗口用同一条等比 rung 铺：enter = M[10]×rung/fade，等于假设的第 11 层入口，
-    # 于是「h6 成熟后再滚约 2.7 格，链接开始浮现」。
-    # 带内画什么：视口中心命中节点所属**笔记**的出站 [[链接]] 药丸（数据在 payload
-    # 的 note.links 上）；Ctrl 悬停药丸 → 浮层预览目标笔记（app.js + preview HTML）。
-    links_band = None
-    if (cfg.get("preview") or {}).get("enabled"):
-        links_enter = mature[-1] * rung / fade
-        links_mature = links_enter * fade
-        links_hold = links_mature * rung
-        links_exit = links_hold * fade
-        links_band = {
-            "enter": round(links_enter, 6),
-            "mature": round(links_mature, 6),
-            "hold": round(links_hold, 6),
-            "exit": round(links_exit, 6),
-        }
-
-    return layers, enter, home_layer, root_radius, links_band
+    # 第四轮（2026-10-23）起不再有「链接带」窗口：药丸改成**叶子元素圆内**的一枚，
+    # 出现时机由该圆的屏幕半径决定（44px 淡入 / 64px 满），不再是一条全局缩放带。
+    # zMax 之外「放大到极端会空、兜底提示照画」的契约照旧（没有圆就没有药丸）。
+    return layers, enter, home_layer, root_radius
 
 
 def _median(values):
