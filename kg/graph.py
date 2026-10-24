@@ -194,6 +194,11 @@ class GraphBuilder:
                 if hn is not None:
                     hn["anchor"] = (anchors[i] if i < len(anchors) else "") or ""
         self.stats["preview_chars"] = total
+        # 2026-10-24（阶段 0.3）：verify 原来断言「预览里必须有 $ 公式」—— 那是把作者库的
+        # 内容特征当契约，纯文本库必红。这里给出**源文件里真带公式的笔记数**，让 verify 能
+        # 问「有公式的库，公式定界符是否活过管线」，而不是「每个库都必须有公式」。
+        self.stats["preview_math_notes"] = sum(
+            1 for n in self.notes if "$" in (getattr(n, "body", "") or ""))
 
     def _heading_at_line(self, note_id: str, line):
         """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。

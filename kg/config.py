@@ -289,12 +289,27 @@ def _scope_entries(doc: dict, section: str, scope: str, path: str):
     return out
 
 
+def _contains_md(root: str, limit: int = 20000) -> bool:
+    """目录里（递归）有没有 .md —— 只用来判断「这是不是内容根」，不读内容。"""
+    seen = 0
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in files:
+            if name.lower().endswith(".md"):
+                return True
+        seen += len(files)
+        if seen > limit:
+            return False
+    return False
+
+
 def _derive_roots(include: list, vault: str) -> list:
     """从 include 通配符推 scope 的顶层根名（内联 scope 用）。
 
     "Science and Tech/**"  → "Science and Tech"
     "Logs/Study log/**"    → "Logs"     ← 节点 id 的第一段就是它，verify 按这个断「越界 0 个」
-    "**" / "*"             → 没有写出具体目录：退化成「vault 顶层每个目录各算一个根」
+    "**" / "*"             → 没有写出具体目录：退化成「vault 顶层每个**含 .md 的**目录
+                            各算一个根」+「vault 根下的 .md 各算一个根」
     """
     roots, whole = [], False
     for pattern in include:
@@ -308,9 +323,19 @@ def _derive_roots(include: list, vault: str) -> list:
             continue
         roots.append(p.split("/")[0])
     if whole:
+        # 阶段 0.3：只把「真的含 .md」的目录算成内容根。原来无脑把 vault 顶层每个目录都
+        # 算进去，于是 Attachment/ 这类附件目录也成了「声明的学科」，verify 的
+        # 「depth1 根 == scope 声明」就假红（heading-zoo fixture 实测）。
         for name in sorted(os.listdir(vault)):
-            if not name.startswith(".") and os.path.isdir(os.path.join(vault, name)):
-                roots.append(name)
+            if name.startswith("."):
+                continue
+            full = os.path.join(vault, name)
+            if os.path.isdir(full):
+                if _contains_md(full):
+                    roots.append(name)
+            elif name.lower().endswith(".md"):
+                # 根笔记：vault 根下直接放的笔记自身也是内容根（tiny fixture 实测）
+                roots.append(os.path.splitext(name)[0])
     return sorted({r for r in roots if r})
 
 

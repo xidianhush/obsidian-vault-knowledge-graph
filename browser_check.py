@@ -41,9 +41,14 @@ sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-HTML = os.path.join(ROOT, "dist", os.environ.get("KG_HTML", "knowledge-graph.html"))
+# 2026-10-24（阶段 0.3）：KG_HTML 允许绝对路径 —— 多 fixture 回归（fixtures/run_sweep.py）
+# 要用它指向 fixtures/vaults/<name>/dist/graph.html；只给文件名时仍按 dist/ 解析（老用法不变）。
+_HTML_ENV = os.environ.get("KG_HTML", "knowledge-graph.html")
+HTML = _HTML_ENV if os.path.isabs(_HTML_ENV) else os.path.join(ROOT, "dist", _HTML_ENV)
 URL = "file:///" + HTML.replace("\\", "/")
 SHOT = os.path.join(os.environ.get("KG_SHOT_DIR", tempfile.gettempdir()), "kg_%s.png")
+# 身份闸：sweep 会设它，钉住「这份 HTML 到底是哪一本库的」。不设 = 单库人跑，不校验。
+EXPECT_VAULT = os.environ.get("KG_EXPECT_VAULT", "")
 
 STATE = "() => window.KG.state()"
 DESC_COUNT = """(tgt) => {
@@ -202,11 +207,14 @@ CANVAS_LIT = """() => {
 
 fails = []
 warns = []
+oks = []
 
 
 def check(name, cond, detail=""):
     print("  [%s] %s%s" % ("ok" if cond else "FAIL", name, ("  " + detail) if detail else ""))
-    if not cond:
+    if cond:
+        oks.append(name)
+    else:
         fails.append(name + (" :: " + detail if detail else ""))
 
 
@@ -258,6 +266,14 @@ with sync_playwright() as p:
     check("no pageerror", not perr, "; ".join(perr[:3]))
     check("no console error", not cerr, "; ".join(cerr[:3]))
 
+    # 身份闸（阶段 0.3）：多 fixture 回归里最容易的假绿就是「忘设 KG_HTML / 跑到旧 dist」。
+    # sweep 每轮都会设 KG_EXPECT_VAULT，对不上就直接红。
+    if EXPECT_VAULT:
+        got_vault = page.evaluate("() => window.KG.data.meta.vault || ''")
+        norm = lambda p: os.path.normcase(os.path.normpath(os.path.abspath(p or ".")))
+        check("payload belongs to the expected vault", norm(got_vault) == norm(EXPECT_VAULT),
+              "%s" % os.path.basename(got_vault or "<empty>"))
+
     size = page.evaluate("() => window.KG.renderer.size()")
     check("canvas has real size (not the 300x150 replaced-element default)",
           size[0] > 1000 and size[1] > 600, str(size))
@@ -281,6 +297,10 @@ with sync_playwright() as p:
         zMin: window.KG.zMin, zMax: window.KG.zMax, zHome: window.KG.zHome,
         nodeCount: window.KG.data.nodes.length})""")
     print("   ", json.dumps(meta, ensure_ascii=False)[:420])
+    # 阶段 0.3：测试里的「第 4 层」不再写死。浅库（max_depth 小）上要退到「还能再深一层」的那档，
+    # 否则 setLevel(4) 会落在 zMax、`]` 无路可走 —— 那是 fixture 形状差异，不是回归缺陷。
+    LV_START = max(1, min(4, meta["maxDepth"] - 1))
+    LV_DBL = max(1, min(3, meta["maxDepth"] - 1))
     check("no zoom.min/max in payload", "min" not in meta["zoomKeys"] and "max" not in meta["zoomKeys"],
           str(meta["zoomKeys"]))
     check("initial level == home_layer", st["level"] == meta["homeLayer"],
@@ -514,6 +534,12 @@ with sync_playwright() as p:
     if not page.evaluate("() => !!(window.KG.renderer.hitTest)"):
         warns.append("renderer.hitTest 不存在 -> 跳过第 11 带断言")
         print("    !! no hitTest; skipping preview checks")
+    elif not page.evaluate(
+            "() => window.KG.renderer.NODES.some(n => n.kind === 'heading' && n.anchor)"):
+        # 阶段 0.3：无标题的库（plain / shallow）没有「可预览的标题圆」，
+        # 3e 整段的前提不存在 —— 显式跳过并计数，而不是拿 None 去索引崩掉。
+        warns.append("这个库没有任何带锚点的标题圆 -> 3e 整段跳过（不是回归）")
+        print("    !! no heading with anchor; skipping 3e")
     else:
         # 靶子：深一点的标题（小圆 → 放大后圆够大才方便悬停），且所属笔记带公式和图片
         tgt = page.evaluate("""() => {
@@ -777,7 +803,7 @@ with sync_playwright() as p:
         shot("08_lod")
 
     print("\n=== 5. keyboard [ / ] ===")
-    page.evaluate("() => window.KG.setLevel(4)")
+    page.evaluate("(n) => window.KG.setLevel(n)", LV_START)
     page.wait_for_timeout(700)
     a = page.evaluate(STATE)["level"]
     page.keyboard.press("BracketRight")
@@ -786,7 +812,7 @@ with sync_playwright() as p:
     page.keyboard.press("BracketLeft")
     page.wait_for_timeout(750)
     c2 = page.evaluate(STATE)["level"]
-    print("    setLevel(4)=%d  ] -> %d  [ -> %d" % (a, b2, c2))
+    print("    setLevel(%d)=%d  ] -> %d  [ -> %d" % (LV_START, a, b2, c2))
     check("] deepens", b2 > a, "%d->%d" % (a, b2))
     check("[ shallows", c2 < b2, "%d->%d" % (b2, c2))
 
@@ -934,14 +960,14 @@ with sync_playwright() as p:
     page.wait_for_timeout(700)
 
     print("\n=== 6. bug A regression: HUD must follow programmatic zoom ===")
-    page.evaluate("() => window.KG.setLevel(4)")
+    page.evaluate("(n) => window.KG.setLevel(n)", LV_START)
     page.wait_for_timeout(800)
     pill = page.evaluate("() => { const e = document.querySelector('#pills .on'); return e ? e.textContent.trim() : null; }")
     ro = page.evaluate("() => document.getElementById('readout').textContent")
-    print("    after setLevel(4): active pill=%r readout=%r" % (pill, ro[:90]))
+    print("    after setLevel(%d): active pill=%r readout=%r" % (LV_START, pill, ro[:90]))
     check("a pill is active", pill is not None)
-    check("active pill == 4 after KG.setLevel(4) (was stuck at the last wheel level)",
-          pill == "4", str(pill))
+    check("active pill == %d after KG.setLevel(%d) (was stuck at the last wheel level)"
+          % (LV_START, LV_START), pill == str(LV_START), str(pill))
     check("readout non-empty", bool(ro.strip()), ro[:80])
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(1000)
@@ -1270,17 +1296,33 @@ with sync_playwright() as p:
             }
             return best;
         };
-        const a = find(tails[0]), b = find(tails[1]);
-        if (!a || !b) return null;
-        const linked = R.SEM.some(e => (e.s === a.id && e.t === b.id) ||
-                                       (e.s === b.id && e.t === a.id));
-        return linked ? [a.id, b.id] : null;
+        const linked = (a, b) => R.SEM.some(e => (e.s === a.id && e.t === b.id) ||
+                                                 (e.s === b.id && e.t === a.id));
+        const a0 = find(tails[0]), b0 = find(tails[1]);
+        if (a0 && b0 && linked(a0, b0)) return {pair: [a0.id, b0.id], how: 'author-fixture'};
+        // 阶段 0.3：作者库那两条笔记名在别的库上当然不存在。通用兜底 = 挑一条两端世界距离
+        // 最大的语义边（深缩放时更容易一端出屏），仍然完全由 payload 决定。
+        let best = null;
+        for (const e of R.SEM) {
+            const a = R.byId.get(e.s), b = R.byId.get(e.t);
+            if (!a || !b) continue;
+            const d = Math.hypot((a.x || 0) - (b.x || 0), (a.y || 0) - (b.y || 0));
+            if (!best || d > best.d) best = {d: d, pair: [e.s, e.t]};
+        }
+        return best ? {pair: best.pair, how: 'generic-farthest-edge'} : null;
     }""", [SEL_TAIL, TGT_TAIL])
+    if pair and "how" in pair:
+        print("    pair source: %s" % pair["how"])
+        pair = pair["pair"]
     if not pair:
-        warns.append("fixture edge SEL->TGT missing from payload -> 7d skipped")
-        print("    !! fixture edge not found; skipping")
+        warns.append("这个库没有可用的语义边对 -> 7d 跳过（不是回归）")
+        print("    !! no usable edge pair; skipping 7d")
     else:
         SEL_ID, TGT_ID = pair
+        # 阶段 0.3：chip 上的名字要跟 fixture 走（原来是作者库那条的具体标题文字）。
+        TGT_LABEL = page.evaluate(
+            "(id) => (window.KG.renderer.byId.get(id) || {}).label || ''", TGT_ID)
+        TGT_KEY = (TGT_LABEL or "").strip()[:8] or TGT_ID.split("/")[-1][:8]
         print("    fixture resolved: SEL=…/%s  TGT=…/%s"
               % (SEL_ID.split("/")[-1], TGT_ID.split("/")[-1]))
         # (a) 深缩放：选中圆在屏、链接目标屏外 -> 线一路画到屏外，chip 写明目标是谁
@@ -1301,7 +1343,7 @@ with sync_playwright() as p:
               a["chips"] >= 1 and len(a["chipTexts"]) >= 1,
               "chips=%s texts=%s" % (a["chips"], a["chipTexts"]))
         check("chip carries the off-screen target's name",
-              bool(a["chipTexts"]) and a["chipTexts"][0].startswith("5.1.2 定积分的定义"),
+              bool(a["chipTexts"]) and a["chipTexts"][0].startswith(TGT_KEY),
               str(a["chipTexts"][:1]))
         check("on-screen end keeps its source dot", a["selDot"])
         shot("11_chip")
@@ -1371,7 +1413,7 @@ with sync_playwright() as p:
                   % (a2["chips"], a2["focusEdges"], a2["shownEdges"]))
             check("that chip names the off-screen target, not the selection",
                   bool(a2["tgtChips"]) and not a2["selChips"] and
-                  all(t.startswith("5.1.2 定积分的定义") for t in a2["tgtChips"]),
+                  all(t.startswith(TGT_KEY) for t in a2["tgtChips"]),
                   "tgt=%s sel=%s" % (a2["tgtChips"], a2["selChips"]))
             check("both-off chip anchor lands inside the content viewport",
                   a2["anchored"], str(a2["anchored"]))
@@ -1491,7 +1533,18 @@ with sync_playwright() as p:
         page.wait_for_timeout(900)
 
     print("\n=== 8. search ===")
-    page.fill("#search", "微分方程")
+    # 阶段 0.3：查询词不再写死「微分方程」—— 从 payload 里取一个笔记名的前两个字，
+    # 既保证命中，又对任意库成立。
+    q = page.evaluate("""() => {
+        const R = window.KG.renderer;
+        for (const n of R.NODES) {
+            const lab = (n.label || '').trim();
+            if (n.kind === 'note' && lab.length >= 2) return lab.slice(0, 2);
+        }
+        const any = R.NODES.find(n => (n.label || '').trim().length >= 2);
+        return any ? any.label.trim().slice(0, 2) : '';
+    }""")
+    page.fill("#search", q)
     page.keyboard.press("Enter")
     page.wait_for_timeout(900)
     sr = page.evaluate("""() => ({
@@ -1499,7 +1552,7 @@ with sync_playwright() as p:
         q: window.KG.state().search,
         first: (document.querySelector('#hits > *') || {}).textContent || null})""")
     print("    ", json.dumps(sr, ensure_ascii=False)[:260])
-    check("search recorded the query", sr["q"] == "微分方程", repr(sr["q"]))
+    check("search recorded the query", sr["q"] == q, repr(sr["q"]))
     check("search produced hits", sr["hits"] > 0, str(sr["hits"]))
     shot("05_search")
     if sr["hits"]:
@@ -1513,17 +1566,24 @@ with sync_playwright() as p:
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
     base = page.evaluate(STATE)["shownNodes"]
-    page.select_option("#domain", index=1)
-    page.wait_for_timeout(700)
-    filt = page.evaluate(STATE)["shownNodes"]
-    print("    shownNodes all=%d  filtered=%d" % (base, filt))
-    check("domain filter reduces visible nodes", filt < base, "%d -> %d" % (base, filt))
-    page.select_option("#domain", index=0)
-    page.wait_for_timeout(700)
-    check("clearing the filter restores", page.evaluate(STATE)["shownNodes"] == base)
+    n_domains = page.evaluate("() => document.querySelectorAll('#domain option').length")
+    if n_domains <= 2:
+        # 阶段 0.3：只有一个学科（或没有学科分组）的库，过滤前后节点数当然一样 ——
+        # 这是形状差异，不是缺陷。显式跳过并计数。
+        warns.append("只有 %d 个学科选项 -> domain 过滤断言跳过（不是回归）" % n_domains)
+        print("    !! only %d domain options; skipping" % n_domains)
+    else:
+        page.select_option("#domain", index=1)
+        page.wait_for_timeout(700)
+        filt = page.evaluate(STATE)["shownNodes"]
+        print("    shownNodes all=%d  filtered=%d" % (base, filt))
+        check("domain filter reduces visible nodes", filt < base, "%d -> %d" % (base, filt))
+        page.select_option("#domain", index=0)
+        page.wait_for_timeout(700)
+        check("clearing the filter restores", page.evaluate(STATE)["shownNodes"] == base)
 
     print("\n=== 10. dblclick deepens / dblclick empty resets ===")
-    page.evaluate("() => window.KG.setLevel(3)")
+    page.evaluate("(n) => window.KG.setLevel(n)", LV_DBL)
     page.wait_for_timeout(800)
     z3 = page.evaluate(STATE)["zoom"]
     picked = page.evaluate(PICK_NODE, {"smallest": True, "minDepth": 2})
@@ -1592,6 +1652,12 @@ if warns:
     print("WARNINGS:")
     for w in warns:
         print("  -", w)
+# 阶段 0.3：机器可读的结果行 —— fixtures/run_sweep.py 靠它做 ok 计数硬闸。
+# 没有这一行，「少跑了几条」和「全跑过」在输出上长得一模一样。
+print("## BROWSER_RESULT " + json.dumps(
+    {"ok": len(oks), "fail": len(fails), "skipped": len(warns),
+     "html": os.path.basename(HTML), "vault": EXPECT_VAULT or None},
+    ensure_ascii=False))
 if fails:
     print("FAILED %d:" % len(fails))
     for f in fails:

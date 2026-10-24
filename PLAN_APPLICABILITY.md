@@ -117,17 +117,43 @@
 
 ## 4. 路线图
 
-### 阶段 0：任意 vault 能跑 + 一张「形状体检表」 🟡 进行中（0.1 ✅ / 0.2 ⬜ / 0.3 ⬜）
+### 阶段 0：任意 vault 能跑 + 一张「形状体检表」 ✅ 已完成（0.1 / 0.2 / 0.3）
 > 用户 2026-10-24 决定：**先做这个，先不看视觉。**
 
 | 步 | 内容 | 涉及文件 | 断言影响 |
 |---|---|---|---|
 | 0.1 ✅ | `--config/-c` + 未知参数报错；`scope_file` 可选（无真源时用 config 内联 scope 定义）；路径统一相对 config.yaml；补齐 DEFAULTS | `build.py`, `kg/config.py`, `kg/emit.py`, `kg/candidates.py`, `verify.py` | 无新增断言；**已实测：两份产物归一化后逐位不变**，`verify --scope all` 仍 110 ok |
 | 0.2 ✅ | fixture 生成器（确定性）+ 8 个形状库 + `manifest.yaml`（canary / expected_ok / known_gaps） | 新增 `fixtures/make_vaults.py`、`fixtures/manifest.yaml`；`.gitignore` 加 `fixtures/vaults/` | 不碰 vault；**8 个库全部 build 通过**（见 §5 实测列） |
-| 0.3 | sweep runner + 两个检查器补 **ok 计数 / vault 身份 / warn 白名单 / canary**；`KG_HTML` 接受绝对路径；`browser_check` 的作者 fixture 常量（`微分方程`、作者笔记名、`setLevel(4)`）改成参数化 | `fixtures/run_sweep.py`, `verify.py`, `browser_check.py` | 新增计数与身份断言；既有 110/132/133 不变 |
+| 0.3 ✅ | sweep runner + 两个检查器补 **ok 计数 / vault 身份 / 机器可读结果行**；`KG_HTML` 接受绝对路径；`browser_check` 的作者 fixture 常量（`微分方程`、作者笔记名、`setLevel(4)`）参数化；verify 的两处**崩溃**与两处**内容特征当契约**修掉 | `fixtures/run_sweep.py`, `verify.py`, `browser_check.py`, `kg/graph.py`, `kg/config.py` | 作者库 verify 110 → **112**（新增每 scope 1 条身份断言），browser 仍 132/133；8 个 fixture 的 ok 数已标定进 manifest |
 
-**验收**：8 个库 × 7 指标的表（能否构建 / verify ok / browser ok / 首屏标签数 / 灰节点占比 /
-HTML MB / 20 格滚轮 ms），红项清单 = 阶段 1/2 的任务来源。
+**验收（2026-10-24 实测）**：
+- `python fixtures/run_sweep.py` → `## SWEEP_RESULT {"fixtures": 8, "errors": [], "pending": []}`
+  —— canary 全对、8 个库的 verify ok 数 == manifest.expected_ok（硬闸生效）。
+- 8 个库合计 **426 ok / 22 FAIL**（0.3 动手前是 406 / 32）。剩下的 22 条分成三簇：
+  `[LADDER] M[last]!=zMax`、`[INFLOW] 单格涌入>35%`（两者同根：PLAN §1.1 #4）、
+  `[ROOT-NOTE]` tiny 的根笔记模型 —— **全部指向阶段 1.2 / 1.4，不是回归**。
+- 修掉的两处崩溃：`verify.py` 在 0 标题库上 `min()` 空序列 `ValueError`；`browser_check` 3e 在
+  无锚点标题时 `tgt=null` 的 `TypeError`。
+- 修掉的两处「内容特征当契约」：`verify` 的「预览里必须有 `$` 公式」（改成按
+  `meta.link_stats.preview_math_notes` 条件化）、「标题锚点覆盖率」在 0 标题时的分母为 0。
+- 顺手修掉的内联 scope 缺陷：`roots` 原来把 `Attachment/` 这类无 .md 的目录也算成学科根
+  （heading-zoo 假红），改成「只算含 .md 的目录 + vault 根下的 .md」。
+
+**体检表（verify，2026-10-24 标定）**：
+
+| fixture | ok | FAIL | 红项簇 |
+|---|---|---|---|
+| tiny | 50 | 6 | ROOT-NOTE×3 + LADDER + 放到最内 + INFLOW |
+| shallow | 53 | 3 | LADDER + 放到最内 + INFLOW(94%) |
+| deep-chain | 54 | 2 | LADDER + 放到最内 |
+| wide-roots | 55 | 1 | INFLOW(45%) |
+| hub-dense | 55 | 1 | INFLOW(60%) |
+| heading-zoo | 53 | 3 | LADDER + 放到最内 + INFLOW(37%) |
+| plain | 53 | 3 | LADDER + 放到最内 + INFLOW(91%) |
+| remap-dup | 53 | 3 | LADDER + 放到最内 + INFLOW(80%) |
+
+> 浏览器列（`--browser`）尚未标定：8 个库 × ~3 分钟，需要 Chrome；等阶段 1.2 修完缩放行程
+> 再一次性标定，否则现在标出来的数下一轮就全变。
 
 ### 阶段 0.5：插件形态探针（半天，不写码） ⬜
 读 Obsidian 插件 API，确认：① 插件能否直接读 vault 现算（决定路线 A/B：A=读 Python 产物、
@@ -193,12 +219,11 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 ---
 
-## 6. 回归口径的三条硬闸（阶段 0.3，**先于**任何 sweep）
+## 6. 回归口径的三条硬闸 ✅ 已落地（阶段 0.3）
 
-> 现在的两个检查器只记 FAIL、不记 ok：少跑几条仍然打「✓ 全部自动校验通过 / ALL BROWSER CHECKS PASSED」。
-> `browser_check` 有 16 处 `warns.append(...)` 会静默吞用例（`:459/:515/:608/:613/:700/:755/:874/:978/`
-> `:1046/:1088/:1280/:1363/:1421/:1449/:1541/:1567`），`verify` 也有整段条件跳过（`:301-302` 预览段、
-> `:275` home 分支）。参数化到 fixture 后这些会放大成「静默全绿」。
+> 落地前的状态：两个检查器只记 FAIL、不记 ok —— 少跑几条仍然打「✓ 全部自动校验通过 /
+> ALL BROWSER CHECKS PASSED」。现在两边都输出机器可读结果行，由 `fixtures/run_sweep.py` 做硬闸：
+> `## VERIFY_RESULT {"ok":…,"fail":…}`、`## BROWSER_RESULT {"ok":…,"fail":…,"skipped":…}`。
 
 1. **ok 计数 + expected 硬闸**：`ok + skipped + fail == 静态用例数`，每个 fixture 在 manifest 里写
    `expected_ok`；`skipped` 必须显式。
@@ -212,10 +237,14 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 6. **不跑 `build.py all`**：`build.py:372-379` 会在第一个 scope 写共享 `candidates.yaml`。sweep 只跑
    `build --scope <one>`。
 
-**已知写死的作者 fixture（阶段 0.3 要参数化）**：
-`browser_check.py:1494`（搜索词「微分方程」）、`:1260-1261`（作者两篇笔记名）、`:1304/:1374`（chip 文本）、
-`:780/:937/:1009/:1526`（`setLevel(4)` 隐含 `max_depth≥5`）、`:1144`（要求有向边 → `arrows>0`）、
-`verify.py:317`（要求库里有 `$` 公式）、`:381`（无标题即 FAIL）、`:551`（无标题直接崩）。
+**原来写死的作者 fixture —— 阶段 0.3 已参数化**：
+`browser_check` 的搜索词「微分方程」→ 从 payload 取笔记名前两字；`:1260-1261` 作者两篇笔记名 →
+先按后缀找、找不到就用「两端世界距离最大的语义边」兜底；chip 文本 → 取目标节点自己的 label；
+`setLevel(4)` → `LV_START = max(1, min(4, max_depth-1))`；无锚点标题的库 → 3e 显式跳过并计数；
+单学科库 → domain 过滤断言显式跳过并计数。`verify` 侧的公式断言与标题锚点覆盖率也改成条件化，
+0 标题库不再崩。
+**仍留在 manifest.known_gaps 里的**（阶段 2 处理）：`:1144` 要求有向边 → `arrows>0`（只有 contrast
+边的库会红）、`max_depth` 大时的顶栏胶囊溢出。
 
 ---
 
@@ -223,28 +252,31 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 ### 7.1 作者库（回归基准，**任何阶段都不许倒退**）
 
-| 项 | 基线（2026-10-24 15:12 实测） | 阶段 0 后 | 阶段 1 后 | 阶段 2 后 |
+| 项 | 基线（2026-10-24 15:12 实测） | 阶段 0 后（0.3 实测） | 阶段 1 后 | 阶段 2 后 |
 |---|---|---|---|---|
-| `verify --scope all` | 110 ok / 0 FAIL（55+55） | | | |
-| `browser_check` private | 132 ok / 0 FAIL / 1 warn | | | |
-| `browser_check` public | 133 ok / 0 FAIL / 0 warn | | | |
-| 单文件 | 6277 KB / 6303 KB | | | |
-| 空闲 fps | 63 | | | |
-| 20 格滚轮 | private 1654 ms / public 1644 ms | | | |
-| 产物 hash | 见 §7.3 | | | |
+| `verify --scope all` | 110 ok / 0 FAIL（55+55） | **112 ok / 0 FAIL（56+56）**（+1/scope = 身份断言） | | |
+| `browser_check` private | 132 ok / 0 FAIL / 1 warn | **132 ok / 0 FAIL / 1 skip**（计数口径改名） | | |
+| `browser_check` public | 133 ok / 0 FAIL / 0 warn | **133 ok / 0 FAIL / 0 skip** | | |
+| 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB（未变） | | |
+| 空闲 fps | 63 | 未复测（0.3 没动渲染） | | |
+| 20 格滚轮 | private 1654 ms / public 1644 ms | 未复测（0.3 没动渲染） | | |
+| 产物 hash | 见 §7.3 | payload **变了**：`meta.link_stats` 新增 `preview_math_notes`（0.3 为公式条件化加的） | | |
 
-### 7.2 形状体检表（8 个 fixture）
+### 7.2 形状体检表（8 个 fixture，2026-10-24 阶段 0.3 实测）
 
-| fixture | 构建 | verify ok | browser ok | 首屏标签 | 灰节点占比 | HTML MB | 20 格滚轮 |
+| fixture | 构建 | verify ok / FAIL | browser | HTML KB | depth | 灰节点占比 | 20 格滚轮 |
 |---|---|---|---|---|---|---|---|
-| shallow | | | | | | | |
-| deep-chain | | | | | | | |
-| wide-roots | | | | | | | |
-| hub-dense | | | | | | | |
-| heading-zoo | | | | | | | |
-| plain | | | | | | | |
-| remap-dup | | | | | | | |
-| tiny | | | | | | | |
+| tiny | ok | 50 / 6 | 待标定 | 776 | 2 | — | — |
+| shallow | ok | 53 / 3 | 待标定 | 784 | 2 | — | — |
+| deep-chain | ok | 54 / 2 | 待标定 | 791 | 12 | — | — |
+| wide-roots | ok | 55 / 1 | 待标定 | 958 | 3 | — | — |
+| hub-dense | ok | 55 / 1 | 待标定 | 1063 | 4 | — | — |
+| heading-zoo | ok | 53 / 3 | 待标定 | 789 | 8 | — | — |
+| plain | ok | 53 / 3 | 待标定 | 781 | 2 | — | — |
+| remap-dup | ok | 53 / 3 | 待标定 | 779 | 3 | — | — |
+
+> 「灰节点占比 / 首屏标签 / 20 格滚轮」需要浏览器侧采集，随 `--browser` 那一轮一起标定
+> （阶段 1.2 修完缩放行程之后再跑，否则数会立刻变）。
 
 ### 7.3 阶段 0.1 的「零改动」证明（已有）
 
@@ -284,3 +316,4 @@ knowledge-graph.public.html 20E14BF9E3B880BCAD7B49FC4E90B009977A8EC2E0B9BDE314FE
 | 2026-10-24 | — | 本文档建立（诊断 + 路线图 + 验收契约） | 与 0.1 同一提交 |
 | 2026-10-24 | 0.1 | `--config` + 未知参数报错 + 内联 scope（无 scope_file）+ 路径统一相对 config + 补齐 DEFAULTS；产物归一化后逐位不变 | `feat(app): 阶段 0.1`（见 `git log`） |
 | 2026-10-24 | 0.2 | 8 个形状 fixture + 确定性生成器 + manifest（canary / expected_ok / known_gaps）；8 库全部 build 通过 | `feat(fixtures): 阶段 0.2`（见 `git log`） |
+| 2026-10-24 | 0.3 | sweep runner + ok 计数/vault 身份/机器可读结果行；修 2 处崩溃 + 2 处「内容特征当契约」+ 内联 roots 多算附件目录；8 库标定为 426 ok / 22 FAIL | `feat(fixtures): 阶段 0.3`（见 `git log`） |

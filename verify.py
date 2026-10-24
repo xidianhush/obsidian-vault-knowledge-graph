@@ -39,15 +39,23 @@ class CheckFailure(Exception):
     pass
 
 
+# 阶段 0.3：只记 FAIL 不记 ok，少跑几条仍然打「✓ 全部自动校验通过」—— 这正是
+# fixtures/run_sweep.py 要防的「静默吞用例」。计数器 + 末尾机器可读行是硬闸的一半。
+_STATS = {"ok": 0, "fail": 0}
+
+
 def _check(condition, message, failures):
     if condition:
+        _STATS["ok"] += 1
         print(f"  [ok]   {message}")
     else:
+        _STATS["fail"] += 1
         print(f"  [FAIL] {message}")
         failures.append(message)
 
 
 def run(cfg, payload_path=None):
+    _STATS["ok"] = _STATS["fail"] = 0
     payload_path = payload_path or os.path.join(cfg["config_dir"], cfg["output"]["json"])
     if not os.path.exists(payload_path):
         raise CheckFailure(f"找不到 {payload_path}，先跑 python build.py build")
@@ -61,6 +69,11 @@ def run(cfg, payload_path=None):
     failures: list[str] = []
 
     print(f"\n校验 {payload_path}")
+
+    # 身份闸（阶段 0.3）：多 fixture 回归里最容易的假绿是「跑到了别的库的 payload」。
+    _check(os.path.normcase(os.path.normpath(str(meta.get("vault") or ""))) ==
+           os.path.normcase(os.path.normpath(cfg["vault"])),
+           f"payload 的 vault 与配置一致（{os.path.basename(cfg['vault'])}）", failures)
 
     # ── 标准 2：最浅一层只有学科大类，且没有悬空边 ──────────────────────
     print("\n[标准 2] 缩放到最浅层 = 只显示学科大类，且无悬空边")
@@ -314,8 +327,14 @@ def run(cfg, payload_path=None):
                "预览正文里没有残留 [[ ]] 语法（代码块不算）", failures)
         _check(not any(p.lstrip().startswith("---") for p in previews),
                "预览里没有残留 frontmatter", failures)
-        _check(any("$" in p for p in previews),
-               "预览里保留了公式定界符（交给运行时 KaTeX 渲染）", failures)
+        # 阶段 0.3：「预览里必须有 $」是**内容特征当契约** —— 纯文本库（plain / shallow）
+        # 当然一条公式都没有。改成「有多少篇笔记真带公式，才要求这些公式的定界符活过管线」。
+        math_notes = int((meta.get("link_stats") or {}).get("preview_math_notes", 0))
+        if math_notes:
+            _check(any("$" in p for p in previews),
+                   f"预览里保留了公式定界符（{math_notes} 篇笔记带公式，交给运行时 KaTeX）", failures)
+        else:
+            _check(True, "库里没有 $ 公式 —— 公式定界符断言不适用（不是跳过：确实没有公式）", failures)
         # 图片引用按「相对 dist/」写出，必须真能找到文件（519MB 不内联，只能引用）
         dist_dir = os.path.dirname(os.path.join(cfg["config_dir"], cfg["output"]["html"]))
         bad = []
@@ -377,10 +396,15 @@ def run(cfg, payload_path=None):
         _check(misaligned == 0,
                f"锚点后面紧跟的就是该标题自己的文字（错位 {misaligned}/{checked} 个）", failures)
         with_anchor = [n for n in heads if n.get("anchor")]
-        ratio = len(with_anchor) / max(1, len(heads))
-        _check(ratio >= 0.95,
-               f"标题锚点覆盖 {len(with_anchor)}/{len(heads)}（≥95%；没锚点的标题悬停时"
-               f"预览退回顶部，不会报错）", failures)
+        if not heads:
+            # 阶段 0.3：0 标题的库（plain / shallow）上「覆盖率」没有分母 ——
+            # 显式记为通过（不是静默跳过），并把判断依据写进消息里。
+            _check(True, "库里没有标题节点 —— 标题锚点覆盖率断言不适用（分母为 0）", failures)
+        else:
+            ratio = len(with_anchor) / max(1, len(heads))
+            _check(ratio >= 0.95,
+                   f"标题锚点覆盖 {len(with_anchor)}/{len(heads)}（≥95%；没锚点的标题悬停时"
+                   f"预览退回顶部，不会报错）", failures)
         print(f"         标题锚点 {len(anchors)} 个（覆盖 {len(with_anchor)}/{len(heads)}）；"
               f"预览 {total} 字；出站链接 {len(all_links)} 条")
 
@@ -548,8 +572,13 @@ def run(cfg, payload_path=None):
     for n in heading_nodes:
         lv[n["level"]] = lv.get(n["level"], 0) + 1
     print(f"         标题级别分布 {dict(sorted(lv.items()))}")
-    print(f"         标题落在 depth {min(n['depth'] for n in heading_nodes)}"
-          f"..{max(n['depth'] for n in heading_nodes)}")
+    if heading_nodes:
+        print(f"         标题落在 depth {min(n['depth'] for n in heading_nodes)}"
+              f"..{max(n['depth'] for n in heading_nodes)}")
+    else:
+        # 阶段 0.3：原来这里对空列表直接 min() —— 0 标题的库会让 verify **崩掉**
+        # （不是 FAIL，是 Traceback），sweep 里表现为「这个库没法验」。
+        print("         标题落在 depth ——（这个库没有标题节点）")
 
     # ── 各层一览 ────────────────────────────────────────────────────────
     # 2026-10-24：聚合边模式已删，levels 表里的「边」= 两端都在该层以内的语义边条数
@@ -562,6 +591,12 @@ def run(cfg, payload_path=None):
               f"{row['edges']:>8}")
 
     print()
+    # 机器可读结果行 —— 与 browser_check 的 ## BROWSER_RESULT 成对，供 fixtures/run_sweep.py
+    # 做「ok 数 == manifest 期望」的硬闸。
+    print("## VERIFY_RESULT " + json.dumps(
+        {"ok": _STATS["ok"], "fail": _STATS["fail"],
+         "vault": os.path.basename(cfg["vault"]), "scope": cfg["scope"]},
+        ensure_ascii=False))
     if failures:
         print(f"✗ {len(failures)} 项未通过\n")
         return 1
