@@ -101,7 +101,10 @@ class GraphBuilder:
                 kind="note",
                 depth=note.file.depth,
                 parent="/".join(note.file.parts) or None,
-                domain=note.file.parts[0] if note.file.parts else "",
+                # 2026-10-24 阶段 1.4：**根笔记**（直接放在 vault 根、没有文件夹）自己就是一个
+                # 顶层单元 —— 原来 domain 留空串，于是这类库满图走 fallback 灰、图例空白、
+                # 校验还报「depth1 不是学科」。现在 domain = 笔记自己的 id（= 文件名 stem）。
+                domain=note.file.parts[0] if note.file.parts else fid,
                 heading_count=len(note.headings),
                 excerpt=note.excerpt,
                 path=note.file.rel,

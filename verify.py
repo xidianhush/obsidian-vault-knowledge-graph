@@ -82,8 +82,13 @@ def run(cfg, payload_path=None):
     _check(set(roots) == note_domains,
            f"depth=1 的 {len(roots)} 个节点恰好是笔记所属的 {len(note_domains)} 个顶层学科", failures)
     top_visible = [n["id"] for n in data["nodes"] if n["depth"] <= 1]
-    _check(all(n["kind"] == "folder" for n in data["nodes"] if n["depth"] == 1),
-           "depth=1 上只有文件夹节点，没有笔记直接挂在根部", failures)
+    # 2026-10-24 阶段 1.4：depth=1 不再只允许文件夹 —— 直接把笔记放在 vault 根的库
+    # （fixtures/tiny、以及很多「懒人库」）在 depth1 就是笔记，那本来就是合法的顶层单元。
+    # 这里只守「顶层不能是标题 / 不能是别的奇怪东西」。
+    bad_top = [n["id"] for n in data["nodes"]
+               if n["depth"] == 1 and n["kind"] not in ("folder", "note")]
+    _check(not bad_top,
+           f"depth=1 上只有文件夹与根笔记（异常 {len(bad_top)} 个）", failures)
     print(f"         该层可见：{'、'.join(top_visible)}")
 
     # ── 范围一致性：图上出现的东西必须都在这个 scope 声明的目录里 ────────
@@ -97,7 +102,18 @@ def run(cfg, payload_path=None):
         _check(set(roots) == set(scope_roots),
                f"depth=1 的 {len(roots)} 个根 == scope「{cfg['scope']}」声明的 {len(scope_roots)} 个"
                f"目录（{'、'.join(sorted(scope_roots))}）", failures)
-        outside = sorted({n["id"].split("/")[0] for n in data["nodes"]} - set(scope_roots))
+
+        # 越界判据：节点的**顶层祖先**才是它的内容根。原来直接切 id 的 "/" 首段，
+        # 在根笔记的标题节点上会得到整串 id（"Only#唯一标题"）—— 那不是越界，
+        # 是判据只适配了「有文件夹」的库（阶段 1.4 修）。
+        def _root_of(nid):
+            cur, guard = nodes.get(nid), 0
+            while cur and cur.get("parent") and guard < 200:
+                cur = nodes.get(cur["parent"])
+                guard += 1
+            return cur["id"] if cur else nid
+
+        outside = sorted({_root_of(n["id"]) for n in data["nodes"]} - set(scope_roots))
         _check(not outside,
                f"没有节点落在 scope 之外的目录里（越界 {len(outside)} 个）"
                + (f"：{'、'.join(outside)}" if outside else ""), failures)

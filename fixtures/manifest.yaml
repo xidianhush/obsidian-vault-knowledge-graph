@@ -27,10 +27,14 @@ fixtures:
     tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
     config: vaults/tiny/config.yaml
     canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
-    expected_ok: {verify: 60}
+    expected_ok: {verify: 62}
+    # 2026-10-24 阶段 1.4：根笔记模型已修（domain = 笔记自己的 id、depth1 允许是 note、
+    # 越界判据改走父链取顶层祖先）—— verify 侧现在 **0 红**。
     known_gaps:
-      - "[ROOT-NOTE] depth=1 是笔记：graph.py 假设 depth1 全是文件夹、笔记 domain 非空 —— 阶段 1.4"
-      - "[ROOT-NOTE] 「越界 1 个：Only#唯一标题」：根笔记的标题节点 id 不以目录根开头，verify 的越界判据按 id 首段切 —— 阶段 1.4"
+      - "[BROWSER] 这个库 0 条语义边 → 7b/7c/7d 的边相关用例不适用；图例「关系」一节也不该出现 —— 阶段 2"
+      - "[BROWSER] 「canvas painted n=45」阈值是按正常库写的采样点数，2 个节点的库达不到 —— 阶段 2 改成按落笔节点数判"
+      - "[BROWSER] 「top-level roots labelled at the zoom floor 0」：最小根在 zMin 处 sr<28px，按设计就不挂标签 —— 阶段 2 复核判据"
+      - "[BROWSER] 3e 预览锚点落点差 17px（锚点 top=57 / 面包屑 40）—— 阶段 2 复核判据"
 
   shallow:
     title: 浅库
