@@ -3,7 +3,7 @@
  * 分工：web/render.js 负责「画什么、怎么淡入淡出、怎么响应滚轮/拖拽」，
  * 本文件只负责 DOM 侧的一切 —— 顶栏、侧栏、搜索、过滤、图例、键盘快捷键。
  * 两者通过 createRenderer 的 hooks（onHover / onSelect / onCamera / onFrame）
- * 与 api（selected / filterSet / matchSet / labelMode / edgeMode / focusOn /
+ * 与 api（selected / filterSet / matchSet / labelMode / focusOn /
  * zoomToDepth）通信。
  *
  * 设计要点：
@@ -70,9 +70,8 @@
   let filterMastery = 'all';
   let searchQ = '';
   let labelMode = 'auto';      // 'auto' | 'on' | 'off'，与渲染器同词汇
-  let edgeMode = 'raw';        // 'raw'（逐条链接，不随缩放聚合）| 'agg'（按尺度聚合）
 
-  // 用户选的连线模式要记住：这份 HTML 是 file:// 直接打开的，Chrome 下
+  // 用户选的图例收起状态要记住：这份 HTML 是 file:// 直接打开的，Chrome 下
   // localStorage 可能抛 SecurityError，所以两个方向都整段兜住，失败就退回默认值。
   function readStored(key, fallback) {
     try {
@@ -84,9 +83,6 @@
   function writeStored(key, value) {
     try { window.localStorage.setItem(key, value); } catch (err) { /* 存不下就算了 */ }
   }
-
-  const storedEdgeMode = readStored('kg.edgeMode', null);
-  if (storedEdgeMode === 'raw' || storedEdgeMode === 'agg') edgeMode = storedEdgeMode;
 
   function toast(msg) {
     toastEl.textContent = msg;
@@ -122,12 +118,14 @@
   // ── HUD ───────────────────────────────────────────────────────────────
   // 该层「累积可见了什么」的读数。拆成两半用：levelLabel 给层级胶囊的 title（有空间，
   // 带上 LOD 前缀），levelCounts 给顶栏 #readout（空间紧张，LOD 与 z 由调用处另拼）。
+  // 2026-10-24：删掉「边 N」—— 聚合边模式删除后，这一层的「边」只剩「两端都在该层
+  // 以内的语义边」，首页恒为 0，而画布上同时画着全部 96 条逐条链接，读数会自相矛盾。
+  // 屏幕上真正的连线数由右下角页脚的「关系 N」报（stats.edges，落笔口径）。
   function levelCounts(lv) {
     const row = LEVELS[String(lv)] || {};
     return '文件夹 ' + (row.folders == null ? '-' : row.folders) +
       ' · 笔记 ' + (row.notes == null ? '-' : row.notes) +
-      ' · 标题 ' + (row.headings == null ? '-' : row.headings) +
-      ' · 边 ' + (row.edges == null ? '-' : row.edges);
+      ' · 标题 ' + (row.headings == null ? '-' : row.headings);
   }
 
   function levelLabel(lv) {
@@ -214,16 +212,6 @@
       row.appendChild(label);
       box.appendChild(row);
     });
-  }
-
-  // 两套「关系」图例互斥：聚合模式下线宽代表合并了多少条原始链接，逐条模式下
-  // 线宽是恒定的、条数本身才代表强度 —— 说明文字必须跟着模式换，否则会误导。
-  function applyEdgeLegend() {
-    const raw = edgeMode !== 'agg';
-    const rawBox = $('legend-rel-raw');
-    const aggBox = $('legend-rel-agg');
-    if (rawBox) rawBox.hidden = !raw;
-    if (aggBox) aggBox.hidden = raw;
   }
 
   function buildFilters() {
@@ -768,18 +756,11 @@
     labelMode = v === 'all' ? 'on' : v === 'none' ? 'off' : 'auto';
     R.labelMode = labelMode;
   });
-  $('edgemode').addEventListener('change', (e) => {
-    edgeMode = e.target.value === 'agg' ? 'agg' : 'raw';
-    R.edgeMode = edgeMode;
-    writeStored('kg.edgeMode', edgeMode);
-    applyEdgeLegend();
-  });
 
   // ── 图例收起 / 展开 ────────────────────────────────────────────────────
-  // 图例的说明文字很长（可见约 24 行），挡住画布左下角时可以折成一条。状态记进
-  // localStorage，下次打开还是那个状态。**只切 .collapsed 类**，不碰
-  // #legend-rel-agg / #legend-rel-raw 的 hidden —— 那两个属性归 applyEdgeLegend()
-  // 管，是「当前连线模式用哪套图例」的状态，浏览器回归的 1c 段直接读它。
+  // 图例的说明文字很长（可见约 20 行），挡住画布左下角时可以折成一条。状态记进
+  // localStorage，下次打开还是那个状态。**只切 .collapsed 类**，不碰图例内容的
+  // hidden 属性。
   function applyLegendCollapsed(collapsed) {
     $('legend').classList.toggle('collapsed', collapsed);
     const btn = $('legend-toggle');
@@ -797,12 +778,8 @@
 
   // ── 启动 ──────────────────────────────────────────────────────────────
   $('subtitle').textContent = META.note_count + ' 篇笔记 · ' + META.heading_total + ' 个标题';
-  // 先把记住的连线模式灌进渲染器和下拉框，再建图例 —— 顺序反了会闪一下错的图例。
-  R.edgeMode = edgeMode;
-  $('edgemode').value = edgeMode;
   buildPills();
   buildLegend();
-  applyEdgeLegend();
   // 图例收起状态：默认展开（老行为和截图基线都不变），只有用户自己收过才记住。
   applyLegendCollapsed(readStored('kg.legendCollapsed', '0') === '1');
   buildFilters();
@@ -846,9 +823,6 @@
       hovered: R.hover,
       search: searchQ,
       labelMode: labelMode,
-      // 连线模式报的是渲染器的真值（而不是 app.js 自己的副本）：调试/自动化时
-      // 可以直接改 window.KG.renderer.edgeMode，读数必须跟着变。
-      edgeMode: R.edgeMode,
       filterSet: R.filterSet ? R.filterSet.size : null,
       camera: { zoom: R.camera.zoom, panX: R.camera.panX, panY: R.camera.panY },
     }),

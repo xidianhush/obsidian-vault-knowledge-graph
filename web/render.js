@@ -19,36 +19,23 @@
  * 屏幕外，继续画只会和更外层的罩子叠成不透明色块，所以接近铺满时平滑退场、
  * 铺满后停画，只留还没铺满的最内层圆当「你在哪个区域里」的界线。
  *
- * ── 链接线怎么跨尺度存在：两种模式，用户在顶栏「连线」下拉里选 ──────────────
+ * ── 链接线：只有一种画法「逐条链接」 ──────────────────────────────────────
  *
- * ▸ edgeMode = 'agg' —— 层级预聚合（generalization）。地图软件处理「北京到上海的
- *   高铁」那套：省级图上是两个省会之间一条线，市区图上是两个车站之间一条线。
- *   构建期已算好 aggregates[L]：任意两个元素之间的关系在第 L 层表现为「各自在第
- *   L 层的祖先」之间的一条聚合边，粗细随被合并的原始边数 count 变化；再叠上
- *   per-node minzoom（Mapbox vector tile 里那个字段）—— 端点自己决定它什么时候
- *   浮现，边的 alpha 直接取两端点 alpha 的最小值。于是「这条边现在画在哪两个点
- *   之间」由聚合决定，「它现在该不该出现、多透明」由 minzoom 决定，边本身不做
- *   独立的淡入淡出。
+ * 每条语义链接各画一条细线，**端点恒为真实节点自己的位置，绝不沿 parent 链上移**；
+ * 颜色与不透明度恒定，缩放/平移只改线的长度和形状，不减少条数。唯一的门是几何的：
+ * 整条线段的屏幕 bbox 与视口不相交才不画。于是圆在当前尺度上没浮现、或整体平移出屏
+ * 时，线照样从它的世界坐标出发，粗尺度下会看到一条线**穿进**父级圆的内部 —— 这正是
+ * 想要的暗示：「这里面还有更深的知识点」。同一对父圆之间线的**条数**就是关联强度：
+ * 真实端点本来就散在父圆内部的不同位置，一束线天然散开。放大时看得清单条链接的箭头，
+ * 缩小时「LTI analysis → Calculus」之间那一束细线比任何一根粗线都更能说明这两篇笔记
+ * 有多纠缠。所有链接统一用 theme.raw_edge 的近白色；关系类型由线型（contrast = 虚线）
+ * 与端点标记（只有 derives / prerequisite 画箭头）表达。
  *
- * ▸ edgeMode = 'raw'（默认）—— 逐条链接，不聚合。链接本来就是从一个标题指向一个
- *   标题的，那条线在任何尺度上都该在。所以这里每条原始边各画一条细线，**端点恒为
- *   真实节点自己的位置，绝不沿 parent 链上移**；颜色与不透明度恒定，缩放/平移只改
- *   线的长度和形状，不减少条数。唯一的门是几何的：整条线段的屏幕 bbox 与视口不相交
- *   才不画。于是圆在当前尺度上没浮现、或整体平移出屏时，线照样从它的世界坐标出发，
- *   粗尺度下会看到一条线**穿进**父级圆的内部 —— 这正是想要的暗示：「这里面还有更深
- *   的知识点」。同一对父圆之间线的**条数**就是关联强度：真实端点本来就散在父圆内部
- *   的不同位置，一束线天然散开，不需要扇形展开。放大时看得清单条链接的箭头，缩小时
- *   「LTI analysis → Calculus」之间那一束细线比任何一根粗线都更能说明这两篇笔记有
- *   多纠缠。近白色的线是整篇级的 [[笔记]] 链接，彩色的线是 [[笔记#标题]] 链接。
- *
- * 两种模式共用同一套端点标记与焦点补画（drawFocusEdges）代码。**屏外 chip 两种模式都有，
- * 但挂 chip 的地方不同**：agg 的焦点边是被门挡掉后由 drawFocusEdges 补画的，chip 挂在那
- * 条补画线停住的视口边缘；raw 的焦点边本来就由 drawRawEdges 主循环画掉了（端点不上移，
- * 线一路画到屏外），缺的只是名字，所以 chip 由主循环自己挂。raw 下 drawFocusEdges 只剩
- * 真自链接与整条线段出屏两种输入，都会撞它的双端屏外早退 —— 只计数、不落笔。
- * 分流点见 drawEdges 的第一行。
- * 焦点/悬停对无关连线的压暗两种模式都保留：那是「我选中的是什么」的语义，与缩放
- * 无关。
+ * 2026-10-24 删掉了原来的「按尺度聚合（agg）」画法：它把多条链接合并成一条粗线、按
+ * 关系类型分色，但既增加理解成本，又让 payload 多背 49% 的 aggregates 体积。现在只有
+ * 这一种画法。焦点/悬停对无关连线的压暗保留 —— 那是「我选中的是什么」的语义，与缩放
+ * 无关。屏外 chip：焦点链接一端在屏外时挂一枚名字（两端都出屏、且这一帧真落了笔时也挂
+ * 一枚，命名非焦点端）。
  */
 
 (function () {
@@ -107,7 +94,6 @@
     var THEME = META.theme || {};
     var NODES = DATA.nodes;
     var EDGES = DATA.edges;
-    var AGG = DATA.aggregates;
 
     var MIN_PX = LOD.min_px || 18;
     // 标签门槛是「淡入进度」。2026-10-21 起标签与圆**同进同出**（用户要求）：门槛降到
@@ -127,7 +113,6 @@
     var LABEL_AVAIL = 0.8;
     var LABEL_BOLD_DEPTH = LOD.label_bold_depth == null ? 2 : LOD.label_bold_depth;
     var FADE = LOD.fade_span || 1.35;
-    var WEAK = LOD.weak_edge_min_count || 2;
     // 焦点模式的压暗系数。必须用 == null 而不是 ||：0（彻底不画无关连线）是合法值，
     // 会被 || 当成假值吃掉。
     var FOCUS_DIM = LOD.focus_edge_dim == null ? 0.07 : LOD.focus_edge_dim;
@@ -136,16 +121,14 @@
     // HOVER_DIM(0.75)，于是「刚打开界面」也是满屏 0.75 的白线，首屏显得很吵。
     // 用户要的是：首屏安静，**只有选中浅层大元素时**才靠 1.0 vs FOCUS_DIM 的对比出网线感。
     var IDLE_DIM = LOD.idle_edge_dim == null ? 0.45 : LOD.idle_edge_dim;
-    // 端点标记。TRIM 是连线在两端圆边界处截断后留的间隙；MARK_MIN 是「短到不画标记」
-    // 的屏幕长度门槛；TINT 是标记向浅色提亮的比例 —— 必须提亮，因为 derives 的边色
-    // 和 Science and Tech 的节点色是同一个 hex，同色标记落在同色圆边上等于隐形。
+    // 端点标记。TRIM 是连线在两端圆边界处截断后留的间隙；TINT 是标记向浅色提亮的比例，
+    // 必须提亮：derives 的边色 #4C8DFF 和 Science and Tech 的节点色是同一个 hex，
+    // 同色标记落在同色圆边上等于隐形。
     var TRIM = LOD.edge_trim_clearance == null ? 2 : LOD.edge_trim_clearance;
-    var MARK_MIN = LOD.edge_marker_min_len == null ? 20 : LOD.edge_marker_min_len;
     var MARK_TINT = LOD.edge_marker_tint == null ? 0.55 : LOD.edge_marker_tint;
     var MARK_LIGHT = hexToRgb('#d6dbe4');
     // 焦点链接的「屏外目标」chip 上限。选中元素的链接有一端在当前尺度屏外时，视口边缘
-    // 挂一枚写着目标名的 chip（agg 那条线止于边缘、raw 那条线一路画到屏外，chip 位置
-    // 一样）；超出上限的折叠成右下角一枚「+k」
+    // 挂一枚写着目标名的 chip；超出上限的折叠成右下角一枚「+k」
     var CHIP_MAX = LOD.focus_offscreen_chips == null ? 8 : LOD.focus_offscreen_chips;
     var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
@@ -166,9 +149,7 @@
     // 虚拟根的世界半径（构建期落盘）。home 视角 = 让整个根正好铺满可视半径。
     var ROOT_R = META.layout_root_radius || 1000;
 
-    var EDGE_RGB = {};
-    Object.keys(THEME.edges || {}).forEach(function (k) { EDGE_RGB[k] = hexToRgb(THEME.edges[k]); });
-    // 端点标记的颜色表：边色向浅色混合 MARK_TINT。构建期算一次，绘制循环里只查表。
+    // 端点标记的颜色表：链接线色向浅色混合 MARK_TINT。构建期算一次，绘制循环里只查表。
     // 必须提亮 —— derives 的边色和 Science and Tech 的节点色同源，同色标记落在同色
     // 圆边上等于隐形。
     function tintLight(c) {
@@ -178,28 +159,24 @@
         Math.round(c[2] + (MARK_LIGHT[2] - c[2]) * MARK_TINT)
       ];
     }
-    var MARK_RGB = {};
-    Object.keys(EDGE_RGB).forEach(function (k) { MARK_RGB[k] = tintLight(EDGE_RGB[k]); });
-    // raw 模式**统一配色**（2026-10-20 起）：所有语义链接线用同一个颜色，端点标记由它
-    // tintLight 派生。整篇级 [[笔记]] 与标题级 [[笔记#标题]] 不再靠颜色区分 —— 文件夹/
-    // 笔记/标题只是人为的**存储结构**，这张图表达的是知识内在的包含关系与连接关系，
-    // 存储粒度不该参与视觉编码（决定与来龙去脉见 HANDOFF §4 坑 34）。
+    // **统一配色**（2026-10-20 起）：所有语义链接线用同一个颜色，端点标记由它 tintLight
+    // 派生。整篇级 [[笔记]] 与标题级 [[笔记#标题]] 不再靠颜色区分 —— 文件夹/笔记/标题
+    // 只是人为的**存储结构**，这张图表达的是知识内在的包含关系与连接关系，存储粒度不该
+    // 参与视觉编码（决定与来龙去脉见 HANDOFF §4 坑 34）。
     // 信息没有丢：关系类型仍由**线型**（contrast = 虚线）与**端点标记**（只有 derives /
     // prerequisite 画箭头，contrast 两端都只画点）表达，侧栏 `.tag` 与 hover 气泡也
-    // 照旧标出每条边的类型与来源。
-    // 改色请改 config.yaml 的 theme.raw_edge，别在这里写死。
+    // 照旧标出每条边的类型与来源。改色请改 config.yaml 的 theme.raw_edge，别在这里写死。
     var RAW_EDGE_RGB = hexToRgb(THEME.raw_edge || '#E6EDF3');
     var RAW_MARK_RGB = tintLight(RAW_EDGE_RGB);
-    // raw 模式的线宽与端点标记门槛。线宽**刻意不含 zoom 因子**：raw 的契约就是
-    // 「缩放只改长度，不改粗细浓淡」。标记门槛独立于 agg 的 MARK_MIN（20px）：raw 的
-    // 端点是真实节点自己，低缩放下大量线只有几 px，沿用 20px 会让它们全都没箭头，等于
-    // 违背「细线箭头不随缩放消失」。填 0 = 恒画标记，填 20 = 与 agg 同一门槛。
+    // 线宽与端点标记门槛。线宽**刻意不含 zoom 因子**：契约就是「缩放只改长度，不改粗细
+    // 浓淡」。标记门槛也很小：端点是真实节点自己，低缩放下大量线只有几 px，门槛大了
+    // 会让它们全都没箭头，等于违背「细线箭头不随缩放消失」。填 0 = 恒画标记。
     var RAW_LW = LOD.raw_edge_width == null ? 1 : LOD.raw_edge_width;
     var RAW_MARK_MIN = LOD.raw_marker_min_len == null ? 6 : LOD.raw_marker_min_len;
-    // 邻居环的颜色。跟着 derives 的边色走（= CSS --accent），和白色的选中环同轨但
-    // 更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
+    // 邻居环的颜色。用主题强调色（= derives 边的旧色 / CSS --accent），和白色的选中环
+    // 同轨但更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
     // 命中环撞色。
-    var NB_RGB = EDGE_RGB.derives || hexToRgb('#4C8DFF');
+    var NB_RGB = hexToRgb('#4C8DFF');
     var FALLBACK_RGB = hexToRgb(THEME.fallback);
     var DOMAIN_RGB = {};
     Object.keys(THEME.domains || {}).forEach(function (k) { DOMAIN_RGB[k] = hexToRgb(THEME.domains[k]); });
@@ -248,29 +225,12 @@
 
     // 语义边（contains 不画：包含关系已经由半径几何表达，画出来只会糊成一团）
     var SEM = EDGES.filter(function (e) { return e.type !== 'contains'; });
-    // _nl = note-level，两端都是整篇笔记的链接。raw 模式据此上色；drawFocusEdges
-    // 据此分组，否则「LTI→Calculus」和「LTI#CTFT→Calculus#定积分」在文件级会解析到
-    // 同一对锚点、同一种关系类型，被并成一条线，颜色也说不清是哪一级的。
+    // _nl = note-level，两端都是整篇笔记的链接。只在焦点补画的分组键里用：否则
+    // 「LTI→Calculus」和「LTI#CTFT→Calculus#定积分」在文件级会解析到同一对锚点、
+    // 同一种关系类型，被并成一条线，focusEdges 会少算一条。
     SEM.forEach(function (e) {
       var A = byId.get(e.s), B = byId.get(e.t);
       e._nl = !!(A && B && A.kind === 'note' && B.kind === 'note');
-    });
-    // aggregates[L] 里也混着 contains，同样只留语义边；按 "s\0t\0type" 建索引
-    var aggIndex = {};
-    Object.keys(AGG).forEach(function (L) {
-      var m = new Map();
-      AGG[L].forEach(function (e) {
-        if (e.type === 'contains') return;
-        m.set(e.s + '\u0000' + e.t + '\u0000' + e.type, e);
-      });
-      aggIndex[L] = m;
-    });
-    // 双向边要弯开，否则来回两条完全重叠、看起来只有一条。符号按字典序定，
-    // 保证 A→B 与 B→A 弯向相反两侧。
-    var pairSeen = new Map();
-    SEM.forEach(function (e) {
-      var k = e.s < e.t ? e.s + '\u0000' + e.t : e.t + '\u0000' + e.s;
-      pairSeen.set(k, (pairSeen.get(k) || 0) + 1);
     });
 
     // ── 缩放边界：全部从 r / enter 现算，不写死任何绝对值 ─────────────────
@@ -290,18 +250,14 @@
 var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提示）
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
-    // 链接线的画法：'raw' = 逐条链接（默认，不聚合、颜色与透明度不随缩放变），
-    // 'agg' = 层级预聚合。由 app.js 从 localStorage 灌进来，setter 负责 invalidate。
-    var edgeMode = 'raw';
     var stats = { nodes: 0, edges: 0, labels: 0, focusEdges: 0, focusNeighbors: 0, marks: 0, chips: 0,
                   // painted = 真正按 PAINT_MIN 以上不透明度落了笔的节点数。nodes 是「候选
                   // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
                   painted: 0,
                   // Ctrl 模式：这一帧给多少个标题圆画了「可预览」虚线圈
                   ctrlRings: 0 };
-    // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
-    // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
-    // 只用于绘制与计数，不落盘、不参与布局。
+    // 本帧与选中元素直接相连的**真实端点** id。drawEdges 主循环就地收集，
+    // drawEmphasis 读它画蓝环。只用于绘制与计数，不落盘、不参与布局。
     var hotNeighbors = new Set();
     // 本帧要画的端点标记（源端圆点 / 目标端箭头）。drawEdges 只往这里塞任务不落笔：
     // draw() 里 drawNodes(front) 排在 drawEdges 之后，就地画的话标记会被紧贴的邻圆
@@ -309,9 +265,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // k: 0 = 圆点，1 = 箭头；ux/uy = 箭头指向的单位向量；s = 尺寸；c/a = 颜色与不透明度
     var markJobs = [];
     // 屏外目标 chip：写着屏外端点名字的小标签，钉在连线穿出视口的那一点上。
-    // ▸ agg：焦点边被门挡掉后由 drawFocusEdges 补画一条止于视口边缘的线，chip 挂在那
-    //   条线的边缘端。
-    // ▸ raw：线本来就由 drawRawEdges 主循环画到屏外，chip 由主循环挂在它穿出视口处。
+    // 线由 drawEdges 主循环一路画到屏外，chip 由主循环挂在它穿出视口处。
     // 三处只塞任务，真正落笔在 drawChips —— 屏幕空间的 UI 覆盖层，排在所有世界内容之后。
     var chipJobs = [];
     var lastDrawn = [];
@@ -539,18 +493,14 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     }
 
     // ── 绘制 ────────────────────────────────────────────────────────────
-    // 趟次：① 容器底图 → ② 语义边（**位置分模式**，见下）→ ③ 前景实心圆 →
-    //       ④ 祖先点线 → ⑤ 端点标记 → ⑥ 强调环 → ⑦ 标签 → ⑧ 屏外 chip。
-    // ①②③ 的相对位置按连线模式走：
-    //   * `agg`：边夹在底图与实心圆**之间**（压在底图之上才看得见，被圆盖住形成
-    //     「线连到圆边上」的观感）—— 聚合边少、信息靠线宽，压在圆下更贴地。
-    //   * `raw`：边画在实心圆**之上**（2026-10-21，用户要求）。原先线在圆下，浅层时
-    //     68 条里有 53 条整条躺在不透明圆底下、只剩箭头孤零零浮着，违背了 raw 的
-    //     契约「每处链接各画一条细线，任何缩放尺度都在」。端点仍在各自圆的边界处
-    //     截断，所以线不会插进自己的圆。
-    // 祖先点线（悬停/选中的包含链）跟在连线同一侧，两者是一起读的。
+    // 趟次：① 容器底图 → ② 前景实心圆 → ③ 语义边 → ④ 祖先点线 → ⑤ 端点标记 →
+    //       ⑥ 强调环 → ⑦ 标签 → ⑧ 屏外 chip。
+    // 语义边画在实心圆**之上**（2026-10-21，用户要求）：原先线在圆下，浅层时 68 条里
+    // 有 53 条整条躺在不透明圆底下、只剩箭头孤零零浮着，违背了「每处链接各画一条细线，
+    // 任何缩放尺度都在」的契约。端点仍在各自圆的边界处截断，所以线不会插进自己的圆。
+    // 祖先点线（悬停/选中的包含链）跟在连线之后，两者是一起读的。
     // 标记必须排在实心圆之后（否则被相切邻圆盖掉）、强调环之前（让选中白环压过箭头）。
-    // 强调环（掌握度/命中/选中）单独一趟，永远在世界内容之上、标签之下。
+    // 强调环（命中/选中/邻居）单独一趟，永远在世界内容之上、标签之下。
     function draw() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#0f1116';
@@ -600,17 +550,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       stats.painted = 0;
 
       drawWash(wash);
-      // ── 连线的层位分模式（2026-10-21，用户「A 方案」）──────────────────
-      // agg：线仍压在**实心圆之下** —— 聚合边本来就少、刻度靠线宽表达，压在圆下
-      //     更「贴地」，也是它一直以来的样子。
-      // raw：线改到**实心圆之上**。原先线在圆下，浅层时 68 条里有 53 条整条躺在
-      //     不透明圆底下、只剩画在圆上面的箭头孤零零浮着 —— 那违背了 raw 的契约
-      //     「每处链接各画一条细线，任何缩放尺度都在」。端点仍在各自圆的边界处
-      //     截断（`rawAnchor` + TRIM），所以线不会插进自己的圆。
-      if (edgeMode !== 'raw') drawEdges(alpha);
       drawNodes(front, alpha);
       drawCtrlRings(front, alpha);
-      if (edgeMode === 'raw') drawEdges(alpha);
+      // 语义边画在实心圆之上：端点仍在各自圆的边界处截断（rawAnchor + TRIM），
+      // 所以线不会插进自己的圆。
+      drawEdges();
       // 祖先点线（悬停/选中时的包含链）同样提到圆之上：它和连线是一起读的，
       // 留在圆下会只剩连线可见、点线消失。
       drawChainHighlight();
@@ -707,173 +651,19 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       ctx.globalAlpha = 1;
     }
 
-    function drawEdges(alpha) {
-      // raw 模式走另一条完全独立的路径：不查 aggregates、不去重、不淡出。
-      if (edgeMode === 'raw') { drawRawEdges(alpha); return; }
-      // 每条原始语义边，按两端点「当前浮现的层级」取 min，再去 aggregates[L] 查代表边。
-      // 多条原始边可能塌到同一条代表边上 —— 用 Map 去重，顺便把 count 取最大。
-      hotNeighbors.clear();
-      stats.focusEdges = 0;
-      markJobs.length = 0;
-      chipJobs.length = 0;
-      stats.chips = 0;
-      var selN = byId.get(selectedId), hovN = byId.get(hoverId);
-      var picks = new Map();
-      // 被三道门挡掉的焦点边。门只丢边不记录，要救的先记在这里，循环结束后交
-      // drawFocusEdges 补画（脏帧规则同 markJobs：每帧开头清空）
-      var droppedFocus = [];
-      for (var i = 0; i < SEM.length; i++) {
-        var e = SEM[i];
-        // 注意：这里的 A/B 是**原始**端点，下面绘制循环里的 A/B 是聚合代表 —— 同名不同义
-        var A = byId.get(e.s), B = byId.get(e.t);
-        if (!A || !B) continue;
-        // 这条边与焦点相关吗：门只丢边，要救的先记下来
-        var hs0 = !!selN && (isFocusSide(A, selN) || isFocusSide(B, selN));
-        var La = visibleLayer(A), Lb = visibleLayer(B);
-        var L = Math.min(La, Lb);
-        var m = aggIndex[L];
-        if (!m) continue;
-        var sa = A._chain[L - 1], sb = B._chain[L - 1];
-        if (!sa || !sb || sa === sb) {
-          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
-          continue;
-        }
-        var agg = m.get(sa + '\u0000' + sb + '\u0000' + e.type);
-        if (!agg) {
-          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
-          continue;
-        }
-        var aa = alpha.get(sa), ab = alpha.get(sb);
-        if (!aa || !ab) {
-          if (hs0) droppedFocus.push({ e: e, A: A, B: B });
-          continue;
-        }
-        var key = sa + '\u0000' + sb + '\u0000' + e.type;
-        var a = Math.min(aa, ab) * ((agg.count || 1) >= WEAK ? 1 : 0.45);
-        // 焦点相关性只能在这一趟判：只有这里拿得到**原始**端点（代表端点已经沿祖先链
-        // 抬升过了，判不出「焦点是代表的后代」那种情况）。多条原始边会塌成同一条代表边，
-        // 所以标志要 OR 累积，不能被后来的覆盖。
-        var sF = isFocusSide(A, selN), tF = isFocusSide(B, selN);
-        var hs = !!(sF || tF);
-        var hh = !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
-        // sF === tF 说明两端都在焦点子树内 —— 这是焦点的**内部**边（比如同一篇笔记里
-        // 两个 heading 互链），对面没有「别的元素」，不该加邻居环。
-        if (hs && sF !== tF) hotNeighbors.add(sF ? sb : sa);
-        var prev = picks.get(key);
-        if (!prev) picks.set(key, { e: agg, a: a, sa: sa, sb: sb, hs: hs, hh: hh });
-        else {
-          if (a > prev.a) prev.a = a;
-          prev.hs = prev.hs || hs;
-          prev.hh = prev.hh || hh;
-        }
-      }
-      // stats.edges 的含义不变：无关边是被**压暗**而不是被删除，落笔的代表边一条不少。
-      // focusEdges 才是「与焦点相关的有几条」。两个新计数都要写在早退之前，
-      // 否则空帧会留下上一帧的脏值。
-      stats.edges = picks.size;
-      // 被门挡掉的焦点边补画：必须排在早退之前 —— 全被门挡的帧（picks 为空）
-      // 正是用户「面板说有链接、画布却一条线都没有」的帧，最需要补画。
-      // 补画会往 hotNeighbors 加邻居，所以 focusNeighbors 要在补画之后计数。
-      if (selN && droppedFocus.length) drawFocusEdges(droppedFocus, alpha);
-      stats.focusNeighbors = hotNeighbors.size;
-      if (!picks.size) return;
-
-      var zoom = cam.zoom;
-      ctx.lineCap = 'round';
-      picks.forEach(function (p) {
-        var A = byId.get(p.sa), B = byId.get(p.sb);
-        if (!A || !B) return;
-        var x1 = w2sx(A.x), y1 = w2sy(A.y), x2 = w2sx(B.x), y2 = w2sy(B.y);
-        var cnt = p.e.count || 1;
-        var lw = Math.min(4, 0.6 + 1.8 * Math.log(1 + cnt) / Math.LN2);
-        var rgb = EDGE_RGB[p.e.type] || EDGE_RGB.derives || [76, 141, 255];
-        // 焦点过滤：有选中时由选中说了算（悬停让位 —— 否则鼠标扫过别的圆会把刚建立
-        // 起来的焦点视图搅乱）；没选中时退回悬停的软强调。无关边只是**压暗**，不删：
-        // 「位置稳定 + 上下文稳定」是这个渲染器的设计契约，硬删边会丢掉「这片区域
-        // 连得多密」的环境感知。
-        var hot = selN ? p.hs : p.hh;
-        var dim = hot ? 1 : (selN ? FOCUS_DIM : (hovN ? HOVER_DIM : IDLE_DIM));
-        if (p.hs) stats.focusEdges++;
-        var ea = clamp(p.a * dim, 0, 1);
-        ctx.globalAlpha = ea;
-        ctx.strokeStyle = rgba(rgb, 1);
-        ctx.lineWidth = hot ? lw + 0.8 : lw;
-
-        // 弯开双向边：控制点沿法向偏移，符号按字典序定
-        var pk = p.sa < p.sb ? p.sa + '\u0000' + p.sb : p.sb + '\u0000' + p.sa;
-        var bidir = (pairSeen.get(pk) || 0) > 1;
-        var dx = x2 - x1, dy = y2 - y1, dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-        var sign = p.sa < p.sb ? 1 : -1;
-        var off = bidir ? 0.12 * dist * sign : 0;
-        var mx = cx - dy / dist * off, my = cy + dx / dist * off;
-
-        // ── 两端截断 ────────────────────────────────────────────────────
-        // 圆心到圆心画的话，线的两头都插进圆里、又和圆同色，看不出「从哪个圆出发、
-        // 到哪个圆结束」。改成沿切向各退让「屏幕半径 + TRIM」，让线停在圆的边缘外侧。
-        // 退让方向：弯曲边取「圆心 → 控制点」，直边取「圆心 → 圆心」，取错标记会歪。
-        var ra = A._r * zoom + TRIM, rb = B._r * zoom + TRIM;
-        var sdx = off ? mx - x1 : dx, sdy = off ? my - y1 : dy;
-        var tdx = off ? x2 - mx : dx, tdy = off ? y2 - my : dy;
-        var sl = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
-        var tl = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
-        sdx /= sl; sdy /= sl; tdx /= tl; tdy /= tl;
-        var ex1 = x1 + sdx * ra, ey1 = y1 + sdy * ra;
-        var ex2 = x2 - tdx * rb, ey2 = y2 - tdy * rb;
-        // 两圆贴死（或截断过了头）→ 屏幕上没有可见长度，整条不落笔。硬画的话
-        // moveTo/lineTo 会得到一条方向反掉的短线段，比不画更乱。
-        var gx = ex2 - ex1, gy = ey2 - ey1;
-        var glen = Math.sqrt(gx * gx + gy * gy);
-
-        if (glen >= 0.5) {
-          ctx.setLineDash(p.e.type === 'contrast' ? [5, 4] : []);
-          ctx.beginPath();
-          ctx.moveTo(ex1, ey1);
-          if (off) ctx.quadraticCurveTo(mx, my, ex2, ey2);
-          else ctx.lineTo(ex2, ey2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // ── 端点标记任务（读作「• 出 ——— ▶ 入」）─────────────────────────
-        // 短于 MARK_MIN 就不画标记：密集簇里几十个小箭头糊成噪点，比没有更难读。
-        if (glen < MARK_MIN) return;
-        // 热边设 0.75 的地板值 —— 「我选中的链接」方向必须读得清；冷边完全继承连线
-        // 自己的 alpha，于是焦点模式下被压到 7% 的无关边不会冒出标记来添乱。
-        var ma = hot ? Math.max(ea, 0.75) : ea;
-        if (ma < 0.1) return;
-        var mrgb = MARK_RGB[p.e.type] || MARK_RGB.derives || rgb;
-        var dot = clamp(1.6 + lw * 0.5, 2, 4);
-        // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml
-        // 的字段说明），两端都只画点。id 是这个标记**附着的节点**，让标记清单自描述
-        // （控制台里能直接问「这个点贴在谁身上」，自动化验证也据此量几何）。
-        if (p.e.type === 'derives' || p.e.type === 'prerequisite') {
-          markJobs.push({ k: 1, x: ex2, y: ey2, ux: tdx, uy: tdy, id: B.id,
-                          s: clamp(5 + lw * 1.6, 7, 14), c: mrgb, a: ma });
-        } else {
-          markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: B.id,
-                          s: dot, c: mrgb, a: ma });
-        }
-        markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: A.id,
-                        s: dot, c: mrgb, a: ma });
-      });
-      ctx.globalAlpha = 1;
-    }
-
-    // ── raw 模式：逐条链接，不聚合 ──────────────────────────────────────────
-    // 与 drawEdges 的三处根本区别：
-    //   1) 端点**恒为真实节点自己**（rawAnchor），既不查 aggregates[L]、也不沿 parent
-    //      链上移。圆在当前尺度上没画出来时，线照样从它的世界坐标出发 —— 于是粗尺度下
-    //      会看到一条线**穿进**父级圆的内部，这正是想要的暗示：「这里面还有更深的
-    //      知识点」。缩放/平移只改线的长度和形状，不换端点、不减少条数。
-    //   2) alpha 恒为 1。不乘端点淡入进度、不乘「count < WEAK 打 45 折」的弱边折扣
-    //      —— 那两项都随 zoom 变，正是这里要去掉的东西。
+    // ── 逐条链接：每处 [[链接]] 各画一条细线，任何尺度都在 ────────────────────
+    // 三条契约：
+    //   1) 端点**恒为真实节点自己**（rawAnchor），绝不沿 parent 链上移。圆在当前尺度
+    //      上没画出来时，线照样从它的世界坐标出发 —— 于是粗尺度下会看到一条线**穿进**
+    //      父级圆的内部，这正是想要的暗示：「这里面还有更深的知识点」。缩放/平移只改
+    //      线的长度和形状，不换端点、不减少条数。
+    //   2) alpha 恒为 1，不乘端点淡入进度、不按条数打折 —— 缩放只改长度，不改浓淡。
     //   3) 线宽恒为 RAW_LW、恒为直线。关联强度由「同一对父圆之间有几条线」表达：真实
     //      端点本来就散在父圆内部的不同位置，一束线天然散开，不需要扇形展开。
     // 唯一的门是几何的：整条线段的屏幕 bbox 与内容视口不相交才不画。两端都在屏外但
     // 横跨视口的长边照样画 —— 线穿过屏幕就该看得见。
     // 焦点/悬停的压暗（FOCUS_DIM / HOVER_DIM）保留，理由见文件头注释。
-    function drawRawEdges(alpha) {
+    function drawEdges() {
       hotNeighbors.clear();
       stats.focusEdges = 0;
       markJobs.length = 0;
@@ -909,16 +699,15 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         var hot = selN ? hs : !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
         var dim = hot ? 1 : (selN ? FOCUS_DIM : (hovN ? HOVER_DIM : IDLE_DIM));
         if (hs) stats.focusEdges++;
-        // raw 统一配色：不再按 _nl（整篇级 / 标题级）或关系类型分色（见 RAW_EDGE_RGB 处注释）
+        // 统一配色：不按 _nl（整篇级 / 标题级）或关系类型分色（见 RAW_EDGE_RGB 处注释）
         var rgb = RAW_EDGE_RGB;
         var mrgb = RAW_MARK_RGB;
-        var laid = drawRawSegment(aA, aB, dim, hot ? RAW_LW + 0.8 : RAW_LW,
-                                  rgb, mrgb, e.type);
+        var laid = drawSegment(aA, aB, dim, hot ? RAW_LW + 0.8 : RAW_LW,
+                               rgb, mrgb, e.type);
         if (laid) drawn++;
-        // 屏外焦点端挂名字 chip。raw 下这条线本来就已经画出来了（端点恒为真实节点，
-        // 一端在屏外时线一路画到屏外），所以 agg 那套「补画一条止于视口边缘的线 + 边缘
-        // 箭头」在这里是多余的 —— 缺的只是「这条线指向谁」这个名字。chip 钉在线穿出
-        // 视口的那一点上、沿线方向朝外，读作「顺着这条线出去就是它」。
+        // 屏外焦点端挂名字 chip。线本来就已经画到屏外了，缺的只是「这条线指向谁」
+        // 这个名字。chip 钉在线穿出视口的那一点上、沿线方向朝外，读作「顺着这条线出去
+        // 就是它」。
         // 只给焦点边挂：96 条冷边全挂会把屏幕边缘糊满，而折叠取的是前 CHIP_MAX 枚，
         // 冷边的 chip 会把真正想看的焦点 chip 挤掉。
         if (hs && (aA.on !== aB.on)) {
@@ -944,7 +733,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         // 目标端 B，与单端分支「命名屏外那一端」的习惯一致。
         // 挂一枚不挂两枚：两枚只会加剧上一条注释里的挤占。
         // 额外要求这一帧真落了笔（laid）：两端都出屏时线段 bbox 与视口相交 ≠ 真穿过视口
-        // （斜角擦过的会被 drawRawSegment 自己判掉），没画出来的线不该有一枚指向虚空的
+        // （斜角擦过的会被 drawSegment 自己判掉），没画出来的线不该有一枚指向虚空的
         // 名字牌。单端分支不加这道门 —— 那时必有一端在屏内，线一定落笔。
         if (hs && laid && !aA.on && !aB.on) {
           var N = sF !== tF ? (sF ? aB : aA) : aB, O = N === aA ? aB : aA;
@@ -956,12 +745,12 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         }
       }
       ctx.globalAlpha = 1;
-      // 与 agg 模式同语义：edges 是主循环落笔的线数（焦点补画的线只进 focusEdges），
-      // focusNeighbors 要等补画往 hotNeighbors 里加完再计。
+      // edges 是主循环落笔的线数（焦点补画只进 focusEdges），focusNeighbors 要等
+      // 补画往 hotNeighbors 里加完再计。
       stats.edges = drawn;
-      if (selN && droppedFocus.length) drawFocusEdges(droppedFocus, alpha);
+      if (selN && droppedFocus.length) drawFocusEdges(droppedFocus);
       foldChips();
-      // raw 的 hotNeighbors 可能含当前尺度上没画出来的真实端点，页脚的「相邻 N」只数
+      // hotNeighbors 可能含当前尺度上没画出来的真实端点，页脚的「相邻 N」只数
       // 屏幕上真有环的那些，免得数字与观感对不上。
       var vis = 0;
       for (var q = 0; q < lastDrawn.length; q++) {
@@ -970,12 +759,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       stats.focusNeighbors = vis;
     }
 
-    // raw 模式的一条线段。截断/标记规则照抄 drawEdges，区别有三：alpha 与线宽都由调用方
-    // 给死（不随缩放变）；**恒为直线**（端点是真实节点自己，同一父圆内部的多条线天然散在
-    // 不同位置，不需要 agg 那套扇形展开的控制点偏移）；标记门槛用 RAW_MARK_MIN。
+    // 一条链接线段。alpha 与线宽都由调用方给死（不随缩放变）；**恒为直线**（端点是
+    // 真实节点自己，同一父圆内部的多条线天然散在不同位置，不需要控制点偏移）。
     // 返回是否真的落了笔 —— 两圆贴死时屏幕上没有可见长度，硬画会得到一条方向反掉的
     // 短线段，比不画更乱。
-    function drawRawSegment(aA, aB, dim, lw, rgb, mrgb, type) {
+    function drawSegment(aA, aB, dim, lw, rgb, mrgb, type) {
       var x1 = aA.sx, y1 = aA.sy, x2 = aB.sx, y2 = aB.sy;
       var dx = x2 - x1, dy = y2 - y1;
       var dl = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -999,11 +787,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
 
-      // raw 的标记门槛独立于 agg 的 MARK_MIN：raw 端点是真实节点，粗尺度下大量线只有
-      // 几 px，沿用 20px 会让它们全都没箭头，违背「细线箭头不随缩放消失」。
+      // 标记门槛很小：端点是真实节点，粗尺度下大量线只有几 px，门槛大了会让它们全都
+      // 没箭头，违背「细线箭头不随缩放消失」。
       if (glen < RAW_MARK_MIN) return true;
       // 冷边的 alpha 就是 dim（焦点模式 0.07 / 悬停模式 0.75），过不了 0.1 的门槛，
-      // 于是被压暗的无关边不会冒出标记来添乱 —— 与 agg 模式同一套取舍。
+      // 于是被压暗的无关边不会冒出标记来添乱。
       if (a < 0.1) return true;
       // ⚠️ 标记**不**要求端点圆这一帧被画出来。曾经试过「端点没落笔就不挂标记」
       // （2026-10-21，层级带第一版），结果是浅缩放下所有语义边的端点都还没浮现，
@@ -1013,7 +801,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       var dot = clamp(1.6 + lw * 0.5, 2, 4);
       var s = clamp(5 + lw * 1.6, 7, 14);
       // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml 的
-      // 字段说明），两端都只画点。id 是标记**附着的节点**：raw 下就是真实端点自己
+      // 字段说明），两端都只画点。id 是标记**附着的节点**：就是真实端点自己
       // （锚点不上移），自动化验证量的是屏幕上那个圆的几何。
       if (type === 'derives' || type === 'prerequisite') {
         markJobs.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id,
@@ -1052,29 +840,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       ctx.globalAlpha = 1;
     }
 
-    // **agg 模式专用**（raw 用 rawAnchor，端点不上移）。
-    // 沿 parent 链向上找第一个「在屏且没铺满视口」的祖先：alpha.has 说明它过了本帧
-    // 视口裁剪与淡入门；sr < farCornerDist 说明它的边界还在屏内。铺满视口的 wash 不能
-    // 当锚点 —— 它的边界全在屏外，trim 到边界等于把端点放到屏外，等于没画（用户 z=28
-    // 的场景里 Science and Tech 根就是这种铺满屏的罩子）。整链都没有合格者时返回
-    // on:false，调用方按「这一端在屏外」处理。
-    function resolveAnchor(n, alpha) {
-      var cur = n;
-      while (cur) {
-        var sx = w2sx(cur.x), sy = w2sy(cur.y), sr = cur._r * cam.zoom;
-        if (alpha.has(cur.id) && sr < farCornerDist(sx, sy)) {
-          return { on: true, node: cur, sx: sx, sy: sy, sr: sr };
-        }
-        cur = cur.parent ? byId.get(cur.parent) : null;
-      }
-      return { on: false, node: n };
-    }
-
-    // raw 专用锚点：端点永远是节点自己，不沿 parent 链上移。on 只表示「这个点还在内容
-    // 视口内（外扩 CULL_MARGIN）」，供 drawRawEdges 主循环决定「屏外的那一端」挂不挂 chip
-    // 用（一端屏外命名那一端，两端都屏外命名非焦点端）；它**不**决定线画不画（那由线段
-    // bbox 判定）。sr 用节点自己的世界半径 × zoom，
-    // 粗尺度下可能亚像素，于是线端落在父圆内部 —— 正是「这里面还有更深知识点」的暗示。
+    // 端点锚点：永远是节点自己，不沿 parent 链上移。on 只表示「这个点还在内容视口内
+    // （外扩 CULL_MARGIN）」，供 drawEdges 主循环决定「屏外的那一端」挂不挂 chip 用
+    // （一端屏外命名那一端，两端都屏外命名非焦点端）；它**不**决定线画不画（那由线段
+    // bbox 判定）。sr 用节点自己的世界半径 × zoom，粗尺度下可能亚像素，于是线端落在
+    // 父圆内部 —— 正是「这里面还有更深知识点」的暗示。
     function rawAnchor(n) {
       var sx = w2sx(n.x), sy = w2sy(n.y);
       var Hc = H - FOOTER_H;
@@ -1111,85 +881,29 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       return { px: N.sx + ux * t, py: N.sy + uy * t, ux: -ux, uy: -uy };
     }
 
-    // 补画线段：两个在屏锚点之间的 trim 直线 + 两端标记。形状照抄 drawEdges 的截断与
-    // 标记几何（源端圆点 / 目标端箭头），区别只有两处：恒为直线（补画线是「方向线索」，
-    // 直比弯好读），标记走 markJobs 排队到 drawNodes 之后落笔 —— 就地画会被相切邻圆盖掉。
-    function drawFocusSegment(aA, aB, ea, lw, rgb, mrgb, type, dot) {
-      var dx = aB.sx - aA.sx, dy = aB.sy - aA.sy;
-      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      var ux = dx / dist, uy = dy / dist;
-      var r1 = aA.sr + TRIM, r2 = aB.sr + TRIM;
-      var ex1 = aA.sx + ux * r1, ey1 = aA.sy + uy * r1;
-      var ex2 = aB.sx - ux * r2, ey2 = aB.sy - uy * r2;
-      var glen = Math.sqrt((ex2 - ex1) * (ex2 - ex1) + (ey2 - ey1) * (ey2 - ey1));
-      if (glen >= 0.5) {
-        ctx.lineCap = 'round';
-        ctx.globalAlpha = ea;
-        ctx.strokeStyle = rgba(rgb, 1);
-        ctx.lineWidth = lw;
-        ctx.setLineDash(type === 'contrast' ? [5, 4] : []);
-        ctx.beginPath();
-        ctx.moveTo(ex1, ey1);
-        ctx.lineTo(ex2, ey2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      }
-      // 门槛按模式取值：raw 的端点是真实节点，粗尺度下大量线只有几 px，用 agg 的
-      // MARK_MIN（20px）会让它们全都没箭头。
-      if (glen < (edgeMode === 'raw' ? RAW_MARK_MIN : MARK_MIN)) return;
-      var ma = Math.max(ea, 0.75);
-      var s = clamp(5 + lw * 1.6, 7, 14);
-      if (type === 'derives' || type === 'prerequisite') {
-        markJobs.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id, s: s, c: mrgb, a: ma });
-      } else {
-        markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id, s: dot, c: mrgb, a: ma });
-      }
-      markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id, s: dot, c: mrgb, a: ma });
-    }
-
-    // 被门挡掉的焦点边补画。**这道机制按模式分工**：
-    // ▸ agg：三道门各有各的理由（同容器聚合、本层无聚合代表、端点不在屏），但对用户来说
-    //   都是「面板说有链接、画布没画」。于是焦点相关的边被门挡掉之后，降级成
-    //   「画在两端点的在屏代表之间」：
-    //     双端在屏   → 两个代表之间直线 + 端点标记（形状同普通边）；
-    //     一在一不在 → 线止于视口边缘、箭头落在边上指方向，边缘挂一枚写着屏外端点名的 chip；
-    //     双端屏外   → 只计数不画（两端都看不见的线是纯噪声）。
-    //   去重：同 (锚A, 锚B, type) 的多条原始边塌成一条线、count 累加；屏外端按原始 id
-    //   做键、彼此不合并（各挂各的 chip）。
-    // ▸ raw：端点不上移，所以「被门挡掉」只剩真自链接与整条线段出屏两种，两者都会撞下面
-    //   的双端屏外 / 同锚点两道早退。于是 raw 下这一趟**只计数、不落笔**。
-    //   代码仍共用（agg 需要），不要按 raw 的结论去删分支。
-    //   raw 的 chip 不在这里挂：线已经由 drawRawEdges 主循环画掉了，只差一个名字，所以
-    //   chip 由主循环自己挂 —— 一端在屏外时命名那一端；两端都在屏外时也挂一枚、命名非
-    //   焦点端（见那里的注释）。折叠也因此归主循环管，这里用 if (!raw) 让开，免得把主
-    //   循环已折出的「+k」再折成「+1」。
-    function drawFocusEdges(dropped, alpha) {
+    // 被主循环跳过的焦点边兜底计数。
+    // 主循环只为两种输入跳过绘制：真自链接（没有方向可画）、整条线段出屏（bbox 与
+    // 视口不相交）。这两种在屏幕上本来就没有线可补，但「面板说有链接」的读数不能少
+    // 算一条，所以这里只做两件事：focusEdges +1、把与焦点直接相连的另一端加进邻居环。
+    // **不补画线、不挂 chip、不产箭头** —— 屏外那一端的方向线索由主循环的 chip 负责。
+    function drawFocusEdges(dropped) {
       var selN = byId.get(selectedId);
-      // raw 模式下补画线也要遵守「透明度不随缩放变」：alpha.get() 拿到的是端点淡入
-      // 进度（zoom 的函数），所以整个 raw 分支不读它。
-      var raw = edgeMode === 'raw';
       var groups = new Map();
       for (var i = 0; i < dropped.length; i++) {
         var d = dropped[i];
-        var aA = raw ? rawAnchor(d.A) : resolveAnchor(d.A, alpha);
-        var aB = raw ? rawAnchor(d.B) : resolveAnchor(d.B, alpha);
+        var aA = rawAnchor(d.A), aB = rawAnchor(d.B);
         var kA = aA.on ? aA.node.id : ' ' + d.A.id;
         var kB = aB.on ? aB.node.id : ' ' + d.B.id;
-        // 粒度后缀只在 raw 模式下加，免得扰动 agg 模式既有的分组行为。必要性：
-        // note 级边「LTI→Calculus」和 heading 级边「LTI#CTFT→Calculus#定积分」在
-        // 文件级会解析到同一对锚点、同为 derives，不加后缀就被并成一条。
-        // ⚠️ 配色统一（2026-10-20）之后这个后缀**仍然要保留** —— 它现在不负责上色，
-        // 只负责让两种粒度各自成组（`stats.focusEdges` 数的是「屏幕上的线」，并成
-        // 一条会少算一条，7b/7d 的读数会整体漂移）。
-        var nl = !!(raw && d.e._nl);
+        // 粒度后缀：note 级边「LTI→Calculus」和 heading 级边「LTI#CTFT→Calculus#
+        // 定积分」在文件级会解析到同一对锚点、同为 derives，不加后缀就被并成一条，
+        // focusEdges 会少算一条（7b/7d 的读数会整体漂移）。
+        var nl = !!d.e._nl;
         var key = kA + '\u0000' + kB + '\u0000' + d.e.type + (nl ? '\u0000n' : '');
         var g = groups.get(key);
         if (!g) {
-          g = { aA: aA, aB: aB, type: d.e.type, count: 0, idA: d.A.id, idB: d.B.id };
+          g = { aA: aA, aB: aB, idA: d.A.id, idB: d.B.id };
           groups.set(key, g);
         }
-        g.count += 1;
       }
       groups.forEach(function (g) {
         stats.focusEdges += 1;
@@ -1197,74 +911,12 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         var sF = isFocusSide(nA, selN), tF = isFocusSide(nB, selN);
         if (sF !== tF) {
           var nb = sF ? g.aB : g.aA;
-          if (nb.on) hotNeighbors.add(nb.node.id);
+          if (nb && nb.on) hotNeighbors.add(nb.node.id);
         }
-        if (!g.aA.on && !g.aB.on) return;
-        if (g.aA.on && g.aB.on && g.aA.node.id === g.aB.node.id) return;
-        // raw 统一配色；agg 那半边仍按关系类型上色（两种画法的配色规则各管各的）
-        var rgb = raw ? RAW_EDGE_RGB
-                      : (EDGE_RGB[g.type] || EDGE_RGB.derives || [76, 141, 255]);
-        var mrgb = raw ? RAW_MARK_RGB
-                       : (MARK_RGB[g.type] || MARK_RGB.derives || rgb);
-        // raw 不按 count 加粗（强度改由「有几条线」表达），线宽恒为 RAW_LW + 0.8
-        var lw = raw ? RAW_LW + 0.8
-                     : Math.min(4, 0.6 + 1.8 * Math.log(1 + g.count) / Math.LN2) + 0.8;
-        var dot = clamp(1.6 + lw * 0.5, 2, 4);
-        if (g.aA.on && g.aB.on) {
-          var ea = raw ? 1 : clamp(Math.min(alpha.get(g.aA.node.id), alpha.get(g.aB.node.id)) *
-                                   (g.count >= WEAK ? 1 : 0.45), 0, 1);
-          drawFocusSegment(g.aA, g.aB, ea, lw, rgb, mrgb, g.type, dot);
-          return;
-        }
-        // 一在一不在：S = 在屏锚点，T = 屏外原始端点。
-        // dir 从 S 中心指向 T 的屏幕投影（可能在屏外 —— 那正是方向线索）
-        var S = g.aA.on ? g.aA : g.aB;
-        var T = g.aA.on ? g.aB : g.aA;
-        var outgoing = g.aA.on;
-        var tx = w2sx(T.node.x), ty = w2sy(T.node.y);
-        var ddx = tx - S.sx, ddy = ty - S.sy;
-        var dl = Math.sqrt(ddx * ddx + ddy * ddy);
-        var ux = dl > 1e-6 ? ddx / dl : 1, uy = dl > 1e-6 ? ddy / dl : 0;
-        var Hc = H - FOOTER_H;
-        var tBest = Infinity;
-        if (ux > 1e-9) tBest = Math.min(tBest, (W - S.sx) / ux);
-        if (ux < -1e-9) tBest = Math.min(tBest, (0 - S.sx) / ux);
-        if (uy > 1e-9) tBest = Math.min(tBest, (Hc - S.sy) / uy);
-        if (uy < -1e-9) tBest = Math.min(tBest, (0 - S.sy) / uy);
-        if (!isFinite(tBest) || tBest <= 0) return;
-        var px = S.sx + ux * tBest, py = S.sy + uy * tBest;
-        var rS = S.sr + TRIM;
-        var ea2 = raw ? 1 : clamp(alpha.get(S.node.id) * (g.count >= WEAK ? 1 : 0.45), 0, 1);
-        var ma = Math.max(ea2, 0.75);
-        var as = clamp(5 + lw * 1.6, 7, 14);
-        if (tBest - rS >= 0.5) {
-          ctx.lineCap = 'round';
-          ctx.globalAlpha = ea2;
-          ctx.strokeStyle = rgba(rgb, 1);
-          ctx.lineWidth = lw;
-          ctx.setLineDash(g.type === 'contrast' ? [5, 4] : []);
-          ctx.beginPath();
-          ctx.moveTo(S.sx + ux * rS, S.sy + uy * rS);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 1;
-        }
-        // 箭头无论如何都落：视口边箭头是本帧唯一的方向线索。
-        // 出边：箭头在视口边朝外、圆点在在屏端圆边界；入边：圆点在视口边、箭头在在屏端圆边界朝它
-        if (outgoing) {
-          markJobs.push({ k: 1, x: px, y: py, ux: ux, uy: uy, id: T.node.id, s: as, c: mrgb, a: ma });
-          markJobs.push({ k: 0, x: S.sx + ux * rS, y: S.sy + uy * rS, ux: 0, uy: 0, id: S.node.id, s: dot, c: mrgb, a: ma });
-        } else {
-          markJobs.push({ k: 1, x: S.sx + ux * rS, y: S.sy + uy * rS, ux: -ux, uy: -uy, id: S.node.id, s: as, c: mrgb, a: ma });
-          markJobs.push({ k: 0, x: px, y: py, ux: 0, uy: 0, id: T.node.id, s: dot, c: mrgb, a: ma });
-        }
-        chipJobs.push({ px: px, py: py, dx: ux, dy: uy, id: T.node.id, count: g.count, text: chipLabel(T.node) });
       });
-      if (!raw) foldChips();
     }
 
-    // chip 上限折叠。agg 由 drawFocusEdges 调、raw 由 drawRawEdges 调，各调一次。
+    // chip 上限折叠。由 drawEdges 主循环在挂完 chip 后调一次。
     function foldChips() {
       if (chipJobs.length > CHIP_MAX) {
         var over = chipJobs.length - CHIP_MAX;
@@ -1378,11 +1030,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         var n = list[i];
         var isSel = n.id === selectedId, isHov = n.id === hoverId;
         var isMatch = matchSet && matchSet.has(n.id);
-        // hotNeighbors 的内容按模式分工（都在各自的 drawEdges 分支里就地收集）：
-        // ▸ agg 装**当前层级的代表**，所以粗尺度下被链接的 heading 还没浮现时，环会
-        //   正确地画在它的祖先 note/folder 上 —— 和连线端点的层级天然一致。
-        // ▸ raw 装**真实端点自己**，于是环只在它本帧真被画出来时才出现；粗尺度下没有环，
-        //   位置信息改由「线穿进父圆内部」承担。两种模式都不会「线连到 A、环画在 B」。
+        // hotNeighbors 装的是**真实端点自己**（drawEdges 主循环就地收集），于是环只在
+        // 它本帧真被画出来时才出现；粗尺度下没有环，位置信息改由「线穿进父圆内部」
+        // 承担 —— 不会出现「线连到 A、环画在 B」的错位。
         var isNb = hotNeighbors.has(n.id) && !isSel;
         if (!(isSel || isHov || isMatch || isNb || (n.kind === 'note' && n.mastery > 0))) continue;
         var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
@@ -1784,10 +1434,6 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       set matchSet(v) { matchSet = v; invalidate(); },
       get labelMode() { return labelMode; },
       set labelMode(v) { labelMode = v; invalidate(); },
-      // 'raw'（逐条链接，默认）| 'agg'（层级预聚合），两种画法的取舍见文件头注释。
-      // 未知值一律退回 raw。
-      get edgeMode() { return edgeMode; },
-      set edgeMode(v) { edgeMode = v === 'agg' ? 'agg' : 'raw'; invalidate(); },
       centerScreen: function () { return [W / 2, (H - FOOTER_H) / 2]; },
       size: function () { return [W, H]; }
     };

@@ -63,12 +63,10 @@ DEFAULTS: dict = {
         "min_px": 18,
         "label_alpha": 0.55,
         "fade_span": 1.35,
-        "weak_edge_min_count": 2,
         "focus_edge_dim": 0.07,
         "hover_edge_dim": 0.75,
         "idle_edge_dim": 0.45,
         "edge_trim_clearance": 2,
-        "edge_marker_min_len": 20,
         "edge_marker_tint": 0.55,
         "raw_edge_width": 1.0,
         "raw_marker_min_len": 6,
@@ -79,7 +77,7 @@ DEFAULTS: dict = {
         "enabled": True,
         "max_note_chars": 0,   # 0 = 不截断（预览是整篇笔记，用户口径）
     },
-    "theme": {"domains": {}, "fallback": "#8B949E", "edges": {}, "raw_edge": "#E6EDF3"},
+    "theme": {"domains": {}, "fallback": "#8B949E", "raw_edge": "#E6EDF3"},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
     "candidates_file": "candidates.yaml",
@@ -160,8 +158,12 @@ def _validate(cfg: dict):
               "home_fit 的硬上限就是 root_radius/root_enc = padding，"
               "再大会把最大的学科根裁出屏幕")
     lod = cfg.get("lod") or {}
-    if not isinstance(lod.get("weak_edge_min_count"), int) or lod["weak_edge_min_count"] < 1:
-        _fail("lod.weak_edge_min_count 必须是 ≥1 的整数")
+    # 2026-10-24：聚合边模式已删，只保留「逐条链接」。这两个键只服务聚合边，
+    # 直接报错而不是静默忽略 —— 免得有人改了它们却以为生效了。
+    for retired in ("weak_edge_min_count", "edge_marker_min_len", "links"):
+        if retired in lod:
+            _fail(f"lod.{retired} 已退役（2026-10-24 起只有逐条链接一种画法："
+                  f"端点标记门槛用 lod.raw_marker_min_len），请删掉这个键")
     if not isinstance(lod.get("min_px"), (int, float)) or not lod["min_px"] > 0:
         _fail("lod.min_px 必须是正数（一个圆值得被画出来所需的最小屏幕半径）")
     if not isinstance(lod.get("label_alpha"), (int, float)) or not 0 < lod["label_alpha"] <= 1:
@@ -186,14 +188,14 @@ def _validate(cfg: dict):
         v = lod.get(key)
         if not isinstance(v, (int, float)) or not 0 <= v <= 1:
             _fail(f"lod.{key} 必须在 [0, 1] 之间（0 = 完全不画无关连线，1 = 不压暗）")
-    for key in ("edge_trim_clearance", "edge_marker_min_len", "raw_marker_min_len"):
+    for key in ("edge_trim_clearance", "raw_marker_min_len"):
         v = lod.get(key)
         if not isinstance(v, (int, float)) or v < 0:
-            _fail(f"lod.{key} 不能为负（它是屏幕 px；两个 *_marker_min_len 填 0 = 恒画标记）")
+            _fail(f"lod.{key} 不能为负（它是屏幕 px；raw_marker_min_len 填 0 = 恒画标记）")
     if not isinstance(lod.get("edge_marker_tint"), (int, float)) or not 0 <= lod["edge_marker_tint"] <= 1:
         _fail("lod.edge_marker_tint 必须在 [0, 1] 之间（0 = 端点标记与连线同色，1 = 纯浅灰）")
     if not isinstance(lod.get("raw_edge_width"), (int, float)) or not lod["raw_edge_width"] > 0:
-        _fail("lod.raw_edge_width 必须是正数（非聚合模式下连线的固定屏幕线宽 px）")
+        _fail("lod.raw_edge_width 必须是正数（连线线的固定屏幕线宽 px）")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")
@@ -206,9 +208,11 @@ def _validate(cfg: dict):
     raw_edge = cfg["theme"].get("raw_edge", "#E6EDF3")
     if not _HEX_RE.match(str(raw_edge)):
         _fail(f"theme.raw_edge 颜色格式应为 #RRGGBB，收到 {raw_edge!r}")
-    for name, color in cfg["theme"].get("edges", {}).items():
-        if not _HEX_RE.match(str(color)):
-            _fail(f"theme.edges.{name} 颜色格式应为 #RRGGBB，收到 {color!r}")
+    # 2026-10-24：只有逐条链接一种画法，所有链接统一用 theme.raw_edge，按关系类型
+    # 分色的 theme.edges 随之退役（关系类型仍由线型与端点标记表达）。
+    if "edges" in cfg["theme"]:
+        _fail("theme.edges 已退役（2026-10-24 起所有链接统一用 theme.raw_edge 配色，"
+              "关系类型改由线型与端点标记表达），请删掉这个键")
 
 
 SCOPE_SECTIONS = ("content", "assets")

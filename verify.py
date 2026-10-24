@@ -57,7 +57,6 @@ def run(cfg, payload_path=None):
     meta = data["meta"]
     nodes = {n["id"]: n for n in data["nodes"]}
     edges = data["edges"]
-    aggregates = data["aggregates"]
     layers = data["layers"]
     failures: list[str] = []
 
@@ -69,10 +68,6 @@ def run(cfg, payload_path=None):
     note_domains = {n["domain"] for n in data["nodes"] if n["kind"] == "note"}
     _check(set(roots) == note_domains,
            f"depth=1 的 {len(roots)} 个节点恰好是笔记所属的 {len(note_domains)} 个顶层学科", failures)
-    top = aggregates.get("1", [])
-    visible_top = {n["id"] for n in data["nodes"] if n["depth"] == 1}
-    _check(all(e["s"] in visible_top and e["t"] in visible_top for e in top),
-           f"depth≤1 的 {len(top)} 条边两端都在可见集合内（无悬空边）", failures)
     top_visible = [n["id"] for n in data["nodes"] if n["depth"] <= 1]
     _check(all(n["kind"] == "folder" for n in data["nodes"] if n["depth"] == 1),
            "depth=1 上只有文件夹节点，没有笔记直接挂在根部", failures)
@@ -108,10 +103,6 @@ def run(cfg, payload_path=None):
     _check(len(note_nodes) == meta["note_count"], f"笔记节点 {len(note_nodes)} 篇", failures)
     _check(len(note_nodes) == meta["scan"]["included"],
            f"笔记数 {len(note_nodes)} == 扫描纳入数 {meta['scan']['included']}", failures)
-    deepest = aggregates.get(str(max_depth), [])
-    visible_deep = {n["id"] for n in data["nodes"] if n["depth"] <= max_depth}
-    _check(all(e["s"] in visible_deep and e["t"] in visible_deep for e in deepest),
-           f"depth≤{max_depth} 的 {len(deepest)} 条边两端都可见", failures)
     _check(all(n["depth"] <= max_depth for n in data["nodes"]),
            "没有节点的深度超过 max_depth", failures)
 
@@ -119,13 +110,6 @@ def run(cfg, payload_path=None):
     print("\n[引用完整性] 边、链接、附件")
     dangling = [e for e in edges if e["s"] not in nodes or e["t"] not in nodes]
     _check(not dangling, f"{len(edges)} 条边两端都存在（悬空 {len(dangling)} 条）", failures)
-    per_level_dangling = [
-        (budget, e) for budget, rows in aggregates.items() for e in rows
-        if e["s"] not in nodes or e["t"] not in nodes
-        or nodes[e["s"]]["depth"] > int(budget) or nodes[e["t"]]["depth"] > int(budget)
-    ]
-    _check(not per_level_dangling,
-           f"各层聚合边都没有引用比该层更深的节点（越界 {len(per_level_dangling)} 条）", failures)
     attachment_ext = tuple("." + e for e in cfg["attachment_ext"])
     bad = [n for n in nodes.values() if n["id"].lower().endswith(attachment_ext)]
     _check(not bad, f"没有把附件当成节点（{len(bad)} 个）", failures)
@@ -567,30 +551,15 @@ def run(cfg, payload_path=None):
     print(f"         标题落在 depth {min(n['depth'] for n in heading_nodes)}"
           f"..{max(n['depth'] for n in heading_nodes)}")
 
-    # ── minlayer 单调 ───────────────────────────────────────────────────
-    print("\n[LOD] 聚合边的 minlayer")
-    seen_at: dict = {}
-    bad_layer = []
-    for budget, rows in aggregates.items():
-        for e in rows:
-            key = (e["s"], e["t"], e["type"])
-            seen_at.setdefault(key, int(budget))
-            if e["minlayer"] != seen_at[key] or e["minlayer"] > int(budget):
-                bad_layer.append((budget, key))
-    _check(not bad_layer,
-           f"{len(seen_at)} 条聚合边的 minlayer 都等于它首次出现的层级"
-           f"（不符 {len(bad_layer)} 条）", failures)
-    shallow = sum(1 for b in seen_at.values() if b == 1)
-    print(f"         其中 {shallow} 条在最浅层就已出现，"
-          f"{len(seen_at) - shallow} 条要缩放更深才浮现")
-
     # ── 各层一览 ────────────────────────────────────────────────────────
+    # 2026-10-24：聚合边模式已删，levels 表里的「边」= 两端都在该层以内的语义边条数
+    # （= 那一层上真的画得出来的链接数），不再有「聚合边 / 语义边」两列。
     print("\n[各层可见内容]")
-    print(f"         {'层级':<8}{'r中位':>9}{'文件夹':>7}{'笔记':>7}{'标题':>7}{'边':>8}{'语义边':>8}")
+    print(f"         {'层级':<8}{'r中位':>9}{'文件夹':>7}{'笔记':>7}{'标题':>7}{'语义边':>8}")
     for budget, row in sorted(payload_levels(data).items(), key=lambda kv: int(kv[0])):
         print(f"         depth≤{int(budget):<4}{r_median_of.get(int(budget), 0):>9.2f}"
               f"{row['folders']:>7}{row['notes']:>7}{row['headings']:>7}"
-              f"{row['edges']:>8}{row['semantic_edges']:>8}")
+              f"{row['edges']:>8}")
 
     print()
     if failures:

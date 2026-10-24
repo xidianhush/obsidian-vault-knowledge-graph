@@ -390,64 +390,25 @@ class GraphBuilder:
             self.add_edge(source, target, etype, weight, "candidate",
                           str(item.get("reason", "candidates.yaml")))
 
-    # ── 聚合 ────────────────────────────────────────────────────────────
-    def ancestors_at(self, node_id: str, budget: int) -> str:
-        node = self.nodes.get(node_id)
-        while node is not None and node["depth"] > budget:
-            node = self.nodes.get(node["parent"]) if node["parent"] else None
-        return node["id"] if node else node_id
+    # ── 每层读数 ────────────────────────────────────────────────────────
+    def levels_table(self, max_depth: int):
+        """每一层「累积可见了什么」的读数，供顶栏 #readout 与 verify 打印。
 
-    def build_aggregates(self, max_depth: int):
-        """为每个层级预算算一套聚合边，并记下每条边首次出现的层级 minlayer。
-
-        minlayer 是渲染侧做 LOD 裁剪的依据：一条边在浅层就已经存在（说明它连接
-        的是两个大块头），那么在深层也不必重复画那些只在最浅层才有意义的弱边。
+        2026-10-24 起不再依赖聚合边（那个画法已删）：边数 = 两端深度都 ≤ budget 的
+        语义边条数，也就是「这一层上真的画得出来的链接有几条」，与渲染侧一致。
         """
-        aggregates: dict[int, list] = {}
         semantic = [e for e in self.edges if e["type"] != TYPE_CONTAINS]
-        first_seen: dict[tuple, int] = {}
-        for budget in range(1, max_depth + 1):
-            bucket: dict[tuple, dict] = {}
-            for node_id, node in self.nodes.items():
-                if node["depth"] <= budget and node["parent"]:
-                    key = (node["parent"], node_id, TYPE_CONTAINS)
-                    slot = bucket.setdefault(key, {"s": key[0], "t": key[1], "type": TYPE_CONTAINS,
-                                                   "weight": 0.0, "count": 0, "origin": "hierarchy"})
-                    first_seen.setdefault(key, budget)
-                    slot["weight"] = round(slot["weight"] + 1.0, 3)
-                    slot["count"] += 1
-            for edge in semantic:
-                s = self.ancestors_at(edge["s"], budget)
-                t = self.ancestors_at(edge["t"], budget)
-                if s == t or s not in self.nodes or t not in self.nodes:
-                    continue
-                key = (s, t, edge["type"])
-                slot = bucket.setdefault(key, {"s": s, "t": t, "type": edge["type"],
-                                               "weight": 0.0, "count": 0, "origin": edge["origin"]})
-                first_seen.setdefault(key, budget)
-                slot["weight"] = round(slot["weight"] + edge["weight"], 3)
-                slot["count"] += 1
-                if slot["origin"] != edge["origin"]:
-                    slot["origin"] = "mixed"
-            for edge in bucket.values():
-                edge["minlayer"] = first_seen[(edge["s"], edge["t"], edge["type"])]
-            aggregates[budget] = sorted(bucket.values(), key=lambda e: (e["s"], e["t"], e["type"]))
-        return aggregates
-
-    def levels_table(self, aggregates: dict):
         table = {}
-        for budget, edges in aggregates.items():
+        for budget in range(1, max_depth + 1):
             visible = [n for n in self.nodes.values() if n["depth"] <= budget]
-            folders = sum(1 for n in visible if n["kind"] == "folder")
-            notes = sum(1 for n in visible if n["kind"] == "note")
-            headings = sum(1 for n in visible if n["kind"] == "heading")
             table[budget] = {
                 "nodes": len(visible),
-                "notes": notes,
-                "folders": folders,
-                "headings": headings,
-                "edges": len(edges),
-                "semantic_edges": sum(1 for e in edges if e["type"] != TYPE_CONTAINS),
+                "notes": sum(1 for n in visible if n["kind"] == "note"),
+                "folders": sum(1 for n in visible if n["kind"] == "folder"),
+                "headings": sum(1 for n in visible if n["kind"] == "heading"),
+                "edges": sum(1 for e in semantic
+                             if self.nodes[e["s"]]["depth"] <= budget
+                             and self.nodes[e["t"]]["depth"] <= budget),
             }
         return table
 

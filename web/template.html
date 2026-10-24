@@ -55,10 +55,11 @@
     background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 12px;
   }
   .pill.on { color: #fff; border-color: var(--accent); background: #1d2c48; }
-  /* ⚠️ 顶栏在 1440px 下是「超额」的：所有控件的 max-content 加起来约 1777px，
-     容器只有 1440px，缺口约 337px。所以两个可压缩项必须各自封顶，否则会撑出
-     46px 的顶栏被裁掉 —— 历史 bug（2026-10-20 实测）：#readout 89×96、y=-25，
-     #reset 33×95、y=-25，「重置视角」被压成竖排三行。
+  /* ⚠️ 顶栏在 1440px 下仍然是「超额」的：所有控件的 max-content 加起来超过容器宽度
+     （2026-10-24 删掉「连线模式」下拉后仍超额 —— 剩下的搜索框/两个下拉/重置视角
+     都不该再压）。所以两个可压缩项必须各自封顶，否则会撑出 46px 的顶栏被裁掉 ——
+     历史 bug（2026-10-20 实测）：#readout 89×96、y=-25，#reset 33×95、y=-25，
+     「重置视角」被压成竖排三行。
      修法：readout 折行封顶到两行，reset 禁止压缩。两者都不再依赖「空间够不够」。 */
   #readout {
     color: var(--muted); font-size: 12px; line-height: 19px;
@@ -118,10 +119,8 @@
        内容又长过 max-height 了，面板内部会出现滚动条，那时该压缩垂直留白而不是删信息。 */
     max-height: calc(100% - 58px); overflow-y: auto;
   }
-  /* 图例可收起：说明文字很长（可见约 24 行），挡住画布左下角时能折成一条。
-     ⚠️ 收起只藏 #legend-body，**绝不动** #legend-rel-agg / #legend-rel-raw 的
-     hidden 属性 —— 那两个是「当前连线模式对应哪套图例」的状态，
-     browser_check.py 的 1c 段直接读 element.hidden 做断言。 */
+  /* 图例可收起：说明文字很长（可见约 20 行），挡住画布左下角时能折成一条。
+     ⚠️ 收起只藏 #legend-body。 */
   #legend-head { display: flex; align-items: center; gap: 8px; }
   #legend-head .t { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .3px; }
   #legend-head button { margin-left: auto; flex: none; padding: 1px 8px; font-size: 11px; line-height: 16px; }
@@ -249,10 +248,6 @@
     <option value="all">全部显示</option>
     <option value="none">只显示选中</option>
   </select>
-  <select id="edgemode" title="链接线的画法：逐条链接 = 每处 [[链接]] 各画一条细线；按尺度聚合 = 合并成粗线，线宽代表条数">
-    <option value="raw">逐条链接</option>
-    <option value="agg">按尺度聚合</option>
-  </select>
   <button id="reset" title="回到该层默认视角">重置视角</button>
 </header>
 
@@ -270,16 +265,7 @@
     <h4>学科（顶层目录）</h4>
     <div id="legend-domains"></div>
   </section>
-  <section id="legend-rel-agg" hidden>
-    <h4>关系（线宽 = 当前尺度上聚合了多少条原始链接）</h4>
-    <div class="row"><span class="sw" style="background:#8B949E"></span><span class="tx">前置：source 是 target 的前置</span></div>
-    <div class="row"><span class="sw" style="background:#4C8DFF"></span><span class="tx">引用：source 引用了 target</span></div>
-    <div class="row"><span class="sw" style="background:#E3B341;height:0;border-top:2px dashed #E3B341"></span><span class="tx">并列/对比（方向未知）</span></div>
-    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#98b8f0"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#4C8DFF" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#98b8f0"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
-    <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span><span class="tx">包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</span></div>
-    <div class="row"><span class="tx">缩小到看不清单条链接时，多条链接会<b>合并成一条更粗的线</b>；粗细就是「这一对之间原本有多少条链接」</span></div>
-  </section>
-  <section id="legend-rel-raw">
+  <section id="legend-rel">
     <h4>关系（每处 [[链接]] 各画一条细线，任何尺度都在）</h4>
     <div class="row"><span class="sw" style="background:#E6EDF3"></span><span class="tx">所有链接<strong>统一近白细线</strong>：整篇级 [[笔记]] 与标题级 [[笔记#标题]] 同色 —— 文件夹/笔记/标题只是存储结构，不参与配色；类型看线型与端点标记</span></div>
     <div class="row"><span class="sw" style="background:#E6EDF3;height:0;border-top:2px dashed #E6EDF3"></span><span class="tx">并列/对比（方向未知）—— 虚线段，两端都只标圆点</span></div>

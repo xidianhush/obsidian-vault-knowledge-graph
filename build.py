@@ -78,8 +78,7 @@ def build_payload(cfg, quiet=False):
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
     layers, enter, home_layer, root_radius = layout.compute(builder.nodes, cfg, max_depth)
-    aggregates = builder.build_aggregates(max_depth)
-    levels = builder.levels_table(aggregates)
+    levels = builder.levels_table(max_depth)
 
     nodes = []
     by_kind = {"folder": 0, "note": 0, "heading": 0}
@@ -126,7 +125,6 @@ def build_payload(cfg, quiet=False):
         "meta": meta,
         "nodes": nodes,
         "edges": builder.edges,
-        "aggregates": aggregates,
         "layers": layers,
         "heading_links": builder.heading_links,
         "levels": levels,
@@ -230,7 +228,7 @@ def cmd_build(cfg, args):
     for budget, row in sorted(payload["levels"].items(), key=lambda kv: int(kv[0])):
         print(f"  depth≤{int(budget):<3} r={r_median_of.get(int(budget), 0):>8.2f}"
               f"   {row['folders']:>3} 夹 + {row['notes']:>3} 笔记 + {row['headings']:>4} 标题"
-              f"  →  {row['edges']:>5} 条边（语义 {row['semantic_edges']}）")
+              f"  →  语义边 {row['edges']:>5} 条")
     print(f"\n布局根半径 {meta['layout_root_radius']:.1f}"
           f"（标称视口半径 {meta['nominal_fit_radius']:.0f}px，"
           f"home 停在第 {meta['lod']['home_layer']} 层）")
