@@ -67,7 +67,6 @@
 
   // ── 状态 ──────────────────────────────────────────────────────────────
   let filterDomain = 'all';
-  let filterMastery = 'all';
   let searchQ = '';
   let labelMode = 'auto';      // 'auto' | 'on' | 'off'，与渲染器同词汇
 
@@ -234,7 +233,6 @@
     const bits = [];
     if (node.kind === 'note') {
       bits.push('笔记 · ' + (node.heading_count || 0) + ' 个标题');
-      bits.push('掌握度：' + (node.mastery ? node.mastery + '/5' : '未标注'));
     } else if (node.kind === 'folder') {
       bits.push('文件夹 · ' + (node.note_count || 0) + ' 篇笔记');
     } else {
@@ -326,11 +324,8 @@
       html += '<span class="chip">L' + d.line + '</span>';
     } else if (isNote) {
       html += '<span class="chip">' + heads.length + ' 个标题</span>';
-      html += '<span class="chip">重要度 ' + (d.weight || 1) + '</span>';
-      html += '<span class="chip">掌握度 ' + (d.mastery ? d.mastery + '/5' : '未标注') + '</span>';
     } else {
       html += '<span class="chip">' + (d.note_count || 0) + ' 篇笔记</span>';
-      html += '<span class="chip">合计权重 ' + Math.round(d.weight || 0) + '</span>';
     }
     if (desc) html += '<span class="chip">下辖 ' + desc + ' 个元素</span>';
     html += '</div>';
@@ -433,11 +428,11 @@
   }
 
   // ── 过滤 ──────────────────────────────────────────────────────────────
-  // 判据只落在笔记上（学科、掌握度都是笔记的属性），命中的笔记要把它的全部
-  // 标题一起留下，再沿 parent 链一路补到根 —— 否则淡入淡出会因为祖先不可见
-  // 而把整条链掐断（渲染器里「可见层级」是沿包含链取前缀的）。
+  // 判据只落在笔记上（学科是笔记的属性），命中的笔记要把它的全部标题一起留下，
+  // 再沿 parent 链一路补到根 —— 否则淡入淡出会因为祖先不可见而把整条链掐断
+  // （渲染器里「可见层级」是沿包含链取前缀的）。
   function computeFilterSet() {
-    if (filterDomain === 'all' && filterMastery === 'all') return null;
+    if (filterDomain === 'all') return null;
     const keep = new Set();
     const addSubtree = (id) => {
       keep.add(id);
@@ -446,9 +441,6 @@
     NODES.forEach((n) => {
       if (n.kind !== 'note') return;
       if (filterDomain !== 'all' && n.domain !== filterDomain) return;
-      if (filterMastery === 'known' && !(n.mastery >= 3)) return;
-      if (filterMastery === 'weak' && !(n.mastery >= 1 && n.mastery <= 2)) return;
-      if (filterMastery === 'none' && n.mastery !== 0) return;
       addSubtree(n.id);
       let p = n.parent;
       while (p) {
@@ -750,7 +742,6 @@
   $('search').addEventListener('blur', () => setTimeout(() => { $('hits').style.display = 'none'; }, 180));
   $('search').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(e.target.value.trim()); });
   $('domain').addEventListener('change', (e) => { filterDomain = e.target.value; applyFilters(); });
-  $('mastery').addEventListener('change', (e) => { filterMastery = e.target.value; applyFilters(); });
   $('labels').addEventListener('change', (e) => {
     const v = e.target.value;
     labelMode = v === 'all' ? 'on' : v === 'none' ? 'off' : 'auto';

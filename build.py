@@ -119,7 +119,6 @@ def build_payload(cfg, quiet=False):
         "unresolved": sorted(builder.unresolved.items(), key=lambda kv: -kv[1])[:50],
         "heading_total": by_kind["heading"],
         "heading_link_total": len(builder.heading_links),
-        "precedence": cfg["precedence"],
     }
     payload = {
         "meta": meta,

@@ -118,7 +118,7 @@ meta.layout_root_radius，供前端算 zMin 与 home_zoom。
 最后统一归一化到 norm_root_radius，把世界坐标量级钉住（JSON 体积可控，
 且 zMin/zMax 的数值不随 vault 增长而漂移）。
 
-兄弟顺序沿用 sort_key（folder 优先；heading 按文档顺序；其余按 weight 降序再 label），
+兄弟顺序沿用 sort_key（folder 优先；heading 按文档顺序；其余按 label 字典序），
 打包完整体旋转 start_angle —— 同输入必得同输出，这是 30 分钟同步任务的硬要求。
 """
 
@@ -313,9 +313,13 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
         node = nodes[node_id]
         order = 0 if node["kind"] == "folder" else 1
         if node["kind"] == "heading":
-            # 标题没有 weight，按文档顺序排，读起来才和笔记里一致
+            # 标题按文档顺序排，读起来才和笔记里一致
             return (order, 0.0, node.get("line", 0), node["label"])
-        return (order, -node["weight"], 0, node["label"])
+        # 兄弟顺序按「子树笔记数降序，再按 label」：原先这一步由节点 weight（= 子树里
+        # 笔记权重之和，未标注时恒等于笔记数）承担。2026-10-24 删掉「重要度」标注后
+        # 改用结构本身，不依赖任何手工标注，但**排列结果与删之前逐位一致** —— 地图的
+        # 构图因此不会因为一次功能减法而整体重排。
+        return (order, -node.get("note_count", 0), 0, node["label"])
 
     for kids in children.values():
         kids.sort(key=sort_key)

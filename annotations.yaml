@@ -1,22 +1,20 @@
 # 手工标注层 —— 可选，但这是你给图谱「加语义」的地方。
 #
-# 优先级：annotations.yaml > 笔记 frontmatter > 自动推断的 wiki 链接
 # 改完跑 `python build.py build` 生效。
 #
-# 全部字段都是可选的，不写就用默认值（weight=1, mastery=0=未知）。
+# 2026-10-24 起：不再有「掌握度 / 重要度」这类**节点**标注（它们只往界面上加噪声，
+# 而且 annotations.yaml 一直是空的）。这里只保留两类东西：笔记别名 / 学科覆盖，以及
+# 手工边。frontmatter 里的 weight / mastery 也会被忽略。
 
 notes:
   # 键可以写笔记名（不带 .md），也可以写 vault 相对路径。
+  # 支持的字段：aliases（别名，让 [[模电]] 这样的链接也能解析到这篇）、
+  #             domain（覆盖自动推断的顶层学科）。
   # 示例（已注释，按需打开）：
   #
   # "模拟集成电路":
-  #   weight: 5          # 重要度 1-5，影响节点大小（默认 1）
-  #   mastery: 3         # 掌握度 1-5，影响节点边框（1=虚线 → 5=实线加粗）
-  #   aliases: ["模电"]  # 让 [[模电]] 这样的链接也能解析到这篇
-  #
-  # "信号与系统":
-  #   weight: 5
-  #   mastery: 4
+  #   aliases: ["模电"]
+  #   domain: "Science and Tech"
 
 edges:
   # 手工声明的有向边。source / target 同样接受笔记名或路径。
@@ -28,5 +26,5 @@ edges:
   # - source: "MOSFET"
   #   target: "模拟集成电路"
   #   type: prerequisite
-  #   weight: 3
+  #   weight: 3          # 边的强度（影响侧栏排序，不影响线宽）
   #   reason: "模电第一节课就是 MOSFET 的小信号模型"

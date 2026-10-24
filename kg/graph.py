@@ -89,8 +89,6 @@ class GraphBuilder:
                 depth=len(parts),
                 parent="/".join(parts[:-1]) or None,
                 domain=parts[0],
-                weight=0.0,
-                mastery=0,
                 note_count=0,
                 heading_count=0,
             )
@@ -98,16 +96,12 @@ class GraphBuilder:
             fid = note.file.id
             ann = _lookup(ann_notes, note.file.stem, fid) or {}
             fm = note.frontmatter
-            weight, mastery, source = _resolve_metrics(self.cfg, ann, fm, self.stats)
             node = self.add_node(
                 fid,
                 kind="note",
                 depth=note.file.depth,
                 parent="/".join(note.file.parts) or None,
                 domain=note.file.parts[0] if note.file.parts else "",
-                weight=weight,
-                mastery=mastery,
-                metric_source=source,
                 heading_count=len(note.headings),
                 excerpt=note.excerpt,
                 path=note.file.rel,
@@ -130,7 +124,7 @@ class GraphBuilder:
         self._rollup()
 
     def _rollup(self):
-        """把笔记的 weight / mastery / 统计向上汇总到所属文件夹。"""
+        """把笔记的统计（笔记数 / 标题数）向上汇总到所属文件夹。"""
         for node_id, node in sorted(self.nodes.items(), key=lambda kv: -kv[1]["depth"]):
             if node["kind"] != "note":
                 continue
@@ -139,17 +133,9 @@ class GraphBuilder:
                 p = self.nodes.get(parent)
                 if p is None:
                     break
-                p["weight"] += node["weight"]
                 p["note_count"] += 1
                 p["heading_count"] += node["heading_count"]
-                if node["mastery"]:
-                    p["_m_sum"] = p.get("_m_sum", 0) + node["mastery"]
-                    p["_m_cnt"] = p.get("_m_cnt", 0) + 1
                 parent = p["parent"]
-        for node in self.nodes.values():
-            if node["kind"] == "folder":
-                cnt = node.pop("_m_cnt", 0)
-                node["mastery"] = round(node.pop("_m_sum", 0) / cnt) if cnt else 0
 
     def build_heading_nodes(self):
         """把每篇笔记的标题树提升为一等节点。
@@ -170,8 +156,6 @@ class GraphBuilder:
                     depth=nnode["depth"] + h.level,
                     parent=h.parent or note.file.id,
                     domain=nnode["domain"],
-                    weight=0.0,
-                    mastery=0,
                     level=h.level,
                     title=h.title,
                     line=h.line,
@@ -442,27 +426,3 @@ def _as_list(value):
         return [v for v in value if v is not None]
     return [value]
 
-
-def _resolve_metrics(cfg, ann, fm, stats):
-    """按 precedence 决定 weight / mastery。"""
-    weight, mastery, source = None, None, "default"
-    for layer in cfg["precedence"]:
-        if layer == "annotation":
-            if ann.get("weight") is not None:
-                weight = float(ann["weight"]); source = "annotation"
-            if ann.get("mastery") is not None:
-                mastery = int(ann["mastery"])
-        elif layer == "frontmatter":
-            if fm.get("weight") is not None and weight is None:
-                weight = float(fm["weight"]); source = "frontmatter"
-            if fm.get("mastery") is not None and mastery is None:
-                mastery = int(fm["mastery"])
-    if weight is None:
-        weight = 1.0
-    if mastery is None:
-        mastery = 0
-        stats["notes_without_mastery"] += 1
-    else:
-        stats["notes_with_mastery"] += 1
-    mastery = max(0, min(5, int(mastery)))
-    return float(weight), mastery, source

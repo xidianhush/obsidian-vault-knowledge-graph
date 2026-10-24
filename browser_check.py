@@ -67,6 +67,13 @@ PICK_NODE = """(opt) => {
     const ok = (n) => !!n && n.depth >= minDepth && R.descOf(n.id) >= minDesc;
     const rec = (n, x, y) => ({id: n.id, x: x, y: y, d: R.descOf(n.id),
                               sr: Math.round(n._sr), depth: n.depth});
+    // 扫描点还必须是**画布自己在最上层**：图例 / 侧栏 / 提示气泡都是绝对定位的覆盖层，
+    // 落在它们底下的圆点得到、却点不着（page.mouse.click 打给覆盖层）。2026-10-24 删节点
+    // 权重后布局按 label 重排，public 那份就有靶子落进了图例区域，于是「探针说 A、
+    // 点击选中 None」的假红 —— 和 2026-10-20 的浮点坐标坑是同一类测试自身问题。
+    const cvEl = document.getElementById('cv');
+    const cr = cvEl.getBoundingClientRect();
+    const topmost = (x, y) => document.elementFromPoint(cr.left + x, cr.top + y) === cvEl;
     // ⚠️ 扫描点必须是**整数屏幕像素**：page.mouse.click 会把浮点坐标截成整数，
     // 而 hitTest 的命中判据是 d <= max(_sr,4)+3。浮点扫描（x += 5 累加出 483.2）
     // 会挑到离子圆边缘不到 1px 的点，截断后正好落到圆外、命中它的父圆 ——
@@ -77,6 +84,7 @@ PICK_NODE = """(opt) => {
         let best = null;
         for (let y = Math.ceil(H * 0.15); y < H * 0.85; y += 6)
             for (let x = Math.ceil(W * 0.10); x < W * 0.90; x += 6) {
+                if (!topmost(x, y)) continue;
                 const n = R.hitTest(x, y);
                 if (ok(n) && (!best || n._sr < best.sr)) best = rec(n, x, y);
             }
@@ -84,12 +92,14 @@ PICK_NODE = """(opt) => {
     }
     for (let y = Math.ceil(H * 0.30); y < H * 0.72; y += 5) {
         for (let x = Math.ceil(W * 0.28); x < W * 0.72; x += 5) {
+            if (!topmost(x, y)) continue;
             const n = R.hitTest(x, y);
             if (ok(n)) return rec(n, x, y);
         }
     }
     for (let y = Math.ceil(H * 0.15); y < H * 0.85; y += 6) {
         for (let x = Math.ceil(W * 0.10); x < W * 0.90; x += 6) {
+            if (!topmost(x, y)) continue;
             const n = R.hitTest(x, y);
             if (ok(n)) return rec(n, x, y);
         }
@@ -1003,11 +1013,15 @@ with sync_playwright() as p:
 
     # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
     # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
+    # 取样点同样要求画布在最上层：图例 / 侧栏盖住的点能探到圆、却点不着（假红）。
     probe = page.evaluate("""() => {
         const R = window.KG.renderer; const [W, H] = R.size();
+        const cvEl = document.getElementById('cv');
+        const cr = cvEl.getBoundingClientRect();
         const seen = new Set(); const out = [];
         for (let y = H * 0.15; y < H * 0.85; y += 6) {
             for (let x = W * 0.10; x < W * 0.90; x += 6) {
+                if (document.elementFromPoint(cr.left + x, cr.top + y) !== cvEl) continue;
                 const n = R.hitTest(x, y);
                 if (!n || seen.has(n.id)) continue;
                 seen.add(n.id);
@@ -1421,6 +1435,8 @@ with sync_playwright() as p:
                 for (let t = 0; t < 6.28; t += Math.PI / 6) offs.push([Math.cos(t) * f, Math.sin(t) * f]);
             for (const o of offs) {
                 const x = cs[0] + o[0] * n._sr, y = cs[1] + o[1] * n._sr;
+                if (document.elementFromPoint(cv.left + x, cv.top + y) !==
+                    document.getElementById('cv')) continue;
                 const h = R.hitTest(x, y);
                 if (h && h.id === sel) return {x: cv.left + x, y: cv.top + y};
             }

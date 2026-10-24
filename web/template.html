@@ -237,12 +237,6 @@
   <span class="spacer"></span>
   <input id="search" type="search" placeholder="搜索笔记 / 标题…">
   <select id="domain"><option value="all">全部学科</option></select>
-  <select id="mastery" title="按掌握度过滤（已掌握 = ≥3 / 待加强 = 1-2）">
-    <option value="all">全部掌握度</option>
-    <option value="known">已掌握</option>
-    <option value="weak">待加强</option>
-    <option value="none">未标注</option>
-  </select>
   <select id="labels" title="标签的显示策略（自动 = 按屏幕密度竞争）">
     <option value="auto">自动</option>
     <option value="all">全部显示</option>
@@ -278,7 +272,6 @@
     <h4>节点（一律实心圆）</h4>
     <div class="row"><span class="dot" style="background:#4C8DFF"></span><span class="tx">颜色 = 学科（顶层目录）</span></div>
     <div class="row"><span class="dot" style="background:#4C8DFF;width:16px;height:16px"></span><span class="tx">大小 = 规模（下辖元素越多越大）</span></div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #d6dbe4"></span><span class="tx">白色描边粗细 = 掌握度 1→5</span></div>
     <div class="row"><span class="dot" style="background:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.35)"></span><span class="tx">黄色光环 = 搜索命中</span></div>
     <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #4C8DFF"></span><span class="tx">蓝色圆环 = 与选中元素直接相连（含其内部子元素的链接，出入向都算）</span></div>
   </section>

@@ -96,15 +96,12 @@ zoom:
                            # 那几个圆会把父圆结构完全盖住（2026-10-21 实测：home 变成
                            # 几块饱和蓝板）。0.5 时该层半透明，父圆还透得出来。
 
-# ── 权重 ────────────────────────────────────────────────────────────────
+# ── 权重（只用于**边**：链接强度 / 侧栏排序 / 聚合前的加权）────────────────
 weight:
   wiki_link: 1.0          # 正文 [[笔记]] 一次的基础权重
   heading_link_bonus: 0.5 # [[笔记#标题]] 额外加成
   embed_factor: 0.6       # ![[笔记]] 嵌入的折算系数
-  annotation_default: 3.0 # annotations.yaml 里声明的边
-
-# 优先级：annotation > frontmatter > wiki（靠前的先决定 weight / mastery）
-precedence: [annotation, frontmatter, wiki]
+  annotation_default: 3.0 # annotations.yaml / candidates.yaml 里声明的边
 
 # ── 候选边挖掘 ──────────────────────────────────────────────────────────
 candidates:

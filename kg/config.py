@@ -41,7 +41,6 @@ DEFAULTS: dict = {
         "embed_factor": 0.6,
         "annotation_default": 3.0,
     },
-    "precedence": ["annotation", "frontmatter", "wiki"],
     "candidates": {
         "enabled": True,
         "min_score": 0.45,
@@ -105,6 +104,11 @@ def _fail(msg: str):
 
 
 def _validate(cfg: dict):
+    # 2026-10-24：节点的「掌握度 / 重要度」这一层标注已删（见 HANDOFF 坑 42），
+    # precedence 只服务它们，随之下岗。见到就报错，不静默忽略。
+    if "precedence" in cfg:
+        _fail("precedence 已退役（2026-10-24 起不再有「掌握度 / 重要度」节点标注，"
+              "annotations.yaml 只保留 aliases 与手工边），请删掉这个键")
     if not cfg["include"]:
         _fail("include 不能为空 —— 至少列出一个公开目录")
     for key in ("include", "exclude", "exclude_notes"):

@@ -1023,7 +1023,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       ctx.globalAlpha = 1;
     }
 
-    // ③′ 强调环：掌握度 / 搜索命中 / hover-selected。单独一趟画在所有圆之上，
+    // ③′ 强调环：搜索命中 / hover / 选中 / 相邻。单独一趟画在所有圆之上，
     //      否则会被后画的兄弟圆盖掉一半。
     function drawEmphasis(list, alpha) {
       for (var i = 0; i < list.length; i++) {
@@ -1034,22 +1034,10 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         // 它本帧真被画出来时才出现；粗尺度下没有环，位置信息改由「线穿进父圆内部」
         // 承担 —— 不会出现「线连到 A、环画在 B」的错位。
         var isNb = hotNeighbors.has(n.id) && !isSel;
-        if (!(isSel || isHov || isMatch || isNb || (n.kind === 'note' && n.mastery > 0))) continue;
+        if (!(isSel || isHov || isMatch || isNb)) continue;
         var sx = w2sx(n.x), sy = w2sy(n.y), sr = n._sr;
         var a = alpha.get(n.id);
 
-        // 掌握度用描边环表达：1..5 越粗越实，≤3 用虚线表示「还没吃透」
-        if (n.kind === 'note' && n.mastery > 0) {
-          var m = clamp(n.mastery, 1, 5);
-          ctx.globalAlpha = a;
-          ctx.lineWidth = 1 + m * 0.75;
-          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-          if (m <= 3) ctx.setLineDash([2, 2]);
-          ctx.beginPath();
-          ctx.arc(sx, sy, sr + ctx.lineWidth * 0.7, 0, TAU);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
         if (isMatch) {
           ctx.globalAlpha = a;
           ctx.lineWidth = 2;
