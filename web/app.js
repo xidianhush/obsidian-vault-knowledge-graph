@@ -353,10 +353,6 @@
     if (isNote && d.excerpt) {
       html += '<div class="excerpt">' + escapeHtml(d.excerpt) + '</div>';
     }
-    if (isNote) {
-      html += '<h3>状态：' + (d.metric_source === 'annotation' ? '来自 annotations.yaml'
-        : d.metric_source === 'frontmatter' ? '来自笔记 frontmatter' : '默认（未手工标注）') + '</h3>';
-    }
     html += '<h3>入边 · 谁指向它（' + inc.length + '）</h3>' + edgeListHtml(inc, 'in', id);
     html += '<h3>出边 · 它指向谁（' + out.length + '）</h3>' + edgeListHtml(out, 'out', id);
 

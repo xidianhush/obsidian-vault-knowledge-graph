@@ -1,23 +1,25 @@
 # HANDOFF_NEXT —— 交给「接手开发者」的交接页
 
 > **怎么用**：把本文件整个作为新会话的第一条消息发给接手 Agent；也可以自己先读一遍。
-> 本文件写于 **2026-10-22**，记录「上一轮六次提交」之后的现状。
+> 本文件写于 **2026-10-22**，记录「上一轮六次提交」之后的现状；**2026-10-24 已更新**（本轮是
+> 产品减法：删「按尺度聚合」画边模式 + 删「掌握度 / 重要度」节点标注，两个本地提交
+> `977e358` / `6af69fe`，见 §2/§4/§5）。
 > **如与代码冲突，以代码和 `git log` 为准** —— 这里的数字都是会漂的快照。
 
 ---
 
 ## 0. 你是接手者：先做这三步，不要先改代码
 
-1. **读文档**：`HANDOFF.md` 的 §0–§2 + §4 里的**坑 36–40**；`README.md` 的 §4（语义缩放核心机制）与 §5（交互）。
-2. **读提交**：`git log --oneline -6`，逐条看提交信息 —— 上一轮所有「为什么这么改」都写在里面。
+1. **读文档**：`HANDOFF.md` 的 §0–§2 + §4 里的**坑 36–42**；`README.md` 的 §4（语义缩放核心机制）与 §5（交互）。
+2. **读提交**：`git log --oneline -8`，逐条看提交信息 —— 每一轮所有「为什么这么改」都写在里面。
 3. **跑基线**（需要「完全权限」，见 §7）：
 
 ```bash
 python build.py build --scope all
-python build.py verify --scope all      # 两份都应「✓ 全部自动校验通过」
-python browser_check.py                 # 应 166 [ok] / 0 FAIL
+python build.py verify --scope all      # 两份都应「✓ 全部自动校验通过」（合计 110 [ok] / 0 FAIL：private 55 / public 55）
+python browser_check.py                 # 应 132 [ok] / 0 FAIL / 1 warn（warn 是条件跳过）
 # public 那份（没有 --scope 参数，只能靠环境变量）：
-$env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 [ok] / 0 FAIL
+$env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 133 [ok] / 0 FAIL / 1 warn
 ```
 
 把实测数字报给用户，再谈要做的事。**HANDOFF §3/§8 里的「示例快照」数字已过期**（见 §6）。
@@ -26,17 +28,19 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 ## 1. 这件事是什么
 
-把 Obsidian vault（`D:\obsidian_vault\hush-ob-bucket`）编译成一张**可语义缩放的单文件 HTML 知识图谱**：Python 侧扫笔记 → 建层级树 → circle packing 布局 → 算按深度的浮现门槛 → 内联进 HTML；渲染是手写 Canvas2D（`web/render.js`，1765 行），**前端零运行时依赖**。
+把 Obsidian vault（`D:\obsidian_vault\hush-ob-bucket`）编译成一张**可语义缩放的单文件 HTML 知识图谱**：Python 侧扫笔记 → 建层级树 → circle packing 布局 → 算按深度的浮现门槛 → 内联进 HTML；渲染是手写 Canvas2D（`web/render.js`，1438 行），**前端零运行时依赖**。
 
 三个同级仓库：`hush-ob-bucket`（笔记，**只读**）、`knowledge-graph`（本项目）、`quartz-site`（Quartz v5 站点，本轮不在范围内）。
 公开范围唯一真源：vault 里的 `quartz-setup/public-scope.yaml` —— **改范围只改它**。
 
 ---
 
-## 2. 最近六条提交 = 上一轮的完整上下文
+## 2. 最近提交 = 近两轮的完整上下文
 
 | commit | 改了什么 | 影响面 |
 |---|---|---|
+| `977e358` | **产品减法①：砍掉「按尺度聚合」画边模式**（2026-10-24）。只留「逐条链接」一种画法；payload 去掉 `aggregates`；退役 `theme.edges` / `lod.weak_edge_min_count` / `lod.edge_marker_min_len`；单文件 11.26 MB → 6.2 MB（−45%）。理由：用户认为聚合边更乱、逐条链接已经把联系说清楚，多一个模式只增加理解成本 | 数据侧 + 渲染侧 + 判据（1c 整节删除、7b/7c/7d 只跑一遍）+ 文档 |
+| `6af69fe` | **产品减法②：砍掉「掌握度 / 重要度」节点标注**（2026-10-24）。顶栏少「全部掌握度」下拉、图例删掌握度行、侧栏删三枚 chip、hover 气泡删一行；节点不再产出 `weight` / `mastery` / `metric_source`；`precedence` 退役；兄弟排序改用「子树笔记数降序 + label」（**构图与删之前逐位一致**，那不是布局 bug） | 数据侧 + 渲染侧 + `browser_check` 取样点排除图例/侧栏覆盖层 + 文档 |
 | `246a31e` | 图例 flex 行内文字被拆成多列（重叠）→ 包 `.tx`；顶栏 `#readout`/`#reset` 溢出被裁 → 修；新增**图例折叠**（快捷键 `L`，`localStorage: kg.legendCollapsed`） | 纯 UI |
 | `7372e29` | raw 模式链接**统一配色**：整篇级与标题级不再按存储粒度分色（`theme.note_edge` → **`theme.raw_edge`**） | 视觉 + 配置键改名 |
 | `e777818` | **浮现时机从 per-node 门槛改成「按深度的层级带」**：同层同时出现、同色；home 落在第 2 层 | LOD 核心 + verify/browser_check 判据 + 文档 |
@@ -49,13 +53,13 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 ---
 
-## 3. 配置键变更（⚠️ 4 个键已退役，写了会**直接报错**）
+## 3. 配置键变更（⚠️ 退役键写了会**直接报错**）
 
 **新增 / 变更**
 
 | 键 | 当前值 | 作用 |
 |---|---|---|
-| `theme.raw_edge` | `#E6EDF3` | raw 模式**所有**链接线的统一颜色（含端点标记派生色） |
+| `theme.raw_edge` | `#E6EDF3` | **所有**链接线（现在只有一种画法）的统一颜色（含端点标记派生色） |
 | `zoom.home_level` | `2` | 初始视图停在第几层（层级带阶梯的锚点） |
 | `zoom.home_band` | `0.5` | home 落在该层淡入带的哪个位置（**别填 1**，整层满不透明会把父圆糊成色板） |
 | `lod.label_font_scale` | `0.3` | 标签字号 = scale × 屏幕半径，再与「塞得进圆的最大字号」取小 |
@@ -66,7 +70,18 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 | `preview.max_note_chars` | `0` | 0 = 预览整篇不截断 |
 
 **已退役（`kg/config.py` 见到会 `_fail` 并提示，不静默忽略）**：
-`theme.note_edge`、`lod.label_font_ref`、`lod.label_max_width`、`lod.label_smooth_dim`。
+- 2026-10-24 产品减法：`theme.edges`（按关系类型给链接线上色 —— 现在所有链接统一近白
+  `theme.raw_edge`，关系类型只由线型/箭头表达）、`lod.weak_edge_min_count`、
+  `lod.edge_marker_min_len`（两个只服务聚合边；端点标记门槛现在用 `lod.raw_marker_min_len`）、
+  `precedence`（只服务节点「重量 / 掌握度」的来源优先级）。另外 `lod.links`（第 11 带的
+  链接带窗口）也已退役 —— 链接带在 2026-10-23 第四轮就被删了。
+- 更早：`theme.note_edge`（已改名 `theme.raw_edge`）、`lod.label_font_ref` /
+  `lod.label_max_width` / `lod.label_smooth_dim`（2026-10-21 标签重写）。
+
+**`annotations.yaml` 字段（2026-10-24 起）**：只支持 `notes.{aliases, domain}` 与 `edges`
+（`source` / `target` / `type` / `weight` / `reason`）；**frontmatter 里的 `weight` / `mastery`
+会被忽略**。`config.yaml` 的 `weight` 段仍在，但只服务**边**（链接强度 / 侧栏排序），
+不再影响节点大小。
 
 ---
 
@@ -83,34 +98,36 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 **第 11 带（圆即入口 + 按节预览，2026-10-24 第五轮）**：**没有药丸、没有全局缩放带**。按住 Ctrl + 悬停：**标题圆** → 预览该笔记并从这一节（`pv-hN`）滚起；**文件夹/笔记圆** → toast「还没到标题」不预览。按住 Ctrl 时标题圆描虚线（可发现性，别删）；浮层顶部 sticky 面包屑「笔记 › 这一节」。数据侧每篇笔记 `preview`/`links`，每个标题 `anchor`。**修订（2026-10-24 晚）**：标题锚点改成**按源文件行号注入** `<span class="pv-anchor" id="pv-hN"></span>`（按 HTML 标题顺序编号会错位一格 → 悬停 A 看到 B 的正文）；Ctrl 模式不弹 hover 气泡；单击（预览已开时）固定预览、`Esc` 关、松开 Ctrl 不关；滚动给面包屑让位。机制与「别改回去」见 HANDOFF 坑 41 第五轮。
 
-**连线**：`agg` 画在实心圆**之下**（聚合边少、强度靠线宽）；`raw`（默认）画在实心圆**之上**（否则浅层 68 条里有 53 条整条被圆盖住）。端点仍用 `rawAnchor` + `TRIM` 在各自圆边界截断。
+**连线**：**只有一种画法「逐条链接」**，画在实心圆**之上**（否则浅层 68 条里有 53 条整条被圆盖住）；端点用 `rawAnchor` + `TRIM` 在各自圆边界截断，alpha 恒为 1，线宽恒为 `lod.raw_edge_width`（1px）、恒为直线，条数不随缩放减少。2026-10-24 删掉了「按尺度聚合（agg）」那第二种画法（含 payload 里的 `aggregates`、端点沿 parent 链上移、线宽=合并条数），**别加回来**：要压「线网感」就调 `lod.idle_edge_dim` 或用焦点模式。
 
-**图例**：可折叠（`L` 或面板右上角按钮），状态存 `localStorage: kg.legendCollapsed`；折叠只切 `.collapsed` 类，**绝不动** `#legend-rel-raw` / `#legend-rel-agg` 的 `hidden`（1c 段直接断言它）。
+**图例**：三块 —— 学科 / **关系（DOM id `#legend-rel`，2026-10-24 由 `#legend-rel-raw` 改名）** / 节点（颜色 / 大小 / 黄色光环=搜索命中 / 蓝色圆环=邻居）。可折叠（`L` 或面板右上角按钮），状态存 `localStorage: kg.legendCollapsed`；折叠只切 `.collapsed` 类。**没有「两套关系图例按连线模式互斥显隐」了** —— 画法只有一个。
 
 ---
 
-## 5. 当前权威基线（2026-10-22 实测）
+## 5. 当前权威基线（2026-10-24 12:12 实测；会漂，以重新跑出来的为准）
 
 | 项 | 值 |
 |---|---|
-| `verify --scope private` / `--scope public` | 两份「✓ 全部自动校验通过」 |
-| `browser_check` private | **185 [ok] / 0 FAIL / 2 warn**（warn 是条件跳过） |
-| `browser_check` public | **186 [ok] / 0 FAIL / 1 warn** |
-| private payload 快照 | 节点 **3538** / 边 **3629** / `home_layer=2` / `max_depth=10` / 预览 **118 万字** / 标题锚点 **3352**（覆盖 100%）/ 预览 `<img>` **640** |
-| public payload 快照 | 节点 **3494** / 边 **3587** / 预览 122 万字 / 标题锚点 3341（覆盖 100%） |
-| `enter[]`（private 快照） | `[0.0195, 0.3925, 0.7224, 1.3298, 2.4478, 4.5056, 8.2935, 15.2659, 28.1001, 51.7241]` |
-| 单文件体积 | private **11.23 MB** / public **11.19 MB**（预览 +1.4MB、KaTeX 内联 +0.6MB；原 9.7MB） |
+| `verify --scope private` / `--scope public` | 两份「✓ 全部自动校验通过」，合计 **110 [ok] / 0 FAIL**（private 55 / public 55；原 118，少的 8 条 = 删掉的 4 条聚合断言 × 两份） |
+| `browser_check` private | **132 [ok] / 0 FAIL / 1 warn**（原 185；warn 是「天花板处没找到空视口」的条件跳过） |
+| `browser_check` public | **133 [ok] / 0 FAIL / 1 warn**（原 186） |
+| private payload 快照 | 节点 **3510** / 边 **3601**（含语义边 **97**）/ 标题 **3359** / `home_layer=2` / `max_depth=10` / 预览 **119.46 万字** / 标题锚点 **3359**（覆盖 **100%**）/ 预览 `<img>` **638** |
+| public payload 快照 | 节点 **3466** / 边 **3559**（含语义边 **96**）/ 标题 **3348** / 标题锚点 3348（覆盖 100%） |
+| `enter[]`（private 快照） | `[0.019525, 0.392477, 0.722124, 1.328648, 2.444601, 4.497861, 8.275687, 15.226572, 28.015618, 51.546392]` |
+| 单文件体积 | private **6.12 MB** / public **6.14 MB**；`dist/graph.json` **5.64 MB**（删聚合边之前是 11.26 / 11.22 MB、graph.json 11.72 MB，单文件 −45%） |
 
 两份 `[ok]` 数**不再相等**是正常的：条件跳过不同（public 那次在天花板处找到了空视口，bug B 那条真跑了）。**`[ok]` 数掉下去 = 有用例被静默跳过，必须查。**
+2026-10-24 这一轮从 185 / 186 掉到 132 / 133 **是删用例、不是静默跳过**：1c 整节 14 条 + 7b/7c/7d 不再各跑两遍的 43 条 = 53 条，与差值逐条对得上。
 
 ---
 
 ## 6. 哪些文档已过期（别照着改）
 
 - `HANDOFF §0`「一句话现状」：描述的是**上一轮之前**的状态；里面所有「本轮改动未提交」的说法都已过期。
-- `HANDOFF §3`「已实测验证的部分」：节点数 / home 停在第 1 层 / home 可见 46 个 / `enter` 表 / 162 ok —— **全是旧快照**。
+- `HANDOFF §3`「已实测验证的部分」：节点数 / home 停在第 1 层 / home 可见 46 个 / `enter` 表 / 162 ok —— **全是旧快照**（聚合边与掌握度时代，不要当基线）。
+- **聚合边 / 掌握度相关的章节已过期**：HANDOFF 里凡出现「两种连线画法、`agg`/`raw` 双轮断言、`resolveAnchor`、`edgeMode`、`#legend-rel-raw`、白色描边=掌握度」的段落，都是 2026-10-24 产品减法**之前**的记载；当前事实见 §3/§4/§5 与 HANDOFF 新坑 42。
 - `HANDOFF §6` 待办里标「P0 已完成（本轮，未提交）」的条目：早已提交。
-- README §9 里个别 162 计数（大部分已更新，剩下的以 §5 为准）。
+- README §9 里个别 162 / 181 计数（大部分已更新，剩下的以 §5 为准）。
 - **一切绝对数字都当快照**：计划任务每 30 分钟重建一次 `dist/`，vault 内容一改这些数就漂。
 
 ---
@@ -136,7 +153,7 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
   不替用户注册/删除计划任务。
 - 改 `web/*.js` 或 `web/template.html` **必须重建 `dist/`** 再跑浏览器回归 —— 这三个文件构建时被完整内联。
 - 不要把「自动校验全绿」当成「视觉没问题」：视觉改动必须截图并**人眼**验收。
-- 不要把数字写死成断言（vault 一变就假红）；§4 与坑 36–40 里那些「别改回去」的条目要当真。
+- 不要把数字写死成断言（vault 一变就假红）；§4 与坑 36–42 里那些「别改回去」的条目要当真。
 - **下面两处是上一轮新加的「判据级代码」，不是历史包袱，别删**：
   `verify.py` 的 `painted()`（层入口 + 可读性地板两条复刻）、`browser_check.py` 的 `PICK_NODE`
   （整数像素扫描 —— 浮点坐标会被 `page.mouse.click` 截断，在圆边缘随机假红）。
@@ -155,13 +172,15 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 ## 10. 待办（按用户优先级，动手前先确认）
 
-- **P1** `annotations.yaml` 仍为空 ⇒「掌握度 / 重要度」这套功能在界面上**不可见**（白色描边、暗色细边都看不出来）。
 - **P2** `candidates.yaml` 有 321 条候选边**全 pending**，缺审核流程（页面内审核 + 导出 YAML，或 `build.py review`）。
 - **P4** 14 处 `[[笔记#标题]]` 锚点未命中（Obsidian 的锚点匹配更宽松；放宽逻辑在 `kg/graph.py` 的 `_normalize_heading()`）。
 - 用户明确说过「**后续还有一版改动解决首屏观感**」—— 动手前问清楚他要什么，别自己猜。
-- **P0（本轮已落地、等用户验收）** 第 11 带「圆即入口 + 按节预览」（见坑 41 第五轮）。后续可做：① 预览浮层是**整篇静态 HTML**，长笔记要滚动、没有搜索/折叠；② KaTeX 极少数宏不认（`throwOnError:false` 显示红色原文）；③ 文件夹/笔记圆只提示不预览；④ 外链图片只显示链接文字。
+- **P0（本轮已落地）** 第 11 带「圆即入口 + 按节预览」（见坑 41 第五轮）。后续可做：① 预览浮层是**整篇静态 HTML**，长笔记要滚动、没有搜索/折叠；② KaTeX 极少数宏不认（`throwOnError:false` 显示红色原文）；③ 文件夹/笔记圆只提示不预览；④ 外链图片只显示链接文字。
+
+> **2026-10-24 更新**：原来的 **P1「让掌握度 / 重要度真正起作用」已取消** —— 用户明确要减法，
+> 这两套节点标注已整体删除（见 §2 `6af69fe`、§3 退役键、HANDOFF 坑 42），不要再加回来。
 
 ---
 
-> 本文件由上一轮开发者（DeepSeek Harness 会话）于 2026-10-22 整理。
+> 本文件由上一轮开发者（DeepSeek Harness 会话）于 2026-10-22 整理，**2026-10-24 产品减法后更新**。
 > 与代码冲突时以代码 + `git log` 为准；数字以重新跑出来的为准。
