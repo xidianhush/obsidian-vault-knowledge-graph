@@ -48,7 +48,7 @@ def _check(condition, message, failures):
 
 
 def run(cfg, payload_path=None):
-    payload_path = payload_path or os.path.join(cfg["root"], cfg["output"]["json"])
+    payload_path = payload_path or os.path.join(cfg["config_dir"], cfg["output"]["json"])
     if not os.path.exists(payload_path):
         raise CheckFailure(f"找不到 {payload_path}，先跑 python build.py build")
     with open(payload_path, "r", encoding="utf-8") as fh:
@@ -317,7 +317,7 @@ def run(cfg, payload_path=None):
         _check(any("$" in p for p in previews),
                "预览里保留了公式定界符（交给运行时 KaTeX 渲染）", failures)
         # 图片引用按「相对 dist/」写出，必须真能找到文件（519MB 不内联，只能引用）
-        dist_dir = os.path.dirname(os.path.join(cfg["root"], cfg["output"]["html"]))
+        dist_dir = os.path.dirname(os.path.join(cfg["config_dir"], cfg["output"]["html"]))
         bad = []
         for p in previews:
             for mm in re.finditer(r'<img[^>]+src="([^"]+)"', p):

@@ -7,6 +7,12 @@
     python build.py watch      笔记改动后自动重建
     python build.py verify     跑自动校验
     python build.py all        scan + suggest + build
+
+每条子命令都接受：
+    --scope/-s <名字>   只处理某一个 scope（不带 = 配置里 scopes 的第一个；all = 全部）
+    --config/-c <路径>  用另一份 config.yaml（默认 ./config.yaml）。config 里的相对路径
+                        都相对该 config 所在目录 —— 这是「拿别的 vault 建一份图」的入口，
+                        见 PLAN_APPLICABILITY.md 阶段 0.1。未知参数会直接报错，不再静默忽略。
 """
 
 from __future__ import annotations
@@ -50,7 +56,7 @@ def load_pipeline(cfg, quiet=False, need_text=True):
 
 
 def load_annotations(cfg):
-    path = os.path.join(cfg["root"], cfg["annotations"])
+    path = os.path.join(cfg["config_dir"], cfg["annotations"])
     if not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8-sig") as fh:
@@ -73,7 +79,7 @@ def build_payload(cfg, quiet=False):
     # Obsidian 式预览：构建期把每篇 markdown 渲成 HTML 片段（公式留给运行时 KaTeX），
     # 同时算好出站链接表（链接带画药丸用）。base_dir 取输出 HTML 所在目录 ——
     # 预览里的图片按「相对 HTML 的路径」引用 vault，file:// 下实测可加载。
-    out_html = os.path.join(cfg["root"], cfg["output"]["html"])
+    out_html = os.path.join(cfg["config_dir"], cfg["output"]["html"])
     builder.attach_previews(cfg, os.path.dirname(out_html))
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
@@ -149,7 +155,8 @@ def cmd_scan(cfg, args):
     fm_notes = [n.file.stem for n in parsed if n.frontmatter]
 
     print(f"\n配置：{cfg['config_path']}")
-    print(f"范围：{cfg['scope_file_path']}  →  scope {cfg['scope']}")
+    source = cfg["scope_file_path"] or f"{os.path.basename(cfg['config_path'])}（内联 scope）"
+    print(f"范围：{source}  →  scope {cfg['scope']}")
     print(f"Vault：{cfg['vault']}")
     print(f"\n[纳入范围]  vault 内 .md 共 {stats['vault_md_total']} 篇，"
           f"纳入 {stats['included']} 篇，排除 {stats['excluded']} 篇")
@@ -256,8 +263,8 @@ def cmd_watch(cfg, args):
                         pass
         for extra in (cfg["config_path"],
                       cfg["scope_file_path"],
-                      os.path.join(cfg["root"], cfg["annotations"]),
-                      os.path.join(cfg["root"], cfg["candidates_file"])):
+                      os.path.join(cfg["config_dir"], cfg["annotations"]),
+                      os.path.join(cfg["config_dir"], cfg["candidates_file"])):
             if os.path.exists(extra):
                 state[extra] = os.path.getmtime(extra)
         return state
@@ -311,35 +318,62 @@ COMMANDS = {
 
 
 def _parse_args(argv):
-    """只解析 --scope/-s 与 --scope=xxx；其余非 - 开头的参数原样留给子命令。"""
+    """只解析 --scope/-s 与 --config/-c（含 = 写法）；其余非 - 开头的参数留给子命令。
+
+    2026-10-24（阶段 0.1）：以前非 "-" 开头的参数一律当 positional、"-" 开头的未知参数
+    **静默丢弃**，于是 `build --vault X`、`--config typo` 这类写法会不报错地跑作者的库 ——
+    在「多 fixture 回归」里这是标准的假绿来源，所以现在未知参数直接报错。
+    """
     scope = ""
+    config = ""
     positional = []
+    problems = []
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--scope", "-s"):
-            scope = argv[i + 1] if i + 1 < len(argv) else ""
+        if a in ("--scope", "-s", "--config", "-c"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                problems.append(f"{a} 后面缺少值")
+                i += 1
+                continue
+            if a in ("--scope", "-s"):
+                scope = argv[i + 1]
+            else:
+                config = argv[i + 1]
             i += 2
             continue
         if a.startswith("--scope="):
             scope = a.split("=", 1)[1]
-        elif not a.startswith("-"):
+        elif a.startswith("--config="):
+            config = a.split("=", 1)[1]
+        elif a.startswith("-"):
+            problems.append(f"未知参数 {a}（可用：--scope/-s、--config/-c）")
+        else:
             positional.append(a)
         i += 1
-    return positional, scope
+    return positional, scope, config, problems
 
 
 def main(argv):
-    args, scope_arg = _parse_args(argv[1:])
+    args, scope_arg, config_arg, problems = _parse_args(argv[1:])
+    if problems:
+        for p in problems:
+            print(f"[参数错误] {p}", file=sys.stderr)
+        return 2
     command = args[0] if args else "scan"
     if command not in COMMANDS and command != "all":
         print(__doc__)
         return 2
+    config_path = config_arg or "config.yaml"
     try:
-        names = config_mod.load()["scope_names"]
+        cfg0 = config_mod.load(config_path)
     except config_mod.ConfigError as exc:
         print(f"[配置错误] {exc}", file=sys.stderr)
         return 2
+    names = cfg0["scope_names"]
+    if config_arg:
+        print(f"\n[配置] {cfg0['config_path']}"
+              f"（范围来源：{cfg0['scope_source']}）")
 
     if scope_arg == "all":
         selected = list(names)
@@ -359,7 +393,7 @@ def main(argv):
     code = 0
     for name in selected:
         try:
-            cfg = config_mod.load(scope=name)
+            cfg = config_mod.load(config_path, scope=name)
         except config_mod.ConfigError as exc:
             print(f"[配置错误] {exc}", file=sys.stderr)
             return 2

@@ -269,7 +269,7 @@ HEADER = """# 候选边 —— 由 `python build.py suggest` 生成，请人工�
 
 
 def write(cfg, candidates, path=None):
-    path = path or os.path.join(cfg["root"], cfg["candidates_file"])
+    path = path or os.path.join(cfg["config_dir"], cfg["candidates_file"])
     body = yaml.safe_dump(
         {"candidates": candidates},
         allow_unicode=True,
@@ -284,7 +284,7 @@ def write(cfg, candidates, path=None):
 
 
 def load(cfg, path=None):
-    path = path or os.path.join(cfg["root"], cfg["candidates_file"])
+    path = path or os.path.join(cfg["config_dir"], cfg["candidates_file"])
     if not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8-sig") as fh:

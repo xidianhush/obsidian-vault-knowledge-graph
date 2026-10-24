@@ -21,7 +21,7 @@ class EmitError(Exception):
 
 
 def write_json(cfg, payload, path=None):
-    path = path or os.path.join(cfg["root"], cfg["output"]["json"])
+    path = path or os.path.join(cfg["config_dir"], cfg["output"]["json"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=1)
@@ -89,7 +89,7 @@ def build_html(cfg, payload, quiet=False):
     html = html.replace("__PAGE_TITLE__", cfg.get("page_title", "知识图谱"))
     html = html.replace("__GENERATED__", datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-    out = os.path.join(root, cfg["output"]["html"])
+    out = os.path.join(cfg["config_dir"], cfg["output"]["html"])
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(html)

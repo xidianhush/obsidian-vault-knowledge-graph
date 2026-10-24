@@ -72,6 +72,15 @@ DEFAULTS: dict = {
         "ghost_alpha": 0.10,
         "ghost_label_alpha": 0.14,
         "ghost_label_min_px": 56,
+        # 2026-10-24 阶段 0.1：下面四个键原来只存在于作者的 config.yaml 里，DEFAULTS 没有，
+        # 于是「一份最小配置」（别人的 vault / fixture）会在 _validate 里直接报
+        # 「lod.label_font_scale 必须是正数，收到 None」——默认值必须自洽到能跑。
+        # ⚠️ 必须**追加在 lod 末尾**：_deep_merge 先放 DEFAULTS 的键、再把 config 独有的键
+        # 追加在后，插在中间会改变 payload 里 lod 的键序（JSON 语义相同，但会让产物 diff 变脏）。
+        "label_font_min": 11,
+        "label_font_max": 64,
+        "label_font_scale": 0.3,
+        "label_bold_depth": 2,
     },
     # Obsidian 式预览 / 第 11 带「链接带」（2026-10-22 第三轮）。
     # 关掉它 = 完全回到「到第 10 带为止」：payload 不存预览 HTML、lod 里没有 links。
@@ -280,6 +289,83 @@ def _scope_entries(doc: dict, section: str, scope: str, path: str):
     return out
 
 
+def _derive_roots(include: list, vault: str) -> list:
+    """从 include 通配符推 scope 的顶层根名（内联 scope 用）。
+
+    "Science and Tech/**"  → "Science and Tech"
+    "Logs/Study log/**"    → "Logs"     ← 节点 id 的第一段就是它，verify 按这个断「越界 0 个」
+    "**" / "*"             → 没有写出具体目录：退化成「vault 顶层每个目录各算一个根」
+    """
+    roots, whole = [], False
+    for pattern in include:
+        p = str(pattern).strip().strip("/")
+        for suffix in ("/**/*", "/**", "/*"):
+            if p.endswith(suffix):
+                p = p[: -len(suffix)].strip("/")
+                break
+        if not p or any(ch in p for ch in "*?["):
+            whole = True
+            continue
+        roots.append(p.split("/")[0])
+    if whole:
+        for name in sorted(os.listdir(vault)):
+            if not name.startswith(".") and os.path.isdir(os.path.join(vault, name)):
+                roots.append(name)
+    return sorted({r for r in roots if r})
+
+
+def _resolve_inline_scopes(cfg: dict) -> dict:
+    """没有 scope_file 时的退路：scope 直接写在 config.yaml 里。
+
+    2026-10-24（阶段 0.1「任意 vault 能跑」）：原来范围只能来自 vault 里那份 Quartz 格式
+    的 public-scope.yaml，别人的库没有这个文件就跑不起来。现在两种都行：
+      * 有 scope_file → 走 _resolve_scopes（作者自己的工作流，行为一字不变）；
+      * 没有 scope_file → 走这里：每个 scope 至少要给 include，roots 缺省从 include 推。
+    """
+    declared = cfg["scopes"]
+    if not isinstance(declared, dict) or not declared:
+        raise ConfigError(
+            "config.yaml 既没有 scope_file，也没有 scopes —— 没有范围真源时至少要给一个"
+            "内联 scope，例如：\n"
+            "  scopes:\n"
+            "    main:\n"
+            "      include: [\"**\"]")
+    single = len(declared) == 1
+    scopes = {}
+    for name, spec in declared.items():
+        if spec is not None and not isinstance(spec, dict):
+            raise ConfigError(f"config.yaml 的 scopes.{name} 必须是键值映射（内联 scope 定义）")
+        spec = spec or {}
+        include = list(spec.get("include") or cfg.get("include") or [])
+        if not include:
+            raise ConfigError(
+                f"内联 scope「{name}」缺少 include —— 例如 include: [\"MyNotes/**\"]"
+                f"（只要这个目录）或 [\"**\"]（整个 vault）")
+        if not all(isinstance(p, str) and p.strip() for p in include):
+            raise ConfigError(f"内联 scope「{name}」的 include 必须是非空字符串列表，收到 {include!r}")
+        roots = spec.get("roots")
+        if roots is None or roots == "auto":
+            roots = _derive_roots(include, cfg["vault"])
+        if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots):
+            raise ConfigError(f"内联 scope「{name}」的 roots 必须是字符串列表或 \"auto\"，收到 {roots!r}")
+        output = dict(spec.get("output") or {})
+        output.setdefault("json", "dist/graph.json" if single else f"dist/graph.{name}.json")
+        output.setdefault("html", "dist/knowledge-graph.html" if single
+                         else f"dist/knowledge-graph.{name}.html")
+        scopes[name] = {
+            "name": name,
+            "include": include,
+            "exclude": list(spec.get("exclude") or cfg.get("exclude") or []),
+            "exclude_notes": list(spec.get("exclude_notes") or cfg.get("exclude_notes") or []),
+            "remap": list(spec.get("remap") or []),
+            "mirror": [],
+            "roots": list(roots),
+            "publish_graph": False,
+            "output": output,
+        }
+    return scopes
+
+
 def _resolve_scopes(cfg: dict, doc: dict, scope_path: str) -> dict:
     declared = cfg["scopes"]
     if not isinstance(declared, dict) or not declared:
@@ -342,10 +428,18 @@ def load(path: str = "config.yaml", scope: str = "") -> dict:
     scope 留空时取 scopes 里的第一个。返回的 cfg 中 include / exclude / exclude_notes /
     remap / output 已是「当前 scope」的值，所以 scan / layout / emit / verify 都不需要
     知道 scope 的存在；全部 scope 的定义留在 cfg["scopes"] 里。
+
+    **路径语义（2026-10-24 阶段 0.1 起）**：`config.yaml` 里写的一切相对路径都相对
+    **配置文件所在目录**（`vault` / `scope_file` / `output` / `annotations` /
+    `candidates_file`）；只有 `web/*.js`、`web/template.html` 这类前端资源仍相对
+    项目目录（`cfg["root"]`），因为它们属于程序而不是某个 vault。
+    主配置在项目根目录，所以这条改动对现有工作流**零影响**；但它让 fixture 的
+    config 可以自包含（fixtures/vault-x/config.yaml + 自己的 dist/ + 自己的空 annotations）。
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not os.path.isabs(path):
         path = os.path.join(root, path)
+    path = os.path.abspath(path)
     if not os.path.exists(path):
         raise ConfigError(f"找不到配置文件：{path}")
     with open(path, "r", encoding="utf-8-sig") as fh:
@@ -354,26 +448,32 @@ def load(path: str = "config.yaml", scope: str = "") -> dict:
         raise ConfigError("config.yaml 顶层必须是键值映射")
 
     cfg = _deep_merge(DEFAULTS, raw)
+    config_dir = os.path.dirname(path)
 
     vault = cfg["vault"]
     if not os.path.isabs(vault):
-        vault = os.path.join(root, vault)
+        vault = os.path.join(config_dir, vault)
     vault = os.path.normpath(vault)
     if not os.path.isdir(vault):
         raise ConfigError(f"vault 目录不存在：{vault}")
     cfg["vault"] = vault
-    cfg["root"] = root
+    cfg["root"] = root                 # 程序目录（web/ 资源）
+    cfg["config_dir"] = config_dir     # 配置文件目录（配置里的所有相对路径）
     cfg["config_path"] = path
 
     scope_path = cfg["scope_file"]
-    if not scope_path:
-        raise ConfigError("config.yaml 缺少 scope_file —— 公开范围必须来自 vault 里的 "
-                          "quartz-setup/public-scope.yaml，不在这里另写一份")
-    if not os.path.isabs(scope_path):
-        scope_path = os.path.join(root, scope_path)
-    cfg["scope_file_path"] = os.path.normpath(scope_path)
-    cfg["scopes"] = _resolve_scopes(cfg, _read_scope_file(cfg["scope_file_path"]),
-                                    cfg["scope_file_path"])
+    if scope_path:
+        if not os.path.isabs(scope_path):
+            scope_path = os.path.join(config_dir, scope_path)
+        cfg["scope_file_path"] = os.path.normpath(scope_path)
+        cfg["scope_source"] = "scope_file"
+        cfg["scopes"] = _resolve_scopes(cfg, _read_scope_file(cfg["scope_file_path"]),
+                                        cfg["scope_file_path"])
+    else:
+        # 2026-10-24 阶段 0.1：没有 Quartz 真源也能跑（别人的 vault 没有 quartz-setup/）
+        cfg["scope_file_path"] = ""
+        cfg["scope_source"] = "inline"
+        cfg["scopes"] = _resolve_inline_scopes(cfg)
 
     want = scope or cfg["scope"] or next(iter(cfg["scopes"]))
     if want not in cfg["scopes"]:
