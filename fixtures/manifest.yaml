@@ -1,0 +1,100 @@
+# 形状 fixture 清单（PLAN_APPLICABILITY.md 阶段 0.2）
+#
+# 生成方式：python fixtures/make_vaults.py   （确定性；产物在 fixtures/vaults/，已 gitignore）
+# 消费方式：fixtures/run_sweep.py 逐库 build → verify →（可选）browser_check，按本文件的
+#            canary / expected_ok / known_gaps 判定「红的是产品缺陷还是已知局限」。
+#
+# 字段说明：
+#   title       人话名字
+#   shape       这个库长什么样（决定了它专考什么）
+#   tests       它专门暴露哪一类失效（对应 PLAN_APPLICABILITY.md 的诊断编号）
+#   config      相对 fixtures/vaults/ 的配置文件（自包含：vault / output / annotations 都相对它）
+#   canary      真实的「人口」读数（2026-10-24 首轮 build 实测）。sweep 必须校验它们，
+#               否则「没有东西可坏」会变成假绿。
+#   expected_ok 该 fixture 上 verify / browser_check 的期望 [ok] 数（阶段 0.3 首轮实测后回填；
+#               null = 尚未标定，sweep 会报「未标定」而不是通过）
+#   known_gaps  预期会红的断言组 + 原因。**阶段 0.3 起的纪律：红项必须能对上这里的一条，
+#               对不上就是回归。** 修掉一个就把对应的行删掉。
+
+fixtures:
+  tiny:
+    title: 最小库
+    shape: 1 篇笔记直接放在 vault 根、没有文件夹；标题 1 个
+    tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
+    config: vaults/tiny/config.yaml
+    canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
+    expected_ok: null
+    known_gaps:
+      - "范围一致性：内联 scope 的 roots 从 vault 顶层目录推导，根笔记推导不出来（roots=[]）—— 阶段 1.4 一起解决"
+      - "depth=1 上只有文件夹：根笔记就是 depth 1（kg/graph.py:89/102 的模型假设）"
+
+  shallow:
+    title: 浅库
+    shape: 1 个文件夹 + 15 篇笔记、正文完全不用 #（max_depth=2）
+    tests: 层级带 steps==0（kg/layout.py:445-448）/ home_layer 夹取 / 最小规模冒烟
+    config: vaults/shallow/config.yaml
+    canary: {folders: 1, notes: 15, headings: 0, semantic_edges: 0}
+    expected_ok: null
+    known_gaps:
+      - "M[last] == zMax：steps=max_depth-home_level=0，rung 被 1.377 保底抬起来，阶梯铺不到 zMax（PLAN §1.1 #2）—— 阶段 1.2"
+
+  deep-chain:
+    title: 深链库
+    shape: 10 层单链目录、每层 1 篇、每篇 1 个 h1（实测 max_depth=12）
+    tests: 独子链 / 深度轴拉长 / 顶栏层级胶囊溢出（12 个 pill 在 1440px 下超额）
+    config: vaults/deep-chain/config.yaml
+    canary: {folders: 10, notes: 10, headings: 10, semantic_edges: 0}
+    expected_ok: null
+    known_gaps:
+      - "浏览器侧顶栏：胶囊数 = max_depth，12 个在 1440px 下会挤压 / 裁切（template.html:86-91 的已知超额）—— 阶段 2.4"
+
+  wide-roots:
+    title: 宽扇出库
+    shape: 30 个顶层目录共 150 篇；最大的占 60%（90/150），最小的只有 2 篇（≈1.3%）
+    tests: 根数 ≠ 6 / 最小份额 / 学科色板只有 7 + 单一 fallback（第 8 个起同灰）/ 图例按实际 domain
+    config: vaults/wide-roots/config.yaml
+    canary: {folders: 30, notes: 150, headings: 150, semantic_edges: 0}
+    expected_ok: null
+    known_gaps:
+      - "配色：theme.domains 只写 7 个色，其余 23 个走 fallback #8B949E（PLAN §1.1 #5）—— 阶段 1.3"
+      - "图例：面板按 depth1 folder 列 30 行，280px 宽 + 一列长滚动（template.html:153,157）—— 阶段 2.5"
+
+  hub-dense:
+    title: 稠密链接库
+    shape: 80 篇 / 335 条语义边 / 一个入度 ≥12 的 hub / 5 条标题级链接 / 每篇 4 个标题
+    tests: 边绘制预算（每帧逐条画）/ 焦点模式 / 端点标记 / chip 折叠 / 标题级链接
+    config: vaults/hub-dense/config.yaml
+    canary: {folders: 1, notes: 80, headings: 320, semantic_edges: 335}
+    expected_ok: null
+    known_gaps:
+      - "浏览器侧 7b/7c/7d 与 3e 的靶子是按「作者库的内容」挑的（写死搜索词「微分方程」、作者笔记名、setLevel(4)）—— 阶段 0.3 参数化后再标定"
+
+  heading-zoo:
+    title: 标题动物园
+    shape: 1 篇 h1..h6 链 / 3 篇笔记内重复「总结」/ 2 篇带图片 / 2 篇带公式（实测 max_depth=8）
+    tests: 标题深度轴 / 锚点唯一性与错位 / KaTeX / 图片相对路径
+    config: vaults/heading-zoo/config.yaml
+    canary: {folders: 1, notes: 6, headings: 20, semantic_edges: 0}
+    expected_ok: null
+    known_gaps: []
+
+  plain:
+    title: 纯文本库
+    shape: 10 篇纯文本：0 标题 / 0 公式 / 0 图片 / 0 wiki 链接
+    tests: 「内容特征被当成契约」—— verify 的公式断言、标题锚点覆盖率、browser 3e 的靶子
+    config: vaults/plain/config.yaml
+    canary: {folders: 1, notes: 10, headings: 0, semantic_edges: 0}
+    expected_ok: null
+    known_gaps:
+      - "verify: 预览里必须有 $ 公式（verify.py:317）—— 阶段 0.3 改成「有公式才要求公式」"
+      - "verify: 标题锚点覆盖率（verify.py:381）对 0 标题库无意义 —— 阶段 0.3 改为按 has_headings 分支"
+      - "browser 3e: 靶子要求「有 anchor 的标题圆」，无标题库 tgt=null 会崩（browser_check.py:519-541）"
+
+  remap-dup:
+    title: 重映射 + 同名库
+    shape: AA/BB 两个目录用 `as` 重映射成 Alpha/Beta；两边都有 Notes.md（同名 stem）；另有一个未列出的空目录
+    tests: scope_file 工作流 / `as` 落地名 / 同名 stem 解析歧义 / 空目录不进图
+    config: vaults/remap-dup/config.yaml
+    canary: {folders: 2, notes: 4, headings: 4, semantic_edges: 0}
+    expected_ok: null
+    known_gaps: []

@@ -123,7 +123,7 @@
 | 步 | 内容 | 涉及文件 | 断言影响 |
 |---|---|---|---|
 | 0.1 ✅ | `--config/-c` + 未知参数报错；`scope_file` 可选（无真源时用 config 内联 scope 定义）；路径统一相对 config.yaml；补齐 DEFAULTS | `build.py`, `kg/config.py`, `kg/emit.py`, `kg/candidates.py`, `verify.py` | 无新增断言；**已实测：两份产物归一化后逐位不变**，`verify --scope all` 仍 110 ok |
-| 0.2 | fixture 生成器（确定性）+ 8 个形状库 + `manifest.yaml` | 新增 `fixtures/make_vaults.py`、`fixtures/manifest.yaml` | 不碰 vault，不入库生成物 |
+| 0.2 ✅ | fixture 生成器（确定性）+ 8 个形状库 + `manifest.yaml`（canary / expected_ok / known_gaps） | 新增 `fixtures/make_vaults.py`、`fixtures/manifest.yaml`；`.gitignore` 加 `fixtures/vaults/` | 不碰 vault；**8 个库全部 build 通过**（见 §5 实测列） |
 | 0.3 | sweep runner + 两个检查器补 **ok 计数 / vault 身份 / warn 白名单 / canary**；`KG_HTML` 接受绝对路径；`browser_check` 的作者 fixture 常量（`微分方程`、作者笔记名、`setLevel(4)`）改成参数化 | `fixtures/run_sweep.py`, `verify.py`, `browser_check.py` | 新增计数与身份断言；既有 110/132/133 不变 |
 
 **验收**：8 个库 × 7 指标的表（能否构建 / verify ok / browser ok / 首屏标签数 / 灰节点占比 /
@@ -172,19 +172,24 @@ preview 真接 `max_note_chars` + 笔记间预算分摊 + 分块懒解析；payl
 生成器 `fixtures/make_vaults.py` 必须**确定性**（同 seed 同输出），仓库只提交生成器 + manifest，
 vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
-| # | fixture | 形状 | 专考什么 | 预期会红的项 |
+| # | fixture | 形状（实测人口） | 专考什么 | 预期会红的项 |
 |---|---|---|---|---|
-| 1 | `shallow` | 1 个顶层文件夹 + 15 篇全在里面、正文不用 `#`（`max_depth=2`） | 阶梯 `steps==0` 塌陷 | `verify.py:257`、home_layer 分叉 |
-| 2 | `deep-chain` | 单链 10 层目录、每层 1 篇 | 独子链 / 深度轴 / 胶囊溢出 | 顶栏 pills、`zoomToDepth` |
-| 3 | `wide-roots` | 30 个顶层目录，最大占 60%，共 300 篇 | 根数 ≠ 6、最小份额 | 第 8 个起同灰、`<0.32%` 时最外层冒出第 2 层 |
-| 4 | `hub-dense` | 80 篇 / 300+ `[[链接]]`、含标题级链接、hub 度 > 8 | 边绘制、焦点、chip | 7b/7c/7d、帧率 |
-| 5 | `heading-zoo` | h1..h6 链 + 重复标题 + 公式 + 图片 | 标题锚点唯一性 / KaTeX / 图片 | verify 锚点、预览滚动 |
-| 6 | `plain` | 0 标题 / 0 公式 / 0 图片 / 0 链接 | 「内容特征被当契约」 | `verify.py:317/:381/:551` 崩、`browser_check` 3e 靶子 `null` 崩 |
-| 7 | `remap-dup` | 同名 stem 两处 + scope `as` 重映射 + 一个空目录 | `resolve` 歧义 / roots 残留 | `verify.py:84-97` |
-| 8 | `tiny` | 1 篇笔记 | 退化规模 | 各种 `min()` 空序列、`home_zoom` 夹取 |
+| 1 | `shallow` | 1 文件夹 + 15 篇、正文不用 `#`（depth 2｜夹1 笔15 标0 边0） | 阶梯 `steps==0` 塌陷 | `verify.py:257`、home_layer 分叉 |
+| 2 | `deep-chain` | 单链 10 层目录、每层 1 篇 h1（depth **12**｜夹10 笔10 标10 边0） | 独子链 / 深度轴 / 胶囊溢出 | 顶栏 12 个 pill、`zoomToDepth` |
+| 3 | `wide-roots` | 30 个顶层目录共 **150** 篇，最大占 60%、最小 1.3%（depth 3｜夹30 笔150 标150 边0） | 根数 ≠ 6、最小份额 | 第 8 个起同灰、图例 30 行 |
+| 4 | `hub-dense` | 80 篇 / **335** 条语义边 / 入度 ≥12 的 hub / 5 条标题级链接（depth 4｜夹1 笔80 标320） | 边绘制、焦点、chip | 7b/7c/7d、帧率 |
+| 5 | `heading-zoo` | h1..h6 链 + 笔记内重复「总结」+ 公式 + 2 张图（depth **8**｜夹1 笔6 标20 边0） | 标题锚点唯一性 / KaTeX / 图片 | verify 锚点、预览滚动 |
+| 6 | `plain` | 0 标题 / 0 公式 / 0 图片 / 0 链接（depth 2｜夹1 笔10 标0 边0） | 「内容特征被当契约」 | `verify.py:317/:381` 红、`browser_check` 3e 靶子 `null` 崩 |
+| 7 | `remap-dup` | 同名 stem 两处 + `as` 重映射 + 一个未列出的空目录（depth 3｜夹**2** 笔4 标4 边0） | `resolve` 歧义 / roots 残留 | `verify.py:84-97` |
+| 8 | `tiny` | 1 篇笔记**直接放在 vault 根**（depth 2｜夹0 笔1 标1 边0） | 退化规模 + 根笔记 | `roots=[]` → 范围断言红；`depth1 只有文件夹` 红 |
 
 **canary（每个 fixture 必须自带人口）**：`semantic_edges>0`、`headings>0`（除 `plain`）、`hlinks>0`
 （除 `plain`）——否则「没有东西可坏」= 假绿。
+
+**实测（2026-10-24，阶段 0.2）**：`python fixtures/make_vaults.py` 生成 8 个库，逐个
+`build --config` **全部通过**，单文件 776~1063 KB（下限 776 KB 是内联 KaTeX 的固定成本）。
+`--clean` 后重跑指纹不变（`sha256=8360014295776682…`）→ 生成器确定性成立。
+`fixtures/vaults/` 已 gitignore，入库的只有生成器 + manifest。
 
 ---
 
@@ -278,3 +283,4 @@ knowledge-graph.public.html 20E14BF9E3B880BCAD7B49FC4E90B009977A8EC2E0B9BDE314FE
 |---|---|---|---|
 | 2026-10-24 | — | 本文档建立（诊断 + 路线图 + 验收契约） | 与 0.1 同一提交 |
 | 2026-10-24 | 0.1 | `--config` + 未知参数报错 + 内联 scope（无 scope_file）+ 路径统一相对 config + 补齐 DEFAULTS；产物归一化后逐位不变 | `feat(app): 阶段 0.1`（见 `git log`） |
+| 2026-10-24 | 0.2 | 8 个形状 fixture + 确定性生成器 + manifest（canary / expected_ok / known_gaps）；8 库全部 build 通过 | `feat(fixtures): 阶段 0.2`（见 `git log`） |
