@@ -208,7 +208,7 @@ class GraphBuilder:
             for i, h in enumerate(note.headings):
                 hn = self.nodes.get(h.id)
                 if hn is not None:
-                    hn["anchor"] = anchors[i] if i < len(anchors) else ""
+                    hn["anchor"] = (anchors[i] if i < len(anchors) else "") or ""
         self.stats["preview_chars"] = total
 
     def _heading_at_line(self, note_id: str, line):

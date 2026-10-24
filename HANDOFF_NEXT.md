@@ -81,7 +81,7 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 
 **标签**：一律画在自己圆内、**居中**；只给屏幕半径 ≥ 28px 的圆挂；字号 `min(0.3×sr, 塞得下)` 夹 [11,64]；塞不进就截断加 `…`，只剩 1 个字符则不画。**没有圆外标签了，别加回来。**
 
-**第 11 带（圆即入口 + 按节预览，2026-10-24 第五轮）**：**没有药丸、没有全局缩放带**。按住 Ctrl + 悬停：**标题圆** → 预览该笔记并从这一节（`pv-hN`）滚起；**文件夹/笔记圆** → toast「还没到标题」不预览。按住 Ctrl 时标题圆描虚线（可发现性，别删）；浮层顶部 sticky 面包屑「笔记 › 这一节」。数据侧每篇笔记 `preview`/`links`，每个标题 `anchor`。机制与五条「别改回去」见 HANDOFF 坑 41 第五轮。
+**第 11 带（圆即入口 + 按节预览，2026-10-24 第五轮）**：**没有药丸、没有全局缩放带**。按住 Ctrl + 悬停：**标题圆** → 预览该笔记并从这一节（`pv-hN`）滚起；**文件夹/笔记圆** → toast「还没到标题」不预览。按住 Ctrl 时标题圆描虚线（可发现性，别删）；浮层顶部 sticky 面包屑「笔记 › 这一节」。数据侧每篇笔记 `preview`/`links`，每个标题 `anchor`。**修订（2026-10-24 晚）**：标题锚点改成**按源文件行号注入** `<span class="pv-anchor" id="pv-hN"></span>`（按 HTML 标题顺序编号会错位一格 → 悬停 A 看到 B 的正文）；Ctrl 模式不弹 hover 气泡；单击（预览已开时）固定预览、`Esc` 关、松开 Ctrl 不关；滚动给面包屑让位。机制与「别改回去」见 HANDOFF 坑 41 第五轮。
 
 **连线**：`agg` 画在实心圆**之下**（聚合边少、强度靠线宽）；`raw`（默认）画在实心圆**之上**（否则浅层 68 条里有 53 条整条被圆盖住）。端点仍用 `rawAnchor` + `TRIM` 在各自圆边界截断。
 
@@ -94,12 +94,12 @@ $env:KG_HTML='knowledge-graph.public.html'; python browser_check.py   # 应 167 
 | 项 | 值 |
 |---|---|
 | `verify --scope private` / `--scope public` | 两份「✓ 全部自动校验通过」 |
-| `browser_check` private | **180 [ok] / 0 FAIL / 2 warn**（warn 是条件跳过） |
-| `browser_check` public | **181 [ok] / 0 FAIL / 1 warn** |
-| private payload 快照 | 节点 **3538** / 边 **3629** / `home_layer=2` / `max_depth=10` / 预览 **108 万字** / 标题锚点 **3324**（覆盖 3324/3352）/ 预览 `<img>` **640** |
-| public payload 快照 | 节点 **3494** / 边 **3587** / 预览 112 万字 / 标题锚点 3313（覆盖 3313/3341） |
+| `browser_check` private | **185 [ok] / 0 FAIL / 2 warn**（warn 是条件跳过） |
+| `browser_check` public | **186 [ok] / 0 FAIL / 1 warn** |
+| private payload 快照 | 节点 **3538** / 边 **3629** / `home_layer=2` / `max_depth=10` / 预览 **118 万字** / 标题锚点 **3352**（覆盖 100%）/ 预览 `<img>` **640** |
+| public payload 快照 | 节点 **3494** / 边 **3587** / 预览 122 万字 / 标题锚点 3341（覆盖 100%） |
 | `enter[]`（private 快照） | `[0.0195, 0.3925, 0.7224, 1.3298, 2.4478, 4.5056, 8.2935, 15.2659, 28.1001, 51.7241]` |
-| 单文件体积 | private **11.09 MB** / public **11.04 MB**（预览 +1.4MB、KaTeX 内联 +0.6MB；原 9.7MB） |
+| 单文件体积 | private **11.23 MB** / public **11.19 MB**（预览 +1.4MB、KaTeX 内联 +0.6MB；原 9.7MB） |
 
 两份 `[ok]` 数**不再相等**是正常的：条件跳过不同（public 那次在天花板处找到了空视口，bug B 那条真跑了）。**`[ok]` 数掉下去 = 有用例被静默跳过，必须查。**
 

@@ -526,7 +526,8 @@
   // ── 渲染器 ────────────────────────────────────────────────────────────
   const R = window.createRenderer(canvas, DATA, {
     onHover: (id, node, sx, sy) => {
-      if (!id || !node) { hideTooltip(); return; }
+      // Ctrl 模式下不弹 hover 气泡：那时是「预览模式」，气泡和预览浮层会打架
+      if (ctrlDown || !id || !node) { hideTooltip(); return; }
       showTooltip(node, sx, sy);
     },
     onSelect: (id) => select(id, false),
@@ -549,12 +550,14 @@
   let pvNote = null;
   let pvLast = null;               // 最近一次鼠标位置（按下 Ctrl 那一刻要用）
   let hintNode = null;             // 上一次提示过的节点 id（避免每次移动都 toast）
+  let pvPinned = false;            // 单击标题圆 = 固定预览（可以慢慢滚，Esc 关）
 
   function hidePreview() {
     if (!PV.classList.contains('show')) return;
     PV.classList.remove('show');
     PV.innerHTML = '';
     pvNote = null;
+    pvPinned = false;
   }
 
   function canvasPoint(evt) {
@@ -565,7 +568,7 @@
   function buildPreviewHtml(note) {
     if (pvCache.has(note.id)) return pvCache.get(note.id);
     PV.innerHTML = '<div class="pv-crumbs"></div>' + note.preview +
-      '<div class="pv-hint">Ctrl + 悬停其它标题圆可继续预览 · 浮层内链接可点 · Esc / 松开 Ctrl 关闭</div>';
+      '<div class="pv-hint">单击标题圆固定预览（Esc 关闭）· Ctrl + 悬停临时预览 · 浮层内链接可点</div>';
     if (window.renderMathInElement) {
       try {
         window.renderMathInElement(PV, {
@@ -585,13 +588,14 @@
     return html;
   }
 
-  function showPreviewFor(node, cx, cy) {
+  function showPreviewFor(node, cx, cy, pinned) {
     const note = node.kind === 'note' ? node : NODE.get(node.note);
     if (!note || !note.preview) { hidePreview(); return; }
     if (pvNote !== note.id) {
       PV.innerHTML = buildPreviewHtml(note);
       pvNote = note.id;
     }
+    pvPinned = !!pinned;
     hideTooltip();
     PV.classList.add('show');
     // 面包屑：滚深了也知道「哪篇笔记 › 哪一节」
@@ -605,8 +609,12 @@
     // 注意要**给 sticky 面包屑让位** —— 只减 12px 的话，标题正好被面包屑盖住，
     // 看起来就是「预览里没有标题」（2026-10-24 实测踩到）。
     const anchorEl = node.anchor ? PV.querySelector('#' + node.anchor) : null;
-    const crumbH = (PV.querySelector('.pv-crumbs') || {}).offsetHeight || 0;
-    PV.scrollTop = anchorEl ? Math.max(0, anchorEl.offsetTop - crumbH - 10) : 0;
+    const crumbEl = PV.querySelector('.pv-crumbs');
+    const crumbH = (crumbEl ? crumbEl.offsetHeight : 0) || 0;
+    const padTop = parseFloat(getComputedStyle(PV).paddingTop) || 16;
+    // offsetTop 是相对面板 border box 的（含 padding），sticky 面包屑又占住顶部，
+    // 所以要让「padding + 面包屑 + 8px」这块空间：只减面包屑的话标题会被压住半截。
+    PV.scrollTop = anchorEl ? Math.max(0, anchorEl.offsetTop - (padTop + crumbH + 8)) : 0;
     const w = PV.offsetWidth, h = PV.offsetHeight;
     let x = cx + 18, y = cy + 18;
     if (x + w > window.innerWidth - 12) x = cx - w - 18;
@@ -618,15 +626,21 @@
   function evalPreview(evt) {
     pvLast = [evt.clientX, evt.clientY];
     if (evt.target && evt.target.closest && evt.target.closest('#preview')) return;
-    if (!ctrlDown) { hidePreview(); hintNode = null; return; }
-    const p = canvasPoint(evt);
-    const node = R.hitTest(p[0], p[1]);
-    if (!node) { hidePreview(); hintNode = null; return; }
-    if (node.kind === 'heading') {
-      hintNode = null;
-      showPreviewFor(node, evt.clientX, evt.clientY);
+    if (!ctrlDown) {
+      // 固定预览（单击打开）只有 Esc / 点别处才收；普通移动不打断阅读
+      if (!pvPinned) { hidePreview(); hintNode = null; }
       return;
     }
+    const p = canvasPoint(evt);
+    const node = R.hitTest(p[0], p[1]);
+    if (!node) { if (!pvPinned) hidePreview(); hintNode = null; return; }
+    if (node.kind === 'heading') {
+      hintNode = null;
+      if (!pvPinned) showPreviewFor(node, evt.clientX, evt.clientY, false);
+      return;
+    }
+    // 固定预览中：随手划过别的圆不打断阅读
+    if (pvPinned) return;
     // 文件夹 / 笔记：这一层还没有「标题」，没有可读的正文
     hidePreview();
     if (hintNode !== node.id) {
@@ -645,14 +659,56 @@
       if (pvLast) {
         const rect = canvas.getBoundingClientRect();
         const node = R.hitTest(pvLast[0] - rect.left, pvLast[1] - rect.top);
-        if (node && node.kind === 'heading') showPreviewFor(node, pvLast[0], pvLast[1]);
+        if (node && node.kind === 'heading') {
+          showPreviewFor(node, pvLast[0], pvLast[1], false);
+        } else if (node) {
+          // 光标已经停在文件夹/笔记圆上：按下 Ctrl 立刻给提示（不用等鼠标再动）
+          hidePreview();
+          hintNode = node.id;
+          toast(node.kind === 'folder'
+            ? '这一层是文件夹，还没到标题 —— 继续放大到标题圆'
+            : '这是笔记本身，还没到标题 —— 继续放大到标题圆');
+        }
       }
     }
   }, true);
   window.addEventListener('keyup', (evt) => {
-    if (evt.key === 'Control') { ctrlDown = false; R.setCtrlMode(false); hidePreview(); hintNode = null; }
+    if (evt.key === 'Control') {
+      ctrlDown = false;
+      R.setCtrlMode(false);
+      // 固定预览（Ctrl 悬停中单击打开的）不因松开 Ctrl 而消失 —— 否则长笔记没法读
+      if (!pvPinned) hidePreview();
+      hintNode = null;
+    }
   });
-  window.addEventListener('blur', () => { ctrlDown = false; R.setCtrlMode(false); hidePreview(); });
+  window.addEventListener('blur', () => { ctrlDown = false; R.setCtrlMode(false); if (!pvPinned) hidePreview(); });
+
+  // 单击 = **把已经打开的预览固定住**（Ctrl 悬停中单击标题圆）。
+  // 注意：不抢普通单击 —— 画布单击本来就是「选中节点」，侧栏/顶栏的点击更不能吞，
+  // 所以只在预览已经开着、且点在画布上的标题圆时才接管。
+  document.addEventListener('click', (evt) => {
+    if (evt.target !== canvas) return;               // 侧栏/顶栏的点击不碰
+    if (!PV.classList.contains('show')) return;      // 预览没开 → 单击照旧是选中
+    const p = canvasPoint(evt);
+    const node = R.hitTest(p[0], p[1]);
+    if (node && node.kind === 'heading') {
+      evt.preventDefault();
+      evt.stopPropagation();
+      showPreviewFor(node, evt.clientX, evt.clientY, true);
+      return;
+    }
+    if (pvPinned) hidePreview();                     // 点别处 → 收掉固定预览
+  }, true);
+
+  // 预览状态（自动化回归 / 控制台排查用；挂在文件末尾的 window.KG 上）
+  function pvState() {
+    return {
+      open: PV.classList.contains('show'),
+      pinned: pvPinned,
+      ctrl: ctrlDown,
+      note: pvNote,
+    };
+  }
 
   // 浮层里的 [[链接]] 点击 → 选中目标（与画布上点圆一致）
   PV.addEventListener('click', (e) => {
@@ -763,6 +819,7 @@
     zMax: R.zMax,
     zHome: R.zHome,
     select: select,
+    previewState: pvState,
     runSearch: runSearch,
     applyFilters: applyFilters,
     setLevel: (lv) => R.zoomToDepth(lv),

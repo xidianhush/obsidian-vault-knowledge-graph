@@ -70,6 +70,7 @@ def _escape_math(raw: str) -> str:
 
 
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
+HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+")
 
 
 def _outside_fences(text: str, fn) -> str:
@@ -87,6 +88,23 @@ def _outside_fences(text: str, fn) -> str:
             continue
         out.append(line if fence is not None else fn(line))
     return "\n".join(out)
+
+
+
+
+def _fence_flags(lines):
+    """每一行是否在代码围栏内部（含围栏行本身）。"""
+    flags = []
+    fence = None
+    for line in lines:
+        m = FENCE_RE.match(line)
+        if m:
+            marker = m.group(1)
+            fence = marker if fence is None else (None if fence == marker else fence)
+            flags.append(True)
+            continue
+        flags.append(fence is not None)
+    return flags
 
 
 def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, list, list]:
@@ -145,6 +163,30 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         lambda m: ATTACH_TPL.format(
             name=os.path.basename(m.group(0)[3:].strip().rstrip("]").strip())), line))
     body = _outside_fences(body, lambda line: HIGHLIGHT_RE.sub(r"<mark>\1</mark>", line))
+    # ── 锚点：按**源文件行号**注入，不依赖 markdown 里 <hN> 的输出顺序 ──────────
+    # 为什么不能用「按 HTML 里 <hN> 出现顺序编号」：我们的标题解析与 python-markdown
+    # 对「HTML 块里的 # 行」口径不同，会整体错位一格 —— 悬停 A 标题却看到 B 标题的
+    # 正文（2026-10-24 用户实测截图）。按行号注入后顺序不参与，永远不会错位。
+    offset = note.text.count("\n") - note.body.count("\n")
+    line_anchor = {}
+    for i, h in enumerate(note.headings):
+        idx = h.line - 1 - offset
+        if idx >= 0:
+            line_anchor[idx] = "pv-h%d" % i
+    ok_anchor = set()
+    if line_anchor:
+        lines = body.split("\n")
+        flags = _fence_flags(lines)
+        for idx, anchor_id in line_anchor.items():
+            if idx >= len(lines) or flags[idx] or not HEADING_LINE_RE.match(lines[idx]):
+                continue
+            lines[idx] = HEADING_LINE_RE.sub(
+                lambda m: m.group(1) + ' <span class="pv-anchor" id="%s"></span>' % anchor_id,
+                lines[idx], count=1)
+            ok_anchor.add(anchor_id)
+        body = "\n".join(lines)
+    anchors = ["pv-h%d" % i if ("pv-h%d" % i) in ok_anchor else None
+               for i in range(len(note.headings))]
     # 公式先「保护」起来：nl2br 会把 $$…$$ 里的换行变 <br>，定界符被拆进不同元素，
     # 运行时的 auto-render 就匹配不到（spike 实测踩到过）。
     store = []
@@ -189,16 +231,6 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         return MISSING_TPL.format(name=name)
 
     html = IMG_TAG_RE.sub(fix_img, html)
-    # 给每个标题打一个短锚点 id（`pv-h0`…）：渲染侧据此把浮层滚到「这一节」。
-    # 顺序与 `parse_headings` 一致（python-markdown 按文档序输出标题）；数量对不上时
-    # 调用方只会少拿到几个锚点 —— 滚不动就退回顶部，不会出错。
-    anchors = []
-
-    def add_id(m):
-        anchors.append("pv-h%d" % len(anchors))
-        return '<h%s id="%s">' % (m.group(1), anchors[-1])
-
-    html = re.sub(r"<h([1-6])>", add_id, html)
     return html, links, anchors
 
 

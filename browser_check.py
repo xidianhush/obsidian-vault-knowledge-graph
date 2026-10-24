@@ -697,6 +697,7 @@ with sync_playwright() as p:
             if (!el || !el.classList.contains('show')) return null;
             const imgs = [...el.querySelectorAll('img')];
             const a = el.querySelector('#' + %r);
+            const blk = a ? a.closest('h1,h2,h3,h4,h5,h6') : null;
             const pr = el.getBoundingClientRect();
             const crumbs = el.querySelector('.pv-crumbs');
             return {
@@ -704,11 +705,18 @@ with sync_playwright() as p:
                 imgs: imgs.length,
                 broken: imgs.filter(i => !i.naturalWidth).length,
                 scrollTop: el.scrollTop,
-                anchorRel: a ? (a.getBoundingClientRect().top - pr.top) : -9999,
-                anchorTag: a ? a.tagName : '',
-                anchorText: a ? (a.textContent || '').trim().slice(0, 40) : '',
+                anchorRel: blk ? (blk.getBoundingClientRect().top - pr.top) : -9999,
+                anchorTag: blk ? blk.tagName : '',
+                anchorText: (() => {
+                    if (!blk) return '';
+                    // KaTeX 会渲染两份（MathML + HTML），textContent 会把公式重复一遍
+                    const clone = blk.cloneNode(true);
+                    clone.querySelectorAll('.katex-mathml').forEach(e => e.remove());
+                    return (clone.textContent || '').trim().slice(0, 120);
+                })(),
                 crumbs: crumbs ? (crumbs.textContent || '') : '',
                 crumbsH: crumbs ? crumbs.offsetHeight : 0,
+                tooltipShown: (document.getElementById('tooltip') || {}).style.display === 'block',
                 inViewport: pr.left >= -1 && pr.top >= -1 &&
                             pr.right <= window.innerWidth + 1 &&
                             pr.bottom <= window.innerHeight + 1,
@@ -736,13 +744,44 @@ with sync_playwright() as p:
             check("这一节的标题本身渲染出来了（<hN> 有文字）",
                   pv["anchorTag"][:1] == "H" and len(pv["anchorText"]) > 0,
                   "%s %r" % (pv["anchorTag"], pv["anchorText"]))
+            # 关键回归：预览里的标题必须**就是悬停的那个标题**（2026-10-24 用户实测
+            # 悬停 A 却看到 B 的正文 —— 锚点按 HTML 顺序编号时整体错位一格）
+            norm = lambda s: "".join(ch for ch in (s or "")
+                                     if ch not in " \t\n$\\{}*_`|>#[]()")
+            pv_txt, hov_txt = norm(pv["anchorText"]), norm(tgt["label"])
+            head = hov_txt[:min(10, len(hov_txt))]
+            check("预览里的标题就是悬停的那个标题（不是下一个）",
+                  bool(head) and pv_txt.startswith(head),
+                  "预览=%r 悬停=%r" % (pv["anchorText"][:24], tgt["label"][:24]))
+            check("Ctrl 预览模式下不弹 hover 气泡", not pv["tooltipShown"])
             check("浮层面包屑显示「笔记 › 这一节」",
                   tgt["noteLabel"][:6] in pv["crumbs"] and tgt["label"][:6] in pv["crumbs"],
                   pv["crumbs"][:60])
             check("预览浮层没有超出视口", pv["inViewport"])
         shot("16_circle_preview")
 
-        # ② Ctrl + 悬停「笔记」圆 → 不预览 + toast 提示
+        # ② Ctrl 悬停中单击 = 固定预览（移开鼠标、松开 Ctrl 都不消失；Esc 收起）
+        page.mouse.click(VW / 2, (VH - 46) / 2)
+        page.wait_for_timeout(450)
+        pinned = page.evaluate("() => window.KG.previewState().pinned")
+        check("Ctrl 悬停中单击标题圆 = 固定预览", pinned)
+        page.mouse.move(40, VH - 120)
+        page.keyboard.up("Control")
+        page.wait_for_timeout(500)
+        still = page.evaluate("() => window.KG.previewState().open")
+        check("固定预览移开鼠标、松开 Ctrl 都不消失", pinned and still,
+              "打开=%s 移开后=%s" % (pinned, still))
+        pg_shot = page.evaluate("() => document.getElementById('preview').scrollTop")
+        check("固定预览可以滚动（长笔记能读下去）", pg_shot >= 0, "scrollTop=%d" % pg_shot)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(250)
+        check("Esc 收起固定预览",
+              page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
+        check("松开 Ctrl 后提示圆环消失",
+              page.evaluate("() => window.KG.renderer.stats.ctrlRings") == 0,
+              "rings=%s" % page.evaluate("() => window.KG.renderer.stats.ctrlRings"))
+
+        # ③ 光标停在「笔记」圆上按 Ctrl → 不预览 + toast 提示
         note_target = None
         note_zoom = 0
         for cand in page.evaluate("""() => {
@@ -760,25 +799,29 @@ with sync_playwright() as p:
                 note_target, note_zoom = cand, z
                 break
         if note_target:
+            # 干净的顺序：先 Esc 关掉一切，再把光标放到笔记圆心，最后按下 Ctrl ——
+            # 按下 Ctrl 那一刻就会按光标下的节点给提示（不依赖 mousemove，浮层也不会
+            # 盖住圆心把事件吃掉）。
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+            center_on(note_target, note_zoom)
             page.mouse.move(VW / 2, (VH - 46) / 2)
-            page.wait_for_timeout(420)
-            st = page.evaluate("""() => ({
-                shown: document.getElementById('preview').classList.contains('show'),
-                toast: (document.getElementById('toast') || {}).textContent || '',
-            })""")
-            check("悬停笔记圆不弹预览（还没到标题层）", not st["shown"], "shown=%s" % st["shown"])
+            page.wait_for_timeout(200)
+            page.keyboard.down("Control")
+            page.wait_for_timeout(450)
+            st = page.evaluate("""() => {
+                const ps = window.KG.previewState();
+                return {shown: ps.open, toast: (document.getElementById('toast') || {}).textContent || '',
+                        hit: (() => { const h = window.KG.renderer.hitTest(window.innerWidth / 2,
+                                    (window.innerHeight - 46) / 2); return h ? h.kind : null; })()};
+            }""")
+            check("悬停笔记圆不弹预览（还没到标题层）", not st["shown"],
+                  "shown=%s 命中=%s" % (st["shown"], st["hit"]))
             check("悬停笔记圆给出「还没到标题」提示", "还没到标题" in st["toast"], st["toast"][:40])
         else:
             warns.append("没找到中心落在笔记圆上的视图 -> 笔记圆提示未测")
-
-        # ③ 松开 Ctrl → 收起
         page.keyboard.up("Control")
-        page.wait_for_timeout(350)
-        check("松开 Ctrl 后浮层收起",
-              page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
-        check("松开 Ctrl 后提示圆环消失",
-              page.evaluate("() => window.KG.renderer.stats.ctrlRings") == 0,
-              "rings=%s" % page.evaluate("() => window.KG.renderer.stats.ctrlRings"))
+        page.wait_for_timeout(250)
 
         # ④ 药丸层必须真的没了（防止有人把 pills 改回来）
         gone = page.evaluate("""() => {

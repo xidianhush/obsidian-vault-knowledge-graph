@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import html as html_mod
 import re
 import sys
 
@@ -354,25 +355,43 @@ def run(cfg, payload_path=None):
                 per_note_anchor.setdefault(n.get("note"), []).append(n["anchor"])
         n_dup = [k for k, v in per_note_anchor.items() if len(v) != len(set(v))]
         _check(not n_dup, f"同一篇笔记内标题锚点不重复（重复 {len(n_dup)} 篇）", failures)
+        # 锚点必须真的出现在预览 HTML 里，而且**后面紧跟的就是该标题自己的文字** ——
+        # 上一版按「HTML 里 <hN> 的出现顺序」编号，遇到口径差异会整体错位一格，
+        # 悬停 A 标题却看到 B 标题的正文（2026-10-24 用户实测）。现在按源文件行号注入，
+        # 这条断言就是防它再错位。
+        def _plain(s):
+            s = html_mod.unescape(s or "")
+            s = re.sub(r"<[^>]+>", "", s)
+            return re.sub(r"[\s$\\{}*_`|<>#\[\]()=~]+", "", s)
+
         missing_anchor = []
+        misaligned = 0
+        checked = 0
         for note in notes:
             html = note.get("preview") or ""
-            for a in per_note_anchor.get(note["id"], ()):
-                if ('id="%s"' % a) not in html:
-                    missing_anchor.append(a)
-        _check(not missing_anchor,
-               f"每个标题锚点都能在所属笔记的预览 HTML 里找到（缺 {len(missing_anchor)} 个）",
-               failures)
-        # 锚点标题必须是合法开标签（`<hN id="pv-hX">`）—— 少个 `>` 会让浏览器把后面
-        # 的内容吞进标题，连标题文字都消失（2026-10-24 实测踩到，用户看到的就是「没标题」）
-        bad_tag = 0
-        for note in notes:
-            html = note.get("preview") or ""
+            got = len(re.findall(r'id="pv-h\d+"></span>', html))
             want = len(per_note_anchor.get(note["id"], ()))
-            got = len(re.findall(r'<h[1-6] id="pv-h\d+">', html))
-            bad_tag += max(0, want - got)
-        _check(bad_tag == 0,
-               f"锚点标题都是合法开标签 `<hN id=\"pv-hX\">`（坏 {bad_tag} 个）", failures)
+            if got < want:
+                missing_anchor.append((note["id"], want - got))
+            for h in heads:
+                if h.get("note") != note["id"] or not h.get("anchor"):
+                    continue
+                marker = 'id="%s"></span>' % h["anchor"]
+                k = html.find(marker)
+                if k < 0:
+                    continue
+                after = _plain(html[k + len(marker): k + len(marker) + 600])
+                want_txt = _plain(h.get("title") or "")
+                if len(want_txt) < 6:
+                    continue
+                checked += 1
+                if want_txt[:10] not in after:
+                    misaligned += 1
+        _check(not missing_anchor,
+               f"每个标题锚点都注入到了预览 HTML 里（缺 {sum(x[1] for x in missing_anchor)} 个）",
+               failures)
+        _check(misaligned == 0,
+               f"锚点后面紧跟的就是该标题自己的文字（错位 {misaligned}/{checked} 个）", failures)
         with_anchor = [n for n in heads if n.get("anchor")]
         ratio = len(with_anchor) / max(1, len(heads))
         _check(ratio >= 0.95,
