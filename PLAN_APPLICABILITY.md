@@ -155,11 +155,15 @@
 > 浏览器列（`--browser`）尚未标定：8 个库 × ~3 分钟，需要 Chrome；等阶段 1.2 修完缩放行程
 > 再一次性标定，否则现在标出来的数下一轮就全变。
 
-### 阶段 0.5：插件形态探针（半天，不写码） ⬜
+### 阶段 0.5：插件形态探针（半天，不写码） ✅ 2026-10-24（结论见 §9）
 读 Obsidian 插件 API，确认：① 插件能否直接读 vault 现算（决定路线 A/B：A=读 Python 产物、
 B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔离；③ 预览图片走哪条路径。
 **产出**：一页约束清单 → 写进阶段 0 的架构约束。**为什么必须在这里**：若走 B，`kg/layout.py`
 那套要移植成 JS，而移植必须在阶段 1 的算法定稿之后，否则移植两遍。
+
+**结论摘要**：走 **B**（移动端无 Node/Electron，A 路线根本上不了移动端）；解析层由平台代劳
+（`metadataCache` + `resolvedLinks`）；图片走 `vault.getResourcePath`；**模型层必须与 Python 同构**，
+用 8 个 fixture 的 payload 当 golden 文件防两个实现漂移。12 条硬约束见 §9.2。
 
 ### 阶段 1：参数从「写死」变「派生」 ⬜
 1.1 深度轴稠密化（标题级别 → 该笔记内出现过的 level 的**稠密 rank**）+ 清空层 + 单子链折叠
@@ -168,7 +172,11 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
 1.3 自动色板（golden-angle HSL + 名字 hash，手写覆盖优先）+ 图例改「实际出现过的 domain」+ 无文件夹库降级分组
 1.4 `home_level` 取「有内容的层」、`home_fit` 由最小根反算并**回写 home_layer**
 1.5 `NOMINAL_FIT_RADIUS=(900-46)/2=427` 把 1440×900 写进世界归一化 → 改成运行时视口（扣顶栏 + 侧栏）
-> 验收：fixture 表红项清一轮；作者库 110/132/133 不倒退；截图人眼。
+> **阶段 0.5 带来的新约束**：1.x 改出来的算法要写成**可移植的纯函数**（输入=节点树+配置，
+> 输出=坐标/半径/enter[]），浮点舍入点与现状对齐（x/y 3 位、r 4 位、enter 6 位），
+> 不要用 dict 顺序、生成器、Python 独有特性 —— 这样 JS 移植版能拿 8 个 fixture 的 payload
+> 当 golden 文件做逐位对比，否则「插件与演示效果一致」无法验收。
+> 验收：fixture 表红项清一轮；作者库 112/132/133 不倒退；截图人眼。
 
 ### 阶段 2：渲染侧泛化 ⬜
 2.1 标签预算派生 + 门（sr/出屏/碰撞）**移到预算之前** + 字号上限派生 + 修「只显示选中」（现在是 `off`）
@@ -309,7 +317,95 @@ knowledge-graph.public.html 20E14BF9E3B880BCAD7B49FC4E90B009977A8EC2E0B9BDE314FE
 
 ---
 
-## 9. 变更日志
+## 9. 阶段 0.5：插件形态探针（结论）✅ 2026-10-24
+
+> 只读探针，没有改任何渲染 / 布局 / 构建代码；依据是 Obsidian 官方开发者文档（链接见 §9.5）。
+> 这一节的结论会**反过来约束阶段 1.2 怎么写**，所以先看 §9.1 的三条。
+
+### 9.1 三个问题的答案
+
+| # | 问题 | 答案 | 依据 |
+|---|---|---|---|
+| ① | 插件能否直接读 vault 并在 JS 里现算布局？ | **能，而且比预想的省事得多**：`app.vault.getMarkdownFiles()` 拿文件、`app.metadataCache.getFileCache()` 拿**标题/链接/嵌入/frontmatter**、`app.metadataCache.resolvedLinks` 拿**已解析好的链接图**、`app.metadataCache.getFirstLinkpathDest()` 按 Obsidian 自己的规则解析链接。`kg/scan.py`、`kg/parse.py`、`kg/preview.py` 的解析职责基本由平台代劳 | `Vault`、`CachedMetadata`、`MetadataCache` |
+| ② | canvas 在 Obsidian 容器里的约束？ | `ItemView.contentEl` 里放 canvas 即可（Electron/Chromium，Canvas2D 与 rAF 全可用）；尺寸随标签页/侧栏拖拽变化 → 需要 `ResizeObserver`；DPR 走 `devicePixelRatio`；**插件 `styles.css` 是全局注入**，现有 `#topbar/#legend/#sidebar` 这类 id 选择器必须加命名空间，否则会跟主题/别的插件打架 | `ItemView` 示例（`contentEl`）、官方 CSS 变量惯例 |
+| ③ | 预览图片怎么走？ | **`app.vault.getResourcePath(file)`**（返回 `app://` URI，桌面与移动端都可用）—— 这直接解决现在「单文件其实不含图、换个目录图全碎」的问题；但**单文件 HTML 用不了它**，所以两种产物形态在图片上必然不同 | `Vault.getResourcePath(file: TFile): string` |
+
+**三条由此产生的结论：**
+
+1. **路线选 B（插件内置 JS 管线）**，不是 A（读 Python 产物）。理由不只是「用户装 Python 不现实」：
+   移动端**没有 Node/Electron**（官方原文：Node.js 与 Electron API 在移动端不可用），所以任何依赖
+   Python 子进程的方案都无法上移动端；而路线 B 在移动端只是算力问题，不是能力问题。
+2. **服务器时代的 30 分钟全量重建在插件里应该消失**：`Vault.on('create'/'modify'/'delete'/'rename')`
+   + `MetadataCache.on('resolved')` 足够做**增量重建**。单文件产物仍然需要定时全建。
+3. **模型层必须与 Python 端同构**（同一份 `{nodes, edges, layers, levels, meta}`）。这样插件产出的
+   payload 能直接喂给现有的 `verify.py --config` / `browser_check.py --config`（0.1~0.3 刚建好的
+   那套），「插件效果与演示一致」就从「人工承诺」变成**可断言**的事。
+
+### 9.2 平台约束清单（对架构的硬要求）
+
+| # | 约束 | 影响 | 处理阶段 |
+|---|---|---|---|
+| C1 | 移动端无 Node/Electron；`isDesktopOnly` 在 manifest 里声明 | 不能调 Python / `fs` / `child_process`；想上移动端就必须全 JS | 4 |
+| C2 | 插件要打包成 `main.js`（esbuild/rollup） | 与现在「零构建、手写 JS 直接内联」冲突 → 新增一条工具链；审查也关注 bundle 体积 | 4 |
+| C3 | Obsidian 自带 Markdown 与公式渲染 | **插件里不要内联 KaTeX**（0.6 MB），预览浮层用平台的 markdown 渲染 + 组件生命周期 | 4 |
+| C4 | 视图生命周期由平台管理：`onOpen/onClose`、`registerEvent`、不要长期持有 view 引用（官方明确警告） | rAF 循环必须在 `onClose` 停掉、视图不可见时暂停；否则切标签页后台还在烧 CPU | 4 |
+| C5 | `contentEl` 尺寸会变（拖侧栏、切分屏） | 画布 resize 必须挂 `ResizeObserver`，不能只在 `window.resize` 上做 | 4 |
+| C6 | 插件 CSS 全局注入 | 现有面板 id（`#topbar`/`#legend`/`#sidebar`/`#preview`）要改成插件命名空间前缀；否则在用户装了别的插件时可能出现样式互踩 | 4 |
+| C7 | **主题**：Obsidian 有浅色主题，而我们的视觉语言是深青玻璃 | 画布配色要么强制深色、要么出两套调色板（按 `theme-light` 切换）；面板用 Obsidian CSS 变量更稳 | 2 / 4 |
+| C8 | 图片必须走 `getResourcePath` | 预览里的 `<img>` 在生产端有两种来源（单文件=相对路径、插件=app://），构建期要能**按目标形态**产出 | 3 / 4 |
+| C9 | 插件不能依赖「构建期生成 payload」 | 布局/LOD 算法要能在浏览器里跑完一个几万节点的库（含打包），所以**纯函数 + 无 Python 特性**是硬要求 | 1.2 / 4 |
+| C10 | 移动端性能弱于桌面（无独立 GPU 保证） | ghost / 圆材质 / 月牙投影要能按 `Platform.isMobile` 降级 | 2 / 4 |
+| C11 | iOS 16.4 以下不支持正则 lookbehind | 预览/链接解析里如果用到 lookbehind 要换写法；JS 侧要自查一遍 | 4 |
+| C12 | 社区插件审核：无遥测 / 无远程代码 / 无广告 / manifest 规范 / 说明用途 | 插件版不能「联网调 LLM」（与 §2 的否决一致）；阶段 5 若做语义增强必须默认关闭且离线 | 4 / 5 |
+
+### 9.3 路线 B 的分工（哪些代码去哪）
+
+| 层 | 单文件 HTML（现在） | 插件（将来） | 共享方式 |
+|---|---|---|---|
+| 扫描 | `kg/scan.py` | `app.vault.getMarkdownFiles()` + `getAllFolders()` | 不共享（平台代劳） |
+| 解析 | `kg/parse.py` | `metadataCache.getFileCache()`（headings/links/embeds/frontmatter） | 不共享 |
+| 链接解析 | `graph.resolve` + `_normalize_heading` | `resolvedLinks` + `getFirstLinkpathDest` | 不共享；**顺手解决 P4 的 14 处锚点未命中**（Obsidian 的匹配规则更宽松） |
+| 建树/建边 | `kg/graph.py` | 移植成 JS（纯函数，输入=文件列表+缓存） | **golden payload 对比** |
+| 布局 + LOD 阶梯 | `kg/layout.py`（478 行） | 移植成 JS | **golden payload 对比**（x/y 3 位、r 4 位、enter 6 位） |
+| 渲染 | `web/render.js` | **原样复用**（只把宿主依赖抽走） | 同一个文件 |
+| 宿主胶水 | `web/app.js`（DOM/面板/预览） | `ItemView` 适配层 + 平台 markdown 渲染 | 拆成 adapter 接口 |
+| 预览 HTML | 构建期 `kg/preview.py` → 内联 | 运行时 `MarkdownRenderer` | 不共享（插件不需要预渲染，按需渲染即可） |
+
+**关键防漂移手段（建议阶段 1.2 就开始遵守）**：把 8 个 fixture 的 payload 当 **golden 文件**，
+JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这比「两个实现看起来一样」强得多，
+也让「插件演示效果与单文件一致」有可执行的判据。
+
+### 9.4 风险与未决问题
+
+1. **双实现漂移**（Python 布局 vs JS 布局）是最大风险。缓解：golden payload + 同一套 fixtures；
+   如果不能保证逐位一致，就退一步「几何等价」（三条包含关系 + enter[] 单调 + 同层同色）。
+2. **浅色主题**是设计层问题，不是工程问题：深青玻璃在白色背景上会很突兀。要么插件只支持深色
+   （体验打折），要么做两套画布配色（工作量翻倍在**调色**上，不在代码上）。
+3. **Obsidian 内部 API**（`MarkdownRenderer`、popover 之类）不是稳定公开 API，跨大版本可能变；
+   插件要包一层薄封装，坏了自己兜底（退化成纯文本预览）。
+4. **插件审核**的时间不可控；先以「本地安装 / BRAT」为目标形态，别把节奏押在审核上。
+5. 本探针**没有**在真实 Obsidian 里跑过代码（纯文档 + API 调研）。真正开工前建议做一次
+   「hello-world ItemView + 一块 canvas 渲染 100 个圆」的 30 分钟冒烟，确认 DPR/主题/尺寸三条。
+
+### 9.5 依据
+
+- 自定义视图（`ItemView` / `registerView` / `contentEl` / 不要持有 view 引用）：
+  https://docs.obsidian.md/Plugins/User+interface/Views
+- 移动端（Node/Electron 不可用、`isDesktopOnly`、`Platform`、iOS lookbehind）：
+  https://docs.obsidian.md/Plugins/Getting+started/Mobile+development
+- `Vault`（`getMarkdownFiles` / `cachedRead` / `getResourcePath` / 文件事件）：
+  https://docs.obsidian.md/Reference/TypeScript+API/Vault
+- `MetadataCache`（`resolvedLinks` / `unresolvedLinks` / `getFirstLinkpathDest` / 索引事件）：
+  https://docs.obsidian.md/Reference/TypeScript+API/MetadataCache
+- `CachedMetadata`（`headings` / `links` / `embeds` / `frontmatter` / `sections`）：
+  https://docs.obsidian.md/Reference/TypeScript+API/CachedMetadata
+
+> 注：本轮网络对部分文档页抓取不稳定，`MarkdownRenderer` 与插件提交规范没抓到原文，
+> 相关内容按官方文档的公开口径写，**阶段 4 开工前要逐条复核一遍**。
+
+---
+
+## 10. 变更日志
 
 | 日期 | 阶段 | 内容 | 提交 |
 |---|---|---|---|
@@ -317,3 +413,4 @@ knowledge-graph.public.html 20E14BF9E3B880BCAD7B49FC4E90B009977A8EC2E0B9BDE314FE
 | 2026-10-24 | 0.1 | `--config` + 未知参数报错 + 内联 scope（无 scope_file）+ 路径统一相对 config + 补齐 DEFAULTS；产物归一化后逐位不变 | `feat(app): 阶段 0.1`（见 `git log`） |
 | 2026-10-24 | 0.2 | 8 个形状 fixture + 确定性生成器 + manifest（canary / expected_ok / known_gaps）；8 库全部 build 通过 | `feat(fixtures): 阶段 0.2`（见 `git log`） |
 | 2026-10-24 | 0.3 | sweep runner + ok 计数/vault 身份/机器可读结果行；修 2 处崩溃 + 2 处「内容特征当契约」+ 内联 roots 多算附件目录；8 库标定为 426 ok / 22 FAIL | `feat(fixtures): 阶段 0.3`（见 `git log`） |
+| 2026-10-24 | 0.5 | 插件形态探针（只读）：路线 B + 平台代劳解析层 + `getResourcePath` 图片 + golden payload 防漂移；12 条平台硬约束 | `docs(plan): 阶段 0.5`（见 `git log`） |
