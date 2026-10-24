@@ -143,23 +143,32 @@ class GraphBuilder:
     def build_heading_nodes(self):
         """把每篇笔记的标题树提升为一等节点。
 
-        depth = 所属笔记 depth + 标题级别，于是「文件夹 → 笔记 → 章 → 节 → 小节」
-        落在同一条深度轴上，缩放时可以逐层淡入而不必区分它们是文件还是标题。
+        **2026-10-24 阶段 1.1：标题级别先稠密化再当层数。**
+        原来是 `depth = 笔记深度 + 标题级别字面值`（`######` 直接 +6）：一篇笔记里用一次
+        六级标题就把整条深度轴拉长 5 层，全库只出现 h1/h3 时中间还会空出一层 ——
+        空层占掉一整条缩放带，滚轮走过去画面什么都不变，HUD 的 n/max_depth 也虚高。
+        现在按「这篇笔记自己用到的级别」排序映射成 1..k（h1,h3,h4 → 1,2,3），
+        节点仍保留 `level` = 原始 markdown 级别（展示/调试用），`rank` = 压缩后的层。
+        顺带好处：`h1 → h4` 这种跳级的父子深度差从 3 变成 1，层级带更连续。
         """
         count = 0
         for note in self.notes:
             nnode = self.nodes.get(note.file.id)
             if nnode is None:
                 continue
+            rank_of = {lv: i + 1 for i, lv
+                       in enumerate(sorted({h.level for h in note.headings}))}
             for h in note.headings:
+                rank = rank_of[h.level]
                 self.add_node(
                     h.id,
                     kind="heading",
                     label=h.title,
-                    depth=nnode["depth"] + h.level,
+                    depth=nnode["depth"] + rank,
                     parent=h.parent or note.file.id,
                     domain=nnode["domain"],
                     level=h.level,
+                    rank=rank,
                     title=h.title,
                     line=h.line,
                     note=note.file.id,

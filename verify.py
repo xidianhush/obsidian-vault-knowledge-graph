@@ -640,10 +640,29 @@ def run(cfg, payload_path=None):
               if n["parent"] not in nodes or nodes[n["parent"]]["depth"] >= n["depth"]]
     _check(not broken,
            f"标题节点的父指针都存在且比它浅（坏了 {len(broken)} 个）", failures)
+    # 2026-10-24 阶段 1.1：标题级别先稠密化（h1,h3,h4 → 1,2,3）再当层数，
+    # 所以「深度 == 笔记深度 + 级别字面值」不再成立；改成对 `rank` 断言，并且 rank 必须是
+    # 这篇笔记自己的稠密序列 1..k（防止有人把字面级别又改回去）。
     offnote = [n["id"] for n in heading_nodes
-               if n["depth"] != nodes[n["note"]]["depth"] + n["level"]]
+               if n["depth"] != nodes[n["note"]]["depth"] + n["rank"]]
     _check(not offnote,
-           f"标题节点深度 == 所属笔记深度 + 标题级别（不符 {len(offnote)} 个）", failures)
+           f"标题节点深度 == 所属笔记深度 + 稠密级别 rank（不符 {len(offnote)} 个）", failures)
+    by_note = {}
+    for n in heading_nodes:
+        by_note.setdefault(n["note"], []).append(n)
+    bad_rank = []
+    for note_id, items in by_note.items():
+        ranks = sorted({n["rank"] for n in items})
+        if ranks != list(range(1, len(ranks) + 1)):
+            bad_rank.append(note_id)
+    _check(not bad_rank,
+           f"每篇笔记的 rank 都是稠密序列 1..k（不连续 {len(bad_rank)} 篇）", failures)
+    # 空层：深度轴的每一层都必须有节点，否则滚轮会走过一条什么都不变的带
+    used_depths = {n["depth"] for n in data["nodes"]}
+    empty_layers = [d for d in range(1, int(meta["max_depth"]) + 1) if d not in used_depths]
+    _check(not empty_layers,
+           f"深度轴没有空层（depth 1..{meta['max_depth']} 每层都有节点；空 {len(empty_layers)} 层"
+           + (f"：{empty_layers[:6]}" if empty_layers else "") + "）", failures)
     lv = {}
     for n in heading_nodes:
         lv[n["level"]] = lv.get(n["level"], 0) + 1

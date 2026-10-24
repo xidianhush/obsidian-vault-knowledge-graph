@@ -70,10 +70,13 @@ def payload_stats(path: str) -> dict:
 
 
 def check_canary(canary: dict, stats: dict) -> list:
+    """canary 里写了的键都要对上（支持 folders/notes/headings/semantic_edges/max_depth …）。"""
     bad = []
-    for key in ("folders", "notes", "headings", "semantic_edges"):
-        if key in canary and canary[key] != stats[key]:
-            bad.append("%s: 期望 %s 实际 %s" % (key, canary[key], stats[key]))
+    for key, want in canary.items():
+        if key not in stats:
+            bad.append("%s: 未知的 canary 字段（stats 里有 %s）" % (key, ", ".join(sorted(stats))))
+        elif want != stats[key]:
+            bad.append("%s: 期望 %s 实际 %s" % (key, want, stats[key]))
     return bad
 
 

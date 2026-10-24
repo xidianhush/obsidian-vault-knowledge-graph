@@ -142,11 +142,18 @@ def fx_hub_dense(base: str) -> None:
 
 
 def fx_heading_zoo(base: str) -> None:
-    """h1..h6 链 + 笔记内重复标题 + 公式 + 图片。"""
+    """h1..h6 链 + **只用 h5/h6 的笔记** + 笔记内重复标题 + 公式 + 图片。
+
+    Offset.md 是阶段 1.1 的靶子：它的标题从 `#####` 起。旧口径（标题级别字面值当层数）下
+    这篇笔记会把深度轴凭空拉长 4 层；稠密化之后它只占「笔记深度 +1 / +2」。
+    """
     zoo = os.path.join(base, "vault", "Zoo")
     chain = ["# 一级", "## 二级", "### 三级", "#### 四级", "##### 五级", "###### 六级"]
     w(os.path.join(zoo, "Chain.md"),
       "\n\n".join(f"{h}\n\n第 {k} 层正文，公式 $x^{k}+y_{k}=z$。" for k, h in enumerate(chain, 1)) + "\n")
+    w(os.path.join(zoo, "Offset.md"),
+      "##### 从五级开始\n\n这篇笔记不用 h1~h4（粘贴来的片段常见）。\n\n"
+      "###### 六级小节\n\n**稠密化之后它的层数只占 +1 / +2，不是 +5 / +6。**\n")
     for i in (1, 2, 3):
         w(os.path.join(zoo, f"Dup {i:02d}.md"),
           f"# Dup {i:02d}\n\n## 总结\n\n第一段。\n\n## 过程\n\n正文。\n\n## 总结\n\n重复的标题名。\n")

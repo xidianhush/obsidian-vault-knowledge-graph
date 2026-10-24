@@ -27,7 +27,7 @@ fixtures:
     tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
     config: vaults/tiny/config.yaml
     canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     # 2026-10-24 阶段 1.4：根笔记模型已修（domain = 笔记自己的 id、depth1 允许是 note、
     # 越界判据改走父链取顶层祖先）—— verify 侧现在 **0 红**。
     known_gaps:
@@ -42,7 +42,7 @@ fixtures:
     tests: 层级带 steps==0 / home_layer 夹取 / 最小规模冒烟
     config: vaults/shallow/config.yaml
     canary: {folders: 1, notes: 15, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
 
   deep-chain:
@@ -51,7 +51,7 @@ fixtures:
     tests: 独子链 / 深度轴拉长 / 顶栏层级胶囊溢出（12 个 pill 在 1440px 下超额）
     config: vaults/deep-chain/config.yaml
     canary: {folders: 10, notes: 10, headings: 10, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
       - "[PILLS] 浏览器侧胶囊数 = max_depth，12 个在 1440px 下会挤压 / 裁切（template.html:86-91）—— 阶段 2.4"
 
@@ -61,7 +61,7 @@ fixtures:
     tests: 根数 ≠ 6 / 最小份额 / 学科色板只有 7 + 单一 fallback / 图例按实际 domain
     config: vaults/wide-roots/config.yaml
     canary: {folders: 30, notes: 150, headings: 150, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
       - "[LEGEND] 面板按 depth1 folder 列 30 行，280px 宽 + 一列长滚动（template.html:153,157）—— 阶段 2.5"
       - "[BROWSER] 这个 fixture 没有任何语义边 → 7b/7c/7d 的边相关用例不适用（浏览器侧要加显式跳过）—— 阶段 2"
@@ -75,16 +75,18 @@ fixtures:
     tests: 边绘制预算（每帧逐条画）/ 焦点模式 / 端点标记 / chip 折叠 / 标题级链接
     config: vaults/hub-dense/config.yaml
     canary: {folders: 1, notes: 80, headings: 320, semantic_edges: 335}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
 
   heading-zoo:
     title: 标题动物园
-    shape: 1 篇 h1..h6 链 / 3 篇笔记内重复「总结」/ 2 篇带图片 / 2 篇带公式（实测 depth 8）
-    tests: 标题深度轴 / 锚点唯一性与错位 / KaTeX / 图片相对路径
+    shape: 1 篇 h1..h6 链 / **1 篇只用 h5+h6（Offset.md）** / 3 篇笔记内重复「总结」/ 2 篇带图片 / 2 篇带公式
+    tests: 标题层数稠密化（阶段 1.1）/ 锚点唯一性与错位 / KaTeX / 图片相对路径
     config: vaults/heading-zoo/config.yaml
-    canary: {folders: 1, notes: 6, headings: 20, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    # max_depth=8 是稠密化后的读数：Offset.md 的 h5/h6 只占「笔记深度 +1 / +2」，
+    # 不是 +5 / +6。若谁把 depth 改回标题级别字面值，verify 的 rank 断言会红。
+    canary: {folders: 1, notes: 7, headings: 22, semantic_edges: 0, max_depth: 8}
+    expected_ok: {verify: 64}
     known_gaps:
 
   plain:
@@ -93,7 +95,7 @@ fixtures:
     tests: 「内容特征被当成契约」—— verify 的公式断言、标题锚点覆盖率、browser 3e 的靶子
     config: vaults/plain/config.yaml
     canary: {folders: 1, notes: 10, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
 
   remap-dup:
@@ -102,5 +104,5 @@ fixtures:
     tests: scope_file 工作流 / `as` 落地名 / 同名 stem 解析歧义 / 空目录不进图
     config: vaults/remap-dup/config.yaml
     canary: {folders: 2, notes: 4, headings: 4, semantic_edges: 0}
-    expected_ok: {verify: 62}
+    expected_ok: {verify: 64}
     known_gaps:
