@@ -1,6 +1,6 @@
 # 交接文档 —— 知识笔记语义缩放可视化系统
 
-> ⚠️ **先读 `HANDOFF_NEXT.md`（2026-10-24 已更新）**：它只有 170 多行，是近两轮的现状 +
+> ⚠️ **先读 `HANDOFF_NEXT.md`（2026-10-24 已更新）**：它只有 220 多行，是近两轮的现状 +
 > 给接手者的三步起手式 + 已过期章节清单。本文档的 §3 里那批「示例快照」数字**已经过期**
 > （还写着聚合边、162 ok、home 停在第 1 层的旧口径），以 `HANDOFF_NEXT.md` §5 和
 > `git log` 为准。
@@ -8,10 +8,15 @@
 > 写给接手「看图验证 + 改进优化」的编程智能体。先读这份，再读 `README.md`
 > （§4 语义缩放机制、§8 关键实现决定是同一批内容的用户视角版本）。
 
-> **2026-10-24 更新：本轮是产品减法**（两个本地提交：`977e358` 砍「按尺度聚合」画边模式、
+> **2026-10-24 更新①（产品减法）**（两个本地提交：`977e358` 砍「按尺度聚合」画边模式、
 > `6af69fe` 砍「掌握度 / 重要度」节点标注）。**§0 / §3 / §8 里的历史快照数字已不能复现**
-> —— 聚合边与掌握度都已不在，单文件从 ~11.3 MB 降到 ~6.1 MB。当前基线见 `HANDOFF_NEXT.md`
-> §5；本轮的取舍与「别加回来」见 §4 新增**坑 42**；调参地图见 §5。
+> —— 聚合边与掌握度都已不在，单文件从 ~11.3 MB 降到 ~6.1 MB。取舍与「别加回来」见 §4
+> **坑 42**。
+>
+> **2026-10-24 更新②（视觉改版，提交 `c93a84e`）**：深青玻璃材质 + ghost 下一层 + 链接按
+> 学科色；用户首版打分 **85/100**、方向认可。它是纯视觉改动，**LOD / 交互契约没动**，但有
+> 三样「别改回去」（背景在 CSS、画布透明、ghost 与 LOD 解耦）—— 见 §4 新增**坑 43**；
+> 新配置键与性能读数见 §5 / §8。当前基线在 §0 与 `HANDOFF_NEXT.md` §5。
 
 ---
 
@@ -19,8 +24,10 @@
 
 **Canvas2D 自绘 + circle packing 嵌套圆 + 10 层深度轴 + 按深度层级带淡入淡出**；连线
 **只有「逐条链接」一种画法**（按尺度聚合的模式已在 2026-10-24 删除，见坑 42），节点
-**没有掌握度 / 重要度标注**；产出单文件 HTML（private **6.12 MB** / public **6.14 MB**，
-2026-10-24 12:12 实测，会漂）。数据侧 `build.py verify --scope all` 两份全绿（合计 110 `[ok]`
+**没有掌握度 / 重要度标注**；2026-10-24 又完成**深青玻璃视觉改版**（提交 `c93a84e`：
+CSS 深青渐变背景 + 画布透明 + 玻璃面板 + 圆材质 + ghost 下一层 + 链接按学科色；用户
+**85/100**、方向认可，见坑 43）；产出单文件 HTML（private **6.13 MB** / public **6.15 MB**，
+2026-10-24 14:45 实测，会漂）。数据侧 `build.py verify --scope all` 两份全绿（合计 110 `[ok]`
 / 0 FAIL：private 55 / public 55）；浏览器侧 `browser_check` private 132 / public 133 `[ok]`、0 FAIL、1 warn（条件跳过）。
 本地仓库**未 push，也不该 push**。
 
@@ -88,9 +95,9 @@ b528d2d  第13步：标签字号绑屏幕半径 + 淡入淡出平滑 —— 字�
 ```bash
 cd D:/obsidian_vault/knowledge-graph
 python build.py build        # 不出 --scope 时 = private：生成 dist/knowledge-graph.html
-                             # （单文件，2026-10-24 12:12 实测 6265 KB ≈ 6.12 MB；
+                             # （单文件，2026-10-24 14:45 实测 6277 KB ≈ 6.13 MB；
                              #   该值随 vault 内容漂移，不是固定不变量）
-python build.py build --scope all    # 两份都建（public → dist/knowledge-graph.public.html，同快照 6291 KB）
+python build.py build --scope all    # 两份都建（public → dist/knowledge-graph.public.html，同快照 6303 KB）
 python build.py verify       # 数据侧自动校验，应全绿（合计 110 [ok] / 0 FAIL：private 55 / public 55）
 python browser_check.py      # 浏览器侧 ~132 项断言 + 截图，应全绿（public 那份 133；
                              #   默认查 private 那份 HTML；
@@ -186,9 +193,12 @@ knowledge-graph/
 │                          ⚠️ **公开范围不在这里**，去 vault 的 quartz-setup/public-scope.yaml 改
 ├── build.py             CLI：scan | suggest | build | verify | watch | scope（都吃 --scope/-s）（387 行）
 ├── verify.py            数据侧自动校验（断言式，无测试框架；含 scope 范围一致性断言）（582 行）
-├── browser_check.py     浏览器侧自动回归：~132 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（1597 行）
+├── browser_check.py     浏览器侧自动回归：~132 项断言 + 截图（默认查 private；`KG_HTML` 可切 public）（1600 行）
+│                        ↑ 2026-10-24 视觉改版起，3 个像素探针（`HINT_PIXELS` / `CANVAS_LIT` /
+│                          home 的 painted 采样）用 **alpha 判据**（画布透明，空画布 = alpha 0），
+│                          不再和背景色 `#0f1116` 逐通道比对 —— 别改回去
 ├── sync-graph.ps1       计划任务包装：防重入 lock + python 检查 + UTF-8 + 日志裁剪 400 行；建本地的两份（`build --scope all`）（49 行）
-├── kg/config.py         读 public-scope.yaml、解析各 scope、配置校验（中文报错；退役键直接报错）（382 行）
+├── kg/config.py         读 public-scope.yaml、解析各 scope、配置校验（中文报错；退役键直接报错；含 `ghost_*` / `edge_color` 校验）（401 行）
 ├── kg/scan.py           白名单 glob 扫描 + 落地名（remap）前缀重写               （118 行）
 ├── kg/parse.py          frontmatter / 标题树（跳过代码块）/ wiki 链接 / 摘要     （205 行）
 ├── kg/graph.py          层级树、语义边、标题级链接、每层读数、重映射路径的别名索引（428 行）
@@ -198,20 +208,22 @@ knowledge-graph/
 ├── kg/preview.py        Obsidian 式预览：markdown → HTML / 图片链接解析（2026-10-22）（315 行）
 ├── kg/ioutils.py        stdout UTF-8（`setup_stdout()`）                        （18 行）
 ├── kg/emit.py           输出 graph.json 与自包含单文件 HTML                      （96 行）
-├── web/template.html    骨架 + CSS（顶栏：搜索框 / 学科下拉 / 标签下拉 / 重置视角；图例三块：
-│                        学科 / 关系 `#legend-rel` / 节点；侧栏；画布；`#footer`）（301 行）
-├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定（含方向键/Home）、window.KG（821 行）
+├── web/template.html    骨架 + CSS（深青玻璃主题：`body` 背景渐变 + 颗粒、`:root` 里的
+│                        `--accent` / `--glass-border` / `--glass-shadow`、面板 `backdrop-filter`；
+│                        顶栏 / 图例三块：学科 / 关系 `#legend-rel` / 节点；侧栏；画布；`#footer`）（354 行）
+├── web/app.js           状态机、搜索过滤、侧栏、层级胶囊、事件绑定（含方向键/Home）、window.KG（817 行）
 ├── web/render.js        Canvas2D 渲染器：相机、趟次绘制、逐条链接（唯一画法，`drawEdges`）、
-│                        端点标记、屏外 chip、fitPair、拾取、标签竞争、键盘平移 `panBy`/`panStep`
-│                        （1438 行）
+│                        实心圆材质（`nodeGradient`）、ghost 下一层（`drawGhost`）、链接按学科色
+│                        （`drawSegment`）、端点标记、屏外 chip、fitPair、拾取、标签竞争、键盘平移
+│                        `panBy`/`panStep`（1601 行）
 │                        ⚠️ 端点用 `rawAnchor`：**恒返回这条边真实的两个端点节点**，不沿 `parent`
 │                        链上移。`resolveAnchor` 随聚合模式一起删了（2026-10-24），别去找。
 ├── annotations.yaml     用户手工标注（`notes.{aliases, domain}` + 手工边）—— **目前是空的**
 ├── candidates.yaml      候选边（待审核）
 ├── sync-graph.log/.lock 运行时产物，gitignore
 └── dist/                构建产物，gitignore
-    ├── graph.json / knowledge-graph.html              private（旧文件名；2026-10-24 12:12 快照 5771 KB / 6265 KB）
-    └── graph.public.json / knowledge-graph.public.html public （同快照 5770 KB / 6291 KB）
+    ├── graph.json / knowledge-graph.html              private（旧文件名；2026-10-24 14:45 快照 5771 KB / 6277 KB）
+    └── graph.public.json / knowledge-graph.public.html public （同快照 5770 KB / 6303 KB）
 ```
 
 vault 那边还有一份（**唯一真源**，本项目只读）：
@@ -599,13 +611,15 @@ fps 与滚轮 ms 两个 perf 读数会被污染。）
 20. **箭头一直存在，「看不见」是四个原因叠加 —— 别再去加一个「显示箭头」的开关。**
     用户报「看不出连线从哪到哪」时，`drawEdges` 里其实早就在画箭头了。它看不见是：
     ① **边色 == 节点色**，当年 `theme.edges.derives` 与 `theme.domains["Science and Tech"]`
-      是同一个 `#4C8DFF`，箭头贴在圆边上等于隐形（`theme.edges` 已随聚合模式退役，现在所有
-      链接统一用 `theme.raw_edge` 近白，与节点 domain 色拉开）；
+      是同一个 `#4C8DFF`，箭头贴在圆边上等于隐形（`theme.edges` 已随聚合模式退役；2026-10-24
+      起链接按学科色，但每条线先画 1.8px 暗底描边、端点标记再 `tintLight` 提亮，所以同域也
+      不隐形 —— 见坑 34 / 43）；
     ② 线是**圆心到圆心**画的，两端都插进圆里，箭头正好落在被实心圆盖住的区段上；
     ③ 箭头只有约 **5.4px**，还要再乘 0.45 的 alpha；
     ④ 画在 `drawNodes` **之前**，packing 里圆是相切的，紧贴的邻圆能把它整个盖掉。
     现在的解法对应四条：两端各截断 `lod.edge_trim_clearance` 像素（线不再进圆心）、
-    标记改用 `MARK_RGB`（线色向 `#d6dbe4` 混白 `lod.edge_marker_tint`，与节点色拉开）、
+    标记改用 `tintLight`（线色向 `#d6dbe4` 混白 `lod.edge_marker_tint`，与节点色拉开；
+    2026-10-24 视觉改版起按两端各自的学科色派生，函数名从 `MARK_RGB` 改为 `tintLight`）、
     箭头尺寸跟线宽走并夹在 `[7,14]`、落笔单独一趟排在 `drawNodes` 之后；而且**整趟连线
     就画在实心圆之上**（2026-10-21 起，见坑 40），所以 ②④ 那两条遮挡从根上没了。
     还有一处「虚线」误认：用户看到的虚线是 `drawChainHighlight` 的**祖先链**（包含关系），
@@ -808,8 +822,8 @@ fps 与滚轮 ms 两个 perf 读数会被污染。）
     按钮读的是 `path`（`web/app.js` 拼 `obsidian://open?…`），改成 `Study log/…` 就跳不过去了。
 
 30. **公开图谱 HTML 的体积账 —— `publish_graph` 默认 `false` 是算过的，别顺手改成 `true`。**
-    那份 HTML 现在约 **6.14 MB**（2026-10-24 12:12 实测；删聚合边之前是 8.7 MB —— 量级变了
-    但结论不变）；
+    那份 HTML 现在约 **6.15 MB**（2026-10-24 14:45 视觉改版后实测；删聚合边之前是 8.7 MB
+    —— 量级变了但结论不变）；
     站点仓库 `quartz-site` 近 60 天实测 **144 次提交 ≈ 2.4 次/天**（最后一次 2026-10-15 10:47:42 +0800）。
     （提交频率是示例快照，下面这笔账的量级不随快照变。）
     每次内容变动都往仓库里提交一整个 HTML 就是 6.14 MB × 2.4 × 365 ≈ **5.4 GB/年**
@@ -921,18 +935,18 @@ fps 与滚轮 ms 两个 perf 读数会被污染。）
       `browser_check.py` 的 3c 段因此把 break 条件从 `stats.nodes == 0` 改成 `stats.painted == 0`
       （见 §8 基线）。
     * **回归覆盖**：新增 **3d** 段，9 档缩放（0.005 / 0.02 / 0.1 / 0.4612 / 3 / 30 / 1000 /
-      30000 / 1e5）× 4 种平移共 **36 组**，每组用整画布探针 `CANVAS_LIT`（数遍全屏与背景色
-      `#0f1116` 不同的像素）断言「**没有任何一组留下空白画布且没有提示**」。修之前它在 public
-      上扫得出违规组，修完 **0 组**（`nodes` 与 `painted` 一并读出来，方便一眼看出是哪一侧
-      骗了人）。**别把 3d 的收尾改回 `resetView()`**：那是 364ms 的 tween，而极端 zoom 下每帧要
+      30000 / 1e5）× 4 种平移共 **36 组**，每组用整画布探针 `CANVAS_LIT`（数全屏 alpha > 8 的
+      像素；2026-10-24 视觉改版前是「和背景色 `#0f1116` 不同的像素」）断言「**没有任何一组
+      留下空白画布且没有提示**」。修之前它在 public 上扫得出违规组，修完 **0 组**（`nodes` 与
+      `painted` 一并读出来，方便一眼看出是哪一侧骗了人）。**别把 3d 的收尾改回 `resetView()`**：那是 364ms 的 tween，而极端 zoom 下每帧要
       栅格化半径上百万像素的圆弧、rAF 被拖住，tween 迟迟走不完 —— 测试要的是确定的起始状态，
       不是动画（§8 基线有实测到的假红）。
 
 34. **画边只有一种模式：`raw`（逐条链接）—— 别再假设「边一定随缩放聚合」。**
-    用户的原始要求是：标题→标题的链接在**任何**缩放尺度都在，颜色和浓淡不变，只变**形状**
-    （线的长度和走向 —— 线宽也恒定）。2026-10-24 起这就是唯一画法；**另一条「按尺度聚合
-    （`agg`）」的路径已整条删除**（当时它会让链接缩小后变淡、变少、最后消失 —— 那正是用户
-    不要的效果；理由与收益见坑 42）。
+    用户的原始要求是：标题→标题的链接在**任何**缩放尺度都在，颜色和浓淡不变（颜色在建期
+    按学科定，见下），只变**形状**（线的长度和走向 —— 线宽也恒定）。2026-10-24 起这就是
+    唯一画法；**另一条「按尺度聚合（`agg`）」的路径已整条删除**（当时它会让链接缩小后变淡、
+    变少、最后消失 —— 那正是用户不要的效果；理由与收益见坑 42）。
     * **两个容器之间细线的条数才是关联强度，端点永不换代表。** 每帧遍历全部 `SEM`、每条
       原始边各画一条线，两端恒为真实节点自己的世界坐标（`rawAnchor`）。不查 `aggregates[L]`、
       不沿 `parent` 链上移端点（那套 `resolveAnchor` 已删）。于是缩到文件级时 heading 级的边
@@ -945,20 +959,26 @@ fps 与滚轮 ms 两个 perf 读数会被污染。）
       越强）。**扇形机制已整体删除**，`raw_edge_spread` 这个键在 `kg/config.py` / `config.yaml`
       里也不存在了：真实端点本来就散在父圆内部的不同位置，一束线天然散开。关联强度完全由
       条数表达。
-    * **颜色统一（2026-10-20 起），不再按粒度 / 关系类型分色。** 所有语义链接线一律用
-      `theme.raw_edge`（`#E6EDF3`，近白），端点标记由它 `tintLight` 派生；整篇级 `[[笔记]]`
-      与标题级 `[[笔记#标题]]` **同色**。理由（用户原话意译）：文件夹 / 笔记 / 标题都是人为
-      规定的**存储结构**，这张图关心的是知识内在的包含关系与连接关系，存储粒度不该参与视觉
-      编码。**关系类型没有丢**：`contrast` 走虚线 `[5, 4]`、只有 `derives` / `prerequisite`
-      画箭头（其余两端只画点）。**线型**才是类型信号，**颜色**不再是。
-      ⚠️ 三条别再改回去 / 别误删：
+    * **配色按学科色（2026-10-24 视觉改版起，方案 A）。** 同域链接 = 该学科 `domain` 色向白
+      提亮 `theme.edge_tint`（0.52），跨域链接 = 从源学科色到目标学科色的线性渐变；每条线先画
+      一层 1.8px 宽暗底描边（alpha 随焦点/压暗等比缩放），保证亮线压在同色亮圆上仍读得出。
+      端点标记仍由线色 `tintLight` 派生。**存储粒度仍然不参与配色**（2026-10-20 起的这条原则
+      没变）：整篇级 `[[笔记]]` 与标题级 `[[笔记#标题]]` 用同一套规则。`theme.edge_color:
+      "flat"` 可退回旧的统一近白；`theme.raw_edge`（`#E6EDF3`）现在只在 flat 模式 / 无 domain
+      节点时当兜底色。理由（用户原话意译）：文件夹 / 笔记 / 标题都是人为规定的**存储结构**，
+      这张图关心的是知识内在的包含关系与连接关系，存储粒度不该参与视觉编码。**关系类型没有
+      丢**：`contrast` 走虚线 `[5, 4]`、只有 `derives` / `prerequisite` 画箭头（其余两端只画
+      点）。**线型**才是类型信号，**颜色**现在是「这条线属于哪两个学科」的信号。
+      ⚠️ 四条别再改回去 / 别误删：
       ① **`e._nl` 与分组键上的粒度后缀 `\0n` 必须保留**（`drawFocusEdges` 里 `nl = e._nl`）——
         它现在**不负责上色**，只负责让两种粒度各自成组；去掉会把 note 级边「LTI→Calculus」
         和 heading 级边「LTI#CTFT→Calculus#定积分」并成一条（它们在文件级解析到同一对锚点、
         同为 derives），`stats.focusEdges` 少算一条，7b/7d 的读数整体漂移。
-      ② **关系类型别丢**（见上）；③ **别按关系类型改回颜色** —— `theme.edges` 已退役，见到会
-        报错；统一色是与节点 domain 色拉开对比的前提（坑 20 ①）。`theme.note_edge` 也已改名
-        `theme.raw_edge`，旧键会被拒。
+      ② **关系类型别丢**（见上）；③ **别按关系类型 / 存储粒度改回颜色** —— `theme.edges` 已退役，
+        见到会报错；存储粒度不参与配色是用户认可的设计原则。
+      ④ **别把默认配色改回统一近白** —— 用户 2026-10-24 给学科色方案打了 85/100；要临时回退
+        用 `theme.edge_color: "flat"`，别改代码默认值（`kg/config.py` 的缺省也是 `"domain"`）。
+        `theme.note_edge`（旧键名）已被 config 校验拒绝。
     * **alpha 恒为 1，焦点/悬停压暗保留。** 不乘端点淡入进度、也不按条数打折；`FOCUS_DIM` /
       `HOVER_DIM` 的压暗照旧（那是「我选中的是什么」的语义，与缩放无关）。`drawFocusEdges`
       补画时线宽恒为 `RAW_LW + 0.8`、alpha 恒为 1。
@@ -1233,6 +1253,8 @@ vault 里写坏的 markdown（表格里的
       代码侧少一条并行画边路径（聚合版 `drawEdges` 152 行 + `resolveAnchor` +
       `drawFocusSegment` + 聚合索引/去重/分色），`render.js` 1804 → 1438 行；
       `kg/graph.py` 507 → 428、`browser_check.py` 1746 → 1597。
+      （2026-10-24 视觉改版后又加了 `nodeGradient` / `drawGhost` / 学科色链接，`render.js` 现
+      1601 行、`browser_check.py` 1600 行、`template.html` 354 行 —— 别拿这里的 1438 当现状。）
     * **掌握度 / 重要度**：这两个标注从建库起就一直是空的 —— `dist/graph.json` 里
       `mastery>0` 的节点 0 个、所有笔记 `weight` 恒为 1.0，界面上只剩「未标注」噪声，
       还和选中 / 搜索 / 邻居三种环抢同一条描边。删掉后顶栏少 2 个控件、图例少一行、
@@ -1258,6 +1280,43 @@ vault 里写坏的 markdown（表格里的
     侧栏 chip、hover 行与渲染器描边分支；不要恢复 `annotations.yaml` 的 `mastery` / `weight`
     节点字段或 `precedence`。用户要的是减法；要压「线网感 / 首屏观感」请走
     `lod.idle_edge_dim`、焦点模式、`zoom.home_*` 这些旋钮，不是把模式加回来。
+
+43. **视觉改版（2026-10-24，提交 `c93a84e`）—— 材质与 ghost 别改回去。**
+    用户给了配色参考图（深青黄昏天幕 / 暖琥珀窗光 / 暗红点缀），并批准「Apple/Arc 式克制、
+    不加霓虹」的方向；第一版验收 **85/100**，方向认可。这一版是**纯视觉**：LOD / 交互 / 数据
+    契约一行没动，动的是背景、面板材质、圆的材质、ghost 与链接配色。
+    * **背景在 CSS、画布透明。** `body` 是深青径向渐变
+      `#17343b → #0e2329 → #060f13 → #040a0d` + 极淡 SVG 胶片颗粒（fractalNoise，opacity 0.05）；
+      `render.js` 的 `draw()` 每帧只 `ctx.clearRect`，**不再填背景色**。**别把 canvas 填背景加
+      回来**（`fillRect` `#0f1116` 之类）：背景一旦回到画布，`browser_check.py` 的 3 个像素探针
+      （`HINT_PIXELS` / `CANVAS_LIT` / home 的 painted 采样）就得退回「和背景色逐通道精确比较」，
+      换一次背景色就假绿。现在它们是 **alpha 判据**：画布全透明 = 空，alpha > 8 = 有内容，
+      `BG` 常量已删。
+    * **ghost 下一层与 LOD 完全解耦。** `drawGhost()` 把「当前最深层 + 1」的圆以
+      `lod.ghost_alpha`(0.10) 叠在实心圆**之上**（画在下面会被父圆填充整个盖掉），文字只在
+      屏幕半径 ≥ `lod.ghost_label_min_px`(56) 时以 `lod.ghost_label_alpha`(0.14) 显示。
+      **它不进 `alphaOf` / `painted` / 标签碰撞 / 命中测试**，只加 `stats.ghost` /
+      `stats.ghostLabels` 供调试。**别用 `levelFade` 去实现它**：一旦进 LOD，就破了「同层
+      同色 / 同进同出」的契约，`browser_check` 的 LOD 契约与标签断言会跟着红。
+      `lod.ghost_alpha: 0` = 关闭，回到旧观感。
+    * **配色低饱和（色相不变）**：七个学科色 `#4C8DFF→#5B8FCC`、`#3FB950→#5AA87A`、
+      `#F85149→#C86A64`、`#C08BFF→#A98FD6`、`#E3B341→#D3A95E`、`#39C5BB→#4FAFA8`、
+      `#F0883E→#D08A5A`；邻居环 `#4C8DFF→#7FB2E8`；标签颜色 rank 0 白 / rank 1 `#E8C88A` /
+      rank 2 `#E7E3D7`。色相不变是方案前提（用户要「还认得出学科」），别改成高饱和。
+    * **实心圆材质**：`nodeGradient()` 径向渐变（左上受光 `mixWhite(0.30)` → 原色 → 边缘
+      `darken(0.88)`/`darken(0.62)`）+ 外圈 1px 暗线 + 内侧 1px 高光；中/大圆（18 < 屏幕半径
+      < 700）在右下偏移处先画一个暗圆当「月牙投影」；屏幕半径 < 24 的小圆平涂省开销。
+      全部零模糊、零图片资源 —— 这是**假磨砂**，真 GPU blur 还没上（见 §6 P1，可选）。
+    * **面板玻璃材质**：顶栏 / 图例 / 侧栏 / 提示气泡 / toast / 搜索命中 / 预览浮层统一
+      `backdrop-filter: blur(16~26px) saturate(125~130%)` + 深青半透明底 + 1px 高光边 + 大投影；
+      控件 / 胶囊 / 焦点环 = 半透明玻璃 + 暖琥珀 `--accent: #e6bf7d`。CSS 变量在
+      `template.html` 的 `:root`（`--glass-border` / `--glass-shadow` / `--accent-soft`）。
+    * **性能预算与真实退化（如实记）**：空闲 **62~63 fps**；20 格滚轮 private **1244 ms** /
+      public **1303 ms**，视觉改版前基线 **1081 ms** —— 加材质后慢约 **15~20%**，仍在
+      **1.5 s** 预算内。以后再往画布上加材质 / 阴影 / 模糊，先量这个读数。
+    * **截图**（`%TEMP%\kg_*.png`）：`kg_01_home` / `kg_08_lod` / `kg_02_zmin` / `kg_04_sidebar`
+      四张已人眼核对（深青底、玻璃面板、圆材质、ghost 透出、学科色链接）—— 视觉改动必须
+      重新截图人眼看，别只信断言全绿。
 
 ---
 
@@ -1292,7 +1351,12 @@ vault 里写坏的 markdown（表格里的
 | 浅层标签半粗门槛 | `lod.label_bold_depth`（2） | depth ≤ 此值的标签用 600 半粗。粗细是「类别」信号、字号是「尺度」信号，两者不冲突 |
 | **连线线宽** | `lod.raw_edge_width`（1.0） | 屏幕像素，**刻意不含任何 zoom 因子**：缩放只改线的长度，粗细、颜色、透明度全部恒定 —— 用户要的就是「同一批线在任何尺度上都在，且看起来是同一批线」。想让整束线更醒目就调大它，**别去改 alpha**。校验要求必须是正数 |
 | **端点标记的最短线长** | `lod.raw_marker_min_len`（6） | 屏幕像素。**这是唯一一道标记门槛**（聚合边的 `edge_marker_min_len`(20) 已退役，见到会报错）：线恒为 1 px 细线、标记尺寸钉在下限 7px，用 20px 会把大量真实链接的箭头一起压掉，而契约恰恰是「每条链接都看得见」。短边**只跳标记、线照画**。填 **0 = 恒画标记**。校验要求非负 |
-| **所有链接的颜色** | `theme.raw_edge`（`#E6EDF3`） | **全部**语义链接线（含整篇级 `[[笔记]]` 与标题级 `[[笔记#标题]]`）的统一颜色，端点标记色由它 `tintLight` 派生、不单独配。**2026-10-20 起不再按粒度分色**，2026-10-24 起也不再按关系类型分色（`theme.edges` 已退役；旧键名 `theme.note_edge` 已被 config 校验拒绝）。选近白是因为七个色相已被 `domains` 占满，而 `#4C8DFF` 同时是 Science and Tech 的节点色 —— 拿它当统一色，线会融进最大的那棵子树里。理由与三条「别改回去」见 §4 坑 34 |
+| **链接配色模式** | `theme.edge_color`（`"domain"`） | `domain`（默认）= 按学科色：同域同色、跨域两端渐变（2026-10-24 视觉改版方案 A）；`flat` = 退回旧的「所有链接统一近白 `theme.raw_edge`」。校验只接受这两个字符串。理由与三条「别改回去」见 §4 坑 34 |
+| **学科色提亮比例** | `theme.edge_tint`（0.52） | 学科色向白提亮的比例（越大越接近白）。同域链接与跨域渐变的**两端**都用它 —— 0.52 更接近学科原色，线才有「属于两端圆」的感觉；调到 0.8 以上会退化成近白。取值 `[0,1]` |
+| 链接兜底色 | `theme.raw_edge`（`#E6EDF3`） | **flat 模式的统一色 / 无 domain 节点的兜底色**（2026-10-24 起不再是默认配色）。端点标记色由线色 `tintLight` 派生、不单独配。**存储粒度不参与配色**（整篇级与标题级同规则，2026-10-20 起的原则）。旧键名 `theme.note_edge` 已被拒；按关系类型分色的 `theme.edges` 也已退役 |
+| **ghost 下一层浓度** | `lod.ghost_alpha`（0.10） | 当前最深层 +1 的圆以这个不透明度叠在实心圆之上（见 §4 坑 43）。**0 = 关闭 ghost**（文字也一起关）。校验要求 `[0,1]` |
+| ghost 文字浓度 | `lod.ghost_label_alpha`（0.14） | ghost 圆里那行极淡的字；**不进标签预算 / 碰撞网格**，只做景深。0 = 不画 ghost 文字 |
+| ghost 文字最小半径 | `lod.ghost_label_min_px`（56） | 屏幕半径 ≥ 此值才给 ghost 圆画字（太小只画轮廓，否则是一层噪点）。校验要求 ≥0 |
 | 焦点模式无关连线压到多少 | `lod.focus_edge_dim`（0.07） | 选中节点后，与它（含其内部子元素）无关的连线压到此不透明度。**0 = 彻底不画**，1 = 不压暗。默认 7% 是有意留残影：保住「这片区域连得多密」的环境感知（Obsidian graph view 也是淡到约 10% 而非删掉） |
 | 屏外端点名字 chip 最多挂几枚 | `lod.focus_offscreen_chips`（8） | 焦点边一端在屏外时，视口边止点旁挂写屏外端点名的 chip（§4.22）。**`raw` 下两端都出屏也挂一枚**，名字给非焦点的那一端（§4 坑 22）。超出截断、右下角折叠成一枚 `+k`；设 0 = 全部折叠成 `+k`（视口边箭头/圆点照旧） |
 | hover 时连线压到多少 | `lod.hover_edge_dim`（0.75） | 只轻微提亮、不过滤。hover 每帧重算（`evalHover`），相机 tween 时会连续换节点，做强过滤会频闪 |
@@ -1300,7 +1364,7 @@ vault 里写坏的 markdown（表格里的
 | **连线两端离圆边多远截断** | `lod.edge_trim_clearance`（2） | 屏幕像素。线不再画到圆心，两端各留这么宽的空隙，端点标记正好落在这里。0 = 线插进圆心（箭头会被圆盖掉，§4.20）。调大 → 线和标记离圆更远，短边更容易触发 `raw_marker_min_len` 而不挂标记（线照画） |
 | **端点标记提亮多少** | `lod.edge_marker_tint`（0.55） | 标记色 = 线色向 `#d6dbe4` 混白的比例，取值 `[0,1]`。提亮让标记比线本身更亮，压在底图 wash 上也认得出；1 = 标记全变成浅灰 |
 | 链接权重 | `weight.wiki_link` 1.0 / `heading_link_bonus` 0.5 / `embed_factor` 0.6 / `annotation_default` 3.0 | 只服务**边**（链接强度 / 侧栏排序），不再影响节点大小 |
-| 学科配色 | `theme.domains` / `theme.fallback` | 父子同色是刻意的（整条包含链继承学科色），别给子节点单独配色（§4.11）。`theme.domains` 现在有 7 个键：private 的 6 个学科 + `"Study log"`（public 的第三个根，`#F0883E`）——缺色的根会落 `fallback` 灰，所以新增公开根时记得补一行。**边色不在这里**：所有链接统一 `theme.raw_edge`，关系类型由线型/箭头表达（`theme.edges` 已退役） |
+| 学科配色 | `theme.domains` / `theme.fallback` | 父子同色是刻意的（整条包含链继承学科色），别给子节点单独配色（§4.11）。**2026-10-24 视觉改版把七个学科色整体低饱和（色相不变）**：`Science and Tech #5B8FCC` / `Economy and Finance #5AA87A` / `Medical and Health #C86A64` / `Literature History Philosophy #A98FD6` / `Interest #D3A95E` / `Projects #4FAFA8` / `Study log #D08A5A`（原来 7 个键是 private 6 学科 + public 的第三个根，只是换了色值）。缺色的根会落 `fallback` 灰，所以新增公开根时记得补一行。**链接配色不在这里**：走 `theme.edge_color` / `theme.edge_tint`（见上几行）；邻居环 `#7FB2E8` 与标签 rank 色是 `render.js` 里的常量 |
 | 候选边挖掘松紧 | `candidates.min_score` 0.45 / `min_term_len` 4 / `max_doc_freq_ratio` 0.25 / `min_shared_terms` 2 / `max_suggestions` 400 / `generic_headings` | |
 
 ### `web/render.js` 顶部常量
@@ -1314,6 +1378,9 @@ vault 里写坏的 markdown（表格里的
 | `LABEL_INSIDE_PX` | 28 | 屏幕半径超过这个值的容器，标签压在圆内顶部而不是圆心（§4 坑 23；没有「改挂圆外」了） |
 | `PAINT_MIN` | 0.02 | 「这一笔算不算画出来了」的最低不透明度。低于它的落笔在 8 位画布上合成后与背景完全同值（≈0.2/255，四舍五入成 0），肉眼与像素读回都看不见。`stats.painted` 与全空白兜底提示都按它判 —— 所以**不能**改成「有没有发起过绘制调用」那种计数（§4 坑 33） |
 | `FONT` | 系统字体栈 | **字号不是常量**：由 `labelFontSize(sr)` + `fitFont` + `clipLabel` 三个函数按屏幕半径算出来（调参走 `lod.label_font_*`，见 §5）。行高 `hpx = fs + 4`；圆内摆放 `sy = cys - sr + fs*0.5 + 4`，任何字号下文字上边界都离圆描边 2px |
+| `NB_RGB` | `#7FB2E8` | 邻居环颜色（硬编码，2026-10-24 视觉改版由 `#4C8DFF` 换成更浅的冷蓝）。刻意避开暖琥珀 `--accent`（搜索命中）与白色选中环 |
+| `EDGE_DOMAIN` / `EDGE_TINT` / `RAW_EDGE_RGB` | 读 `theme.edge_color` / `edge_tint` / `raw_edge` | 链接配色开关与提亮比例；`RAW_EDGE_RGB` 是 flat 模式与无 domain 节点的兜底色。别在代码里写死颜色 |
+| `GHOST_A` / `GHOST_LABEL_A` / `GHOST_LABEL_PX` | 读 `lod.ghost_*` | ghost 下一层常量；`GHOST_LABEL_MAX`(40) 是 ghost 字号上限（硬编码，防止 ghost 字抢主标签） |
 
 旧表里的 `HIT_CELL` **已不存在**：拾取不再用网格，`hitTest` 就是对 `lastDrawn` 的线性扫描
 （同屏圆数被 `min_px` 钉成常数上界，最多一百多个，不需要空间索引）。
@@ -1321,8 +1388,8 @@ vault 里写坏的 markdown（表格里的
 `TRIM` / `RAW_MARK_MIN` / `MARK_TINT` 也在文件顶部，但它们是 `lod.edge_trim_clearance` /
 `lod.raw_marker_min_len` / `lod.edge_marker_tint` 的读取结果（`== null` 兜默认，不是 `||`
 —— 0 是合法值），改数值请改 `config.yaml`，别改这里。
-`MARK_LIGHT`（`#d6dbe4`）与 `MARK_RGB`（按 tint 预混好的标记色表）是硬编码的，
-换主题配色时要一起看。
+`MARK_LIGHT`（`#d6dbe4`）与 `tintLight()`（把任意线色向 `MARK_LIGHT` 按 `MARK_TINT`
+混白的函数，2026-10-24 起按两端学科色分别调用）是硬编码的，换主题配色时要一起看。
 
 `CHIP_MAX` 读 `lod.focus_offscreen_chips`（缺省 8）；折叠的 `+k` chip 右锚在
 `(W-12, H-FOOTER_H-12)`，即右下角、避开 footer 预留带——改 `FOOTER_H` 会连带挪它。
@@ -1360,10 +1427,14 @@ fixture：改成按后缀解析，笔记改名不再让 7d 整段静默跳过（
 给 1c 段和 raw/agg 双轮加断言）；**2026-10-24 删掉模式切换后回落到 110 `verify` 断言 /
 132（private）· 133（public）`browser_check`**，见 §8。
 
-**P1 — 首屏观感（用户明确说过后续还有一版改动解决）**
-先问清楚他要什么，别自己猜。可动的旋钮都在 §5：`zoom.home_level` / `zoom.home_band`、
-`lod.idle_edge_dim`、`lod.min_px`、`layout.*`。**原 P1「让掌握度 / 重要度真正起作用」已取消**
-—— 2026-10-24 的产品减法把这两套节点标注整体删了（见 §4 坑 42），别再把它当待办加回来。
+**P1 — 视觉改版第一版已落地（2026-10-24，`c93a84e`，用户 85/100）**
+深青玻璃 + ghost 下一层 + 学科色链接已提交，两份 `browser_check` 全绿（132 / 133），
+用户认可方向。**剩余**：① **真磨砂模糊（可选）** —— 画布内目前是「渐变 + 阴影 + 高光」的
+假磨砂，对背景做 GPU blur 要等性能余量（20 格滚轮 private 1244 / public 1303 ms，预算
+1.5 s）；② **暖光 / 配色继续打磨** —— 用户可能再发参考图，优先调 `theme.domains` /
+`theme.edge_tint` / 模板 CSS 变量，别动 LOD 与判据；③ 用户后续指定的其它视觉 / 交互任务。
+动手前先问清楚，别自己猜。（可动旋钮都在 §5；**原 P1「让掌握度 / 重要度真正起作用」已取消**
+—— 2026-10-24 的产品减法把这两套节点标注整体删了，见 §4 坑 42，别再把它当待办加回来。）
 
 **P2 — 候选边审核流程**
 `candidates.yaml` 手工改 `status` 很累。可在页面里加「审核模式」：列出候选边，
@@ -1428,19 +1499,21 @@ bc6 = 2026-10-17 23:05）。没测过上限。可做：临时把范围放宽到�
 
 ## 8. 回归基准（改坏了怎么发现）
 
-下面的数字分两批读：**2026-10-24 12:12 的新基线**（`verify --scope all` 合计 **110 `[ok]` /
-0 FAIL**（private 55 / public 55）；`browser_check` private **132** / public **133 `[ok]`**、0 FAIL、1 warn），以及后面 JS
+下面的数字分两批读：**2026-10-24 的两次新基线**（产品减法 12:12 + 视觉改版 14:45：
+`verify --scope all` 合计 **110 `[ok]` / 0 FAIL**（private 55 / public 55）；`browser_check`
+private **132** / public **133 `[ok]`**、0 FAIL、1 warn），以及后面 JS
 块里那些 **2026-10-17 / 18 的示例快照**（当时还有聚合边，块里的 `agg` 行只当历史，别拿它比）。
 **要盯的是「全绿 / 0 FAIL / ok 数没掉」这些结构性结论，不是绝对数**；要刷新就重跑。
 （2026-10-21 层级带改造后曾是 private 166 / public 167 `[ok]`；2026-10-24 删掉模式切换后回落
 到 132 / 133 —— **数字下降是删用例不是静默跳过**：1c 整节 14 条 + 7b/7c/7d 不再各跑两遍的
-43 条 = 53 条，与 185−132 逐条对得上。）
+43 条 = 53 条，与 185−132 逐条对得上。视觉改版后又还是 110 / 132 / 133：**没增删断言**，
+只换了 3 个像素探针的判据口径。）
 
 ```bash
-python build.py build      # private：笔记 114 / 文件夹 37 / 标题 3359 / 节点 3510（2026-10-24 12:12）
+python build.py build      # private：笔记 114 / 文件夹 37 / 标题 3359 / 节点 3510（2026-10-24 14:45）
                            # 深度轴 10 / 语义边 97 / 包含边 3504 / 标题级链接 68（未命中 14）
-                           # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 6265 KB
-python build.py build --scope all   # 再出一份 public：节点 3466 / 最深层 3559 条边 / HTML 6291 KB
+                           # layout_root_radius 1000.0 / nominal_fit_radius 427px / HTML 6277 KB
+python build.py build --scope all   # 再出一份 public：节点 3466 / 最深层 3559 条边 / HTML 6303 KB
 python build.py verify     # 必须 ✓ 全部自动校验通过（合计 110 [ok] / 0 FAIL：private 55 / public 55）
 python build.py scope --scope public   # stdout 必须是一段能 ConvertFrom-Json 的 JSON（§4 坑 27）
 python browser_check.py    # 必须 ALL BROWSER CHECKS PASSED；ok 数 private 132 / public 133
@@ -1460,6 +1533,21 @@ node --check web/app.js && node --check web/render.js   # 前端语法（一次�
 
 另加本轮新入的那条（换 scope / 改 `as` 时最容易踩）：**重写过的路径前缀没有残留成节点 id**
 （残留 0 个），以及 depth=1 的根 == 该 scope 声明的目录（private 6 个 / public 3 个）。
+
+**视觉改版（`c93a84e`）的读数与截图（2026-10-24 14:45；会漂）**：
+
+- 体积：单文件 private **6.13 MB**（6277 KB）/ public **6.15 MB**（6303 KB）；
+  `dist/graph.json` **5.64 MB**（比 12:12 的 6.12 / 6.14 MB 每个多约 12 KB = 材质 CSS 与渐变代码）。
+- 性能：空闲 **62~63 fps**；20 格滚轮 private **1244 ms** / public **1303 ms** —— 视觉改版前
+  基线 **1081 ms**，加材质后慢约 **15~20%**，仍在 **1.5 s** 预算内。以后再往画布上加材质 /
+  阴影 / 模糊，先量这个读数（HANDOFF 坑 43）。
+- 判据：`verify --scope all` 仍 **110 `[ok]` / 0 FAIL**、`browser_check` private **132** /
+  public **133 `[ok]` / 0 FAIL / 1 warn** —— 视觉改版没增减断言，但 3 个像素探针
+  （`HINT_PIXELS` / `CANVAS_LIT` / home 的 painted 采样）从「和 `#0f1116` 逐通道比对」改成了
+  **alpha 判据**（画布透明、空画布 = alpha 0）。**别改回去**：逐通道比对会因换背景色而假绿。
+- 截图（`%TEMP%\kg_*.png`）：`kg_01_home` / `kg_02_zmin` / `kg_04_sidebar` / `kg_08_lod` 四张
+  2026-10-24 14:45 的新截图已人眼核对（深青底、玻璃面板、圆材质、ghost 透出、学科色链接）。
+  ⚠️ 视觉改动**必须**重新截图人眼看，别只信断言全绿。
 
 浏览器里再确认（下面的读数全部来自**示例快照 bc6 = 2026-10-17 23:05** 那一批 payload 上的
 `browser_check.py` 实跑，1440×900；会随 vault 内容漂移，要刷新就重跑那个套件 ——
@@ -1491,7 +1579,8 @@ KG.renderer.setZoom(KG.zMin); KG.visible()
 #   3d 任何缩放 × 任何平移都不许留下「空白且无提示」的画布：9 档缩放
 #      （0.005 / 0.02 / 0.1 / 0.4612 / 3 / 30 / 1000 / 30000 / 1e5）× 4 种平移
 #      （(0,0) / (600,400) / (-1200,-800) / (3000,-2500)）= **36 组**，每组读整画布探针
-#      `CANVAS_LIT`（数遍全屏与背景色 `#0f1116` 不同的像素），要求没有一组出现
+#      `CANVAS_LIT`（数全屏 alpha > 8 的像素；2026-10-24 视觉改版前是「和背景色 #0f1116
+#      不同的像素」），要求没有一组出现
 #      「非背景像素 < 500 且兜底提示没画」 → 实测 **0 组违规**（修那条 bug 之前扫得出）。
 #      ⚠️ 收尾必须**瞬时**把相机设回 home（`setZoom(zHome)` + `panX/panY` 居中 + `draw()`），
 #         **不能**调 `resetView()`：那是 364ms 的 tween，而极端 zoom 下每帧要栅格化半径上百
