@@ -34,7 +34,7 @@ import yaml
 
 from kg import candidates as cand_mod
 from kg import config as config_mod
-from kg import emit, graph, layout, parse, scan
+from kg import emit, graph, layout, palette as palette_mod, parse, scan
 
 
 def _bar(label, count, total, width=24):
@@ -101,6 +101,25 @@ def build_payload(cfg, quiet=False):
                        enter=[round(v, 6) for v in enter],
                        home_layer=home_layer)
 
+    # ── 学科色板（阶段 1.3）：手写 theme.domains 优先，其余按 golden-angle 自动补齐 ──
+    # 以前颜色只在渲染期查表，没登记的 domain 一律落到同一个 fallback 灰 ——
+    # 30 个顶层学科的库上 23 个同灰、图例还把不同名字配成同一个灰点。现在构建期就把
+    # 「这份库实际出现的 domain → 颜色」算全，写进 payload，渲染与图例只查表。
+    domain_counts: dict = {}
+    for node in builder.nodes.values():
+        if node.get("kind") != "note":
+            continue
+        d = node.get("domain") or ""
+        if d:
+            domain_counts[d] = domain_counts.get(d, 0) + 1
+    theme_payload = dict(cfg["theme"])
+    theme_payload["domains"] = palette_mod.assign(
+        domain_counts,
+        cfg["theme"].get("domains") or {},
+        cfg["theme"].get("fallback", "#8B949E"),
+        cfg["theme"].get("auto_palette"))
+    domain_list = palette_mod.ordered(domain_counts, theme_payload["domains"])
+
     meta = {
         "generated": time.strftime("%Y-%m-%d %H:%M"),
         "vault": cfg["vault"],
@@ -122,7 +141,11 @@ def build_payload(cfg, quiet=False):
         "zoom": dict(cfg["zoom"], wheel_step=round(wheel_step, 6),
                      home_zoom=round(home_zoom, 6)),
         "lod": lod_payload,
-        "theme": cfg["theme"],
+        "theme": theme_payload,
+        # 图例 / 学科下拉的**唯一真源**（阶段 1.3）：按「笔记数降序 + 名字」排好，
+        # 前端不再靠「扫 depth-1 的 folder 节点」猜学科 —— 那个猜法在「没有文件夹、
+        # 全是散笔记」的库上会得到空图例，在 domain 被 annotations 覆盖时也会漏。
+        "domains": domain_list,
         "page_title": cfg.get("page_title") or "知识图谱",
         "scan": stats,
         "link_stats": dict(sorted(builder.stats.items())),

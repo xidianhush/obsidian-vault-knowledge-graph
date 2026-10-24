@@ -3,6 +3,8 @@ dist/
 
 # 形状 fixture 的生成物（由 fixtures/make_vaults.py 确定性重建；只入库生成器 + manifest）
 fixtures/vaults/
+# fixture 的浏览器截图（run_sweep --browser / 手动 KG_SHOT_DIR 会写到这里）
+fixtures/.shots/
 
 # 第三方库（Cytoscape vendored；已弃用后不再需要）
 /vendor/   # 只忽略仓库根的第三方库目录；web/vendor/katex 是要入库的（KaTeX，见 README §4）

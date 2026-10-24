@@ -109,6 +109,49 @@ def run(cfg, payload_path=None):
                f"重写过的路径前缀没有残留成节点 id（残留 {len(leftover)} 个）"
                + (f"：{'、'.join(leftover)}" if leftover else ""), failures)
 
+    # ── 学科色板（阶段 1.3）：每个 domain 都有专属颜色，图例/下拉与数据同源 ──────
+    # 以前颜色只在渲染期查表，没登记的 domain 一律落到同一个 fallback 灰 ——
+    # 30 个顶层学科的库上 23 个同灰、图例把不同名字配成同一个灰点。现在构建期算全，
+    # 这里守三条：覆盖完整、互不相同、与 meta.domains 的名单/计数一致。
+    print("\n[学科色板] 每个 domain 都有颜色，且互不相同（阶段 1.3）")
+    theme = meta.get("theme") or {}
+    palette = theme.get("domains") or {}
+    fallback = str(theme.get("fallback") or "")
+    node_domain_counts: dict = {}
+    for n in data["nodes"]:
+        if n.get("kind") != "note":
+            continue
+        d = n.get("domain") or ""
+        if d:
+            node_domain_counts[d] = node_domain_counts.get(d, 0) + 1
+    domains_meta = meta.get("domains")
+    if not isinstance(domains_meta, list):
+        _check(False, "meta.domains 缺失（前端图例/学科下拉按它渲染，阶段 1.3 起必须有）", failures)
+    else:
+        names = [str(d.get("name") or "") for d in domains_meta]
+        counts = {str(d.get("name") or ""): int(d.get("count") or 0) for d in domains_meta}
+        _check(set(names) == set(node_domain_counts),
+               f"meta.domains 与节点里出现的 {len(node_domain_counts)} 个学科一一对应"
+               f"（多 {len(set(names) - set(node_domain_counts))} / "
+               f"少 {len(set(node_domain_counts) - set(names))}）", failures)
+        _check(counts == node_domain_counts,
+               f"meta.domains 的笔记计数与数据一致（{len(counts)} 个学科）", failures)
+        missing = sorted(d for d in node_domain_counts if not palette.get(d))
+        _check(not missing,
+               f"每个学科都有登记色（缺 {len(missing)} 个）"
+               + (f"：{'、'.join(missing[:5])}" if missing else ""), failures)
+        grey = sorted(d for d in node_domain_counts
+                      if str(palette.get(d) or "").upper() == fallback.upper())
+        _check(not grey,
+               f"没有学科落到 fallback 灰（{len(grey)} 个）"
+               + (f"：{'、'.join(grey[:5])}" if grey else ""), failures)
+        used = [str(palette.get(d) or "") for d in node_domain_counts]
+        _check(len(set(used)) == len(used),
+               f"{len(used)} 个学科的配色互不相同（重复 {len(used) - len(set(used))} 个）", failures)
+        if not node_domain_counts:
+            _check(not names, "这个库没有任何学科目录 —— meta.domains 为空（图例显示「未分学科」）",
+                   failures)
+
     # ── 标准 3：最深层显示全部笔记 ──────────────────────────────────────
     print("\n[标准 3] 缩放到最深层 = 显示全部笔记")
     max_depth = meta["max_depth"]

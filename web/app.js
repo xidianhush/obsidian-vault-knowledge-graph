@@ -195,19 +195,34 @@
   function buildLegend() {
     const box = $('legend-domains');
     box.innerHTML = '';
-    const seen = [];
-    NODES.forEach((n) => {
-      if (n.kind === 'folder' && n.depth === 1 && seen.indexOf(n.domain) < 0) seen.push(n.domain);
-    });
-    seen.forEach((d) => {
+    // 阶段 1.3：学科列表来自构建期算好的 META.domains（按笔记数降序），不再靠
+    // 「扫 depth-1 的 folder 节点」猜 —— 那个猜法在「全散笔记、没有文件夹」的库上
+    // 会得到空图例，在 domain 被 annotations 覆盖但目录名不同时也会漏。
+    const domains = (META && META.domains) || [];
+    if (!domains.length) {
       const row = document.createElement('div');
       row.className = 'row';
       const sw = document.createElement('span');
       sw.className = 'dot';
-      sw.style.background = domainColor(d);
+      sw.style.background = THEME.fallback || '#8B949E';
       row.appendChild(sw);
       const label = document.createElement('span');
-      label.textContent = d;
+      label.className = 'tx';
+      label.textContent = '未分学科（这个库没有学科目录，或笔记直接放在根目录）';
+      row.appendChild(label);
+      box.appendChild(row);
+      return;
+    }
+    domains.forEach((d) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const sw = document.createElement('span');
+      sw.className = 'dot';
+      sw.style.background = domainColor(d.name);
+      row.appendChild(sw);
+      const label = document.createElement('span');
+      label.className = 'tx';
+      label.textContent = d.count ? d.name + ' · ' + d.count : d.name;
       row.appendChild(label);
       box.appendChild(row);
     });
@@ -215,12 +230,9 @@
 
   function buildFilters() {
     const sel = $('domain');
-    const seen = [];
-    NODES.forEach((n) => {
-      if (n.domain && seen.indexOf(n.domain) < 0) seen.push(n.domain);
-    });
-    seen.sort();
-    seen.forEach((d) => {
+    // 阶段 1.3：学科下拉与图例同源（META.domains），不再自己扫一遍 nodes。
+    const domains = ((META && META.domains) || []).map((d) => d.name);
+    domains.forEach((d) => {
       const o = document.createElement('option');
       o.value = d;
       o.textContent = d;

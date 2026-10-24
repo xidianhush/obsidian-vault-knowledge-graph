@@ -89,7 +89,9 @@ DEFAULTS: dict = {
         "max_note_chars": 0,   # 0 = 不截断（预览是整篇笔记，用户口径）
     },
     "theme": {"domains": {}, "fallback": "#8B949E",
-              "raw_edge": "#E6EDF3", "edge_color": "domain", "edge_tint": 0.52},
+              "raw_edge": "#E6EDF3", "edge_color": "domain", "edge_tint": 0.52,
+              # 2026-10-24 阶段 1.3：自动色板参数（不写 = 用 kg/palette.py 的默认值）
+              "auto_palette": None},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
     "candidates_file": "candidates.yaml",
@@ -226,6 +228,19 @@ def _validate(cfg: dict):
     fallback = cfg["theme"].get("fallback", "#8B949E")
     if not _HEX_RE.match(str(fallback)):
         _fail(f"theme.fallback 颜色格式应为 #RRGGBB，收到 {fallback!r}")
+    # 2026-10-24 阶段 1.3：自动色板参数（可选）。写坏了会在构建期直接报错，不静默取默认。
+    auto = cfg["theme"].get("auto_palette")
+    if auto is not None:
+        if not isinstance(auto, dict):
+            _fail("theme.auto_palette 必须是键值映射（hue_start / saturation / lightness / "
+                  "golden_angle / min_hue_gap），不写 = 用 kg/palette.py 的默认值")
+        for key, lo, hi in (("hue_start", 0, 360), ("saturation", 0, 1),
+                            ("lightness", 0, 1), ("golden_angle", 0, 360),
+                            ("min_hue_gap", 0, 180)):
+            if key in auto:
+                v = auto[key]
+                if not isinstance(v, (int, float)) or isinstance(v, bool) or not lo <= v <= hi:
+                    _fail(f"theme.auto_palette.{key} 必须在 [{lo}, {hi}] 之间，收到 {v!r}")
     if "note_edge" in cfg["theme"]:
         _fail("theme.note_edge 已改名为 theme.raw_edge（2026-10-20 起 raw 模式统一配色，"
               "不再按整篇级/标题级分色），请把 config.yaml 里的键改名")
