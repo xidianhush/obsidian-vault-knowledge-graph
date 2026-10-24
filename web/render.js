@@ -85,6 +85,12 @@
             Math.round(rgb[2] + (255 - rgb[2]) * t)];
   }
 
+  // 压暗：domain 色乘一个系数。2026-10-24 视觉改版用来给实心圆做「边缘更暗」的
+  // 径向渐变，让平涂色块有玻璃片的厚度感。
+  function darken(rgb, f) {
+    return [Math.round(rgb[0] * f), Math.round(rgb[1] * f), Math.round(rgb[2] * f)];
+  }
+
   function createRenderer(canvas, DATA, hooks) {
     hooks = hooks || {};
 
@@ -130,6 +136,14 @@
     // 焦点链接的「屏外目标」chip 上限。选中元素的链接有一端在当前尺度屏外时，视口边缘
     // 挂一枚写着目标名的 chip；超出上限的折叠成右下角一枚「+k」
     var CHIP_MAX = LOD.focus_offscreen_chips == null ? 8 : LOD.focus_offscreen_chips;
+    // ghost 下一层（2026-10-24 视觉改版）：当前「前沿层 + 1」的圆与描边固定用很低的不透明度
+    // 画一层，让人隐约看到当前层内部的下一层结构（像透出磨砂玻璃）。它与层级带 LOD 完全
+    // 解耦 —— 不参与 alphaOf / painted / 标签碰撞 / 命中测试，只是纯视觉景深。
+    // 0 = 关闭，回到「只看得到当前层」的旧观感。
+    var GHOST_A = LOD.ghost_alpha == null ? 0.08 : LOD.ghost_alpha;
+    var GHOST_LABEL_A = LOD.ghost_label_alpha == null ? 0.12 : LOD.ghost_label_alpha;
+    var GHOST_LABEL_PX = LOD.ghost_label_min_px == null ? 56 : LOD.ghost_label_min_px;
+    var GHOST_LABEL_MAX = 40;   // 字号上限，也用来限制 ghost 文字别抢主标签
     var PARENT_DIM = ZC.parent_dim == null ? 0.22 : ZC.parent_dim;
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
@@ -159,24 +173,24 @@
         Math.round(c[2] + (MARK_LIGHT[2] - c[2]) * MARK_TINT)
       ];
     }
-    // **统一配色**（2026-10-20 起）：所有语义链接线用同一个颜色，端点标记由它 tintLight
-    // 派生。整篇级 [[笔记]] 与标题级 [[笔记#标题]] 不再靠颜色区分 —— 文件夹/笔记/标题
-    // 只是人为的**存储结构**，这张图表达的是知识内在的包含关系与连接关系，存储粒度不该
-    // 参与视觉编码（决定与来龙去脉见 HANDOFF §4 坑 34）。
-    // 信息没有丢：关系类型仍由**线型**（contrast = 虚线）与**端点标记**（只有 derives /
-    // prerequisite 画箭头，contrast 两端都只画点）表达，侧栏 `.tag` 与 hover 气泡也
-    // 照旧标出每条边的类型与来源。改色请改 config.yaml 的 theme.raw_edge，别在这里写死。
+    // ── 链接线配色（2026-10-24 视觉改版，方案 A）────────────────────────────
+    // 同域链接 = 该学科的 domain 色向白提亮 theme.edge_tint；跨学科链接 = 从源学科色
+    // 到目标学科色的线性渐变。这样线“属于”它两端的圆，同时跨学科连接一眼可辨。
+    // 关系类型仍只由线型（contrast = 虚线）与端点标记（只有 derives / prerequisite
+    // 画箭头）表达，**存储粒度仍然不参与配色**（坑 34 的原则没有变）。
+    // theme.edge_color = "flat" 可退回旧行为（所有链接统一 theme.raw_edge 近白）。
+    var EDGE_DOMAIN = (THEME.edge_color || 'domain') !== 'flat';
+    var EDGE_TINT = THEME.edge_tint == null ? 0.62 : THEME.edge_tint;
+    // flat 模式的统一色；domain 模式下它只作为没有 domain 的兜底。
     var RAW_EDGE_RGB = hexToRgb(THEME.raw_edge || '#E6EDF3');
-    var RAW_MARK_RGB = tintLight(RAW_EDGE_RGB);
     // 线宽与端点标记门槛。线宽**刻意不含 zoom 因子**：契约就是「缩放只改长度，不改粗细
     // 浓淡」。标记门槛也很小：端点是真实节点自己，低缩放下大量线只有几 px，门槛大了
     // 会让它们全都没箭头，等于违背「细线箭头不随缩放消失」。填 0 = 恒画标记。
     var RAW_LW = LOD.raw_edge_width == null ? 1 : LOD.raw_edge_width;
     var RAW_MARK_MIN = LOD.raw_marker_min_len == null ? 6 : LOD.raw_marker_min_len;
-    // 邻居环的颜色。用主题强调色（= derives 边的旧色 / CSS --accent），和白色的选中环
-    // 同轨但更细，一眼能分清「哪个是我选的」。不按边类型着色：contrast 的金色会和搜索
-    // 命中环撞色。
-    var NB_RGB = hexToRgb('#4C8DFF');
+    // 邻居环的颜色。用一个比学科色更浅的冷蓝（2026-10-24 视觉改版）：和白色的选中环
+    // 同轨但更细，一眼能分清「哪个是我选的」；不按边类型着色，也刻意避开暖琥珀（搜索命中）。
+    var NB_RGB = hexToRgb('#7FB2E8');
     var FALLBACK_RGB = hexToRgb(THEME.fallback);
     var DOMAIN_RGB = {};
     Object.keys(THEME.domains || {}).forEach(function (k) { DOMAIN_RGB[k] = hexToRgb(THEME.domains[k]); });
@@ -255,7 +269,10 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
                   // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
                   painted: 0,
                   // Ctrl 模式：这一帧给多少个标题圆画了「可预览」虚线圈
-                  ctrlRings: 0 };
+                  ctrlRings: 0,
+                  // ghost 下一层：这一帧画了几个 ghost 圆 / 几行 ghost 文字（只给调试与回归看，
+                  // 不进 painted、不进标签统计）
+                  ghost: 0, ghostLabels: 0 };
     // 本帧与选中元素直接相连的**真实端点** id。drawEdges 主循环就地收集，
     // drawEmphasis 读它画蓝环。只用于绘制与计数，不落盘、不参与布局。
     var hotNeighbors = new Set();
@@ -503,8 +520,10 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 强调环（命中/选中/邻居）单独一趟，永远在世界内容之上、标签之下。
     function draw() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = '#0f1116';
-      ctx.fillRect(0, 0, W, H);
+      // 背景交给 CSS（template.html 的 body：深青径向渐变 + 极淡颗粒），画布只负责
+      // 内容、每帧清成透明。这样换背景不会污染「画布空不空」的像素判据 ——
+      // browser_check 的像素探针也相应改成 alpha 判据（2026-10-24 视觉改版）。
+      ctx.clearRect(0, 0, W, H);
 
       var zoom = cam.zoom;
       var alpha = new Map();
@@ -551,6 +570,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
 
       drawWash(wash);
       drawNodes(front, alpha);
+      // ghost 下一层：压在实心圆**之上**才看得见（下一层的圆都在父圆内部，画在下面会被
+      // 父圆填充整个盖掉）。它只是景深，不进命中测试与任何统计。
+      drawGhost();
       drawCtrlRings(front, alpha);
       // 语义边画在实心圆之上：端点仍在各自圆的边界处截断（rawAnchor + TRIM），
       // 所以线不会插进自己的圆。
@@ -614,6 +636,19 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       return Math.sqrt(dx * dx + dy * dy);
     }
 
+    // 实心圆的材质（2026-10-24 视觉改版）：径向渐变（左上受光 → 边缘压暗）+ 内侧暗环 +
+    // 外缘高光，让原本的平涂色块有玻璃片的厚度感。**色相不动**，只加明暗；不引入图片资源。
+    function nodeGradient(n, sx, sy, sr) {
+      var g = ctx.createRadialGradient(
+        sx - sr * 0.22, sy - sr * 0.28, Math.max(1, sr * 0.04),
+        sx, sy, Math.max(1, sr * 1.01));
+      g.addColorStop(0, rgba(mixWhite(n._rgb, 0.30), 1));
+      g.addColorStop(0.48, rgba(n._rgb, 1));
+      g.addColorStop(0.92, rgba(darken(n._rgb, 0.88), 1));
+      g.addColorStop(1, rgba(darken(n._rgb, 0.62), 1));
+      return g;
+    }
+
     // ① 容器底图：同色压暗填充 + 一条清晰界线。地图里的省就是这样 —— 面很淡，
     //    界线很清楚，市画在它上面。
     function drawWash(list) {
@@ -636,6 +671,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
             (sa > PAINT_MIN && dNear <= sr && sr <= dFar)) stats.painted++;
         if (fa > 0.004) {
           ctx.globalAlpha = fa;
+          // wash 是压暗的底图，渐变几乎看不出来 —— 用平涂省掉每帧一次大圆渐变填充。
           ctx.fillStyle = rgba(n._rgb, 1);
           ctx.beginPath();
           ctx.arc(sx, sy, sr, 0, TAU);
@@ -647,6 +683,15 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         ctx.beginPath();
         ctx.arc(sx, sy, sr, 0, TAU);
         ctx.stroke();
+        // 界线内侧再压一道极淡高光：远看是「玻璃边缘」，近看不会抢过实心圆
+        if (sr > 28) {
+          ctx.globalAlpha = clamp(sa * 0.5, 0, 1);
+          ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.5, sr - 2.5), 0, TAU);
+          ctx.stroke();
+        }
       }
       ctx.globalAlpha = 1;
     }
@@ -699,11 +744,15 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         var hot = selN ? hs : !!(isFocusSide(A, hovN) || isFocusSide(B, hovN));
         var dim = hot ? 1 : (selN ? FOCUS_DIM : (hovN ? HOVER_DIM : IDLE_DIM));
         if (hs) stats.focusEdges++;
-        // 统一配色：不按 _nl（整篇级 / 标题级）或关系类型分色（见 RAW_EDGE_RGB 处注释）
-        var rgb = RAW_EDGE_RGB;
-        var mrgb = RAW_MARK_RGB;
+        // 链接配色（2026-10-24 视觉改版，方案 A）：同域 = 该学科色提亮；跨域 = 两端渐变。
+        // 端点没有 domain 时兜底用 theme.raw_edge；flat 模式两者都用统一近白。
+        var ca = RAW_EDGE_RGB, cb = RAW_EDGE_RGB;
+        if (EDGE_DOMAIN) {
+          ca = A._rgb ? mixWhite(A._rgb, EDGE_TINT) : RAW_EDGE_RGB;
+          cb = B._rgb ? mixWhite(B._rgb, EDGE_TINT) : RAW_EDGE_RGB;
+        }
         var laid = drawSegment(aA, aB, dim, hot ? RAW_LW + 0.8 : RAW_LW,
-                               rgb, mrgb, e.type);
+                               ca, cb, tintLight(ca), tintLight(cb), e.type);
         if (laid) drawn++;
         // 屏外焦点端挂名字 chip。线本来就已经画到屏外了，缺的只是「这条线指向谁」
         // 这个名字。chip 钉在线穿出视口的那一点上、沿线方向朝外，读作「顺着这条线出去
@@ -761,9 +810,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
 
     // 一条链接线段。alpha 与线宽都由调用方给死（不随缩放变）；**恒为直线**（端点是
     // 真实节点自己，同一父圆内部的多条线天然散在不同位置，不需要控制点偏移）。
+    // ca / cb = 源/目标端的学科色（已提亮）；ma / mb = 两端端点标记的颜色。
+    // 跨学科链接用 ca→cb 的线性渐变，同色则纯色。
     // 返回是否真的落了笔 —— 两圆贴死时屏幕上没有可见长度，硬画会得到一条方向反掉的
     // 短线段，比不画更乱。
-    function drawSegment(aA, aB, dim, lw, rgb, mrgb, type) {
+    function drawSegment(aA, aB, dim, lw, ca, cb, ma, mb, type) {
       var x1 = aA.sx, y1 = aA.sy, x2 = aB.sx, y2 = aB.sy;
       var dx = x2 - x1, dy = y2 - y1;
       var dl = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -776,10 +827,32 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       if (glen < 0.5) return false;
 
       var a = clamp(dim, 0, 1);
+      var dash = type === 'contrast' ? [5, 4] : [];
+      // ① 暗底描边：让亮色细线压在同色亮圆上仍然读得出来（只在外侧多 1.8px，
+      //    视觉上像一层薄影，不会把线加粗）。压暗/焦点模式下跟着一起变淡。
+      ctx.globalAlpha = a * 0.28;
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.lineWidth = lw + 1.8;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(ex1, ey1);
+      ctx.lineTo(ex2, ey2);
+      ctx.stroke();
+      // ② 主色线：同色纯色、跨学科两端渐变
+      var same = ca[0] === cb[0] && ca[1] === cb[1] && ca[2] === cb[2];
+      var stroke;
+      if (same) {
+        stroke = rgba(ca, 1);
+      } else {
+        var grd = ctx.createLinearGradient(ex1, ey1, ex2, ey2);
+        grd.addColorStop(0, rgba(ca, 1));
+        grd.addColorStop(1, rgba(cb, 1));
+        stroke = grd;
+      }
       ctx.globalAlpha = a;
-      ctx.strokeStyle = rgba(rgb, 1);
+      ctx.strokeStyle = stroke;
       ctx.lineWidth = lw;
-      ctx.setLineDash(type === 'contrast' ? [5, 4] : []);
+      ctx.setLineDash(dash);
       ctx.beginPath();
       ctx.moveTo(ex1, ey1);
       ctx.lineTo(ex2, ey2);
@@ -803,15 +876,16 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       // 箭头只给 derives / prerequisite；contrast 是无向的（见 annotations.yaml 的
       // 字段说明），两端都只画点。id 是标记**附着的节点**：就是真实端点自己
       // （锚点不上移），自动化验证量的是屏幕上那个圆的几何。
+      // 颜色：目标端用 mb，源端用 ma —— 跨学科时两端各带自己的学科色。
       if (type === 'derives' || type === 'prerequisite') {
         markJobs.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id,
-                        s: s, c: mrgb, a: a });
+                        s: s, c: mb, a: a });
       } else {
         markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id,
-                        s: dot, c: mrgb, a: a });
+                        s: dot, c: mb, a: a });
       }
       markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id,
-                      s: dot, c: mrgb, a: a });
+                      s: dot, c: ma, a: a });
       return true;
     }
 
@@ -1008,19 +1082,108 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         // 前景实心圆：不透明度够、而且圆盘真的穿过视口，才算屏幕上看得见。
         // （只判 alpha 会被「中心远在屏外的大圆」骗到 —— 那种圆铺满画布却什么都没露出来）
         if (a > PAINT_MIN && nearDist(sx, sy) < sr) stats.painted++;
+        // 玻璃片的投影：先在右下偏移处画一个暗圆，再用本体填充盖住其余部分，
+        // 只留出右下方的月牙暗边 —— 让每一层圆从父圆上「浮」起来（零模糊成本）。
+        // 只给「看得清边界」的中等圆加：巨大的祖先圆铺满屏时投影既看不见又最贵。
+        if (sr > 18 && sr < 700) {
+          ctx.globalAlpha = clamp(a * 0.26, 0, 1);
+          ctx.fillStyle = 'rgba(0,0,0,1)';
+          ctx.beginPath();
+          ctx.arc(sx + Math.min(7, sr * 0.02), sy + Math.min(9, sr * 0.026), sr, 0, TAU);
+          ctx.fill();
+        }
         ctx.globalAlpha = a;
-        ctx.fillStyle = rgba(n._rgb, 1);
+        // 小圆用平涂（渐变几乎看不出来、却要每帧建一次），大圆才用渐变材质
+        ctx.fillStyle = sr >= 24 ? nodeGradient(n, sx, sy, sr) : rgba(n._rgb, 1);
         ctx.beginPath();
         ctx.arc(sx, sy, sr, 0, TAU);
         ctx.fill();
-        ctx.globalAlpha = clamp(a * 0.85, 0, 1);
-        ctx.strokeStyle = rgba(n._brgb, 1);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(sx, sy, sr, 0, TAU);
-        ctx.stroke();
+        // 边缘材质：外圈 1px 压暗（厚度）+ 内侧 1px 高光（玻璃边）。小圆不画，
+        // 否则会变成一圈噪点；`_brgb`（domain 提亮 40%）留给 wash 与极小圆兜底。
+        if (sr > 12) {
+          ctx.globalAlpha = clamp(a * 0.85, 0, 1);
+          ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.5, sr - 0.5), 0, TAU);
+          ctx.stroke();
+          ctx.globalAlpha = clamp(a * 0.72, 0, 1);
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.5, sr - 1.8), 0, TAU);
+          ctx.stroke();
+        } else {
+          ctx.globalAlpha = clamp(a * 0.85, 0, 1);
+          ctx.strokeStyle = rgba(n._brgb, 1);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr, 0, TAU);
+          ctx.stroke();
+        }
       }
       ctx.globalAlpha = 1;
+    }
+
+    // ── ghost 下一层（2026-10-24 视觉改版）────────────────────────────────
+    // 把「当前最深层 + 1」的圆用固定低透明度画一层，像透着磨砂玻璃看到下一层的结构。
+    // 与层级带完全解耦：不参与 alphaOf / painted / 标签碰撞 / 命中测试，纯粹是景深。
+    // base 取 lastDrawn 的最大深度（含被 maxzoom 停画的祖先）；什么都没画时不画。
+    function drawGhost() {
+      stats.ghost = 0;
+      stats.ghostLabels = 0;
+      if (GHOST_A <= 0) return;
+      var baseDepth = 0;
+      for (var i = 0; i < lastDrawn.length; i++) {
+        if (lastDrawn[i].depth > baseDepth) baseDepth = lastDrawn[i].depth;
+      }
+      if (!baseDepth || baseDepth >= MAXD) return;
+      var gd = baseDepth + 1;
+      var zoom = cam.zoom;
+      var Hc = H - FOOTER_H;
+      var labels = [];
+      for (var j = 0; j < NODES.length; j++) {
+        var n = NODES[j];
+        if (n.depth !== gd) continue;
+        var sr = n._r * zoom;
+        if (sr < 1.5) continue;
+        var sx = w2sx(n.x), sy = w2sy(n.y);
+        if (sx + sr < 0 || sx - sr > W || sy + sr < 0 || sy - sr > Hc) continue;
+        ctx.globalAlpha = GHOST_A;
+        ctx.fillStyle = rgba(mixWhite(n._rgb, 0.26), 1);
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, TAU);
+        ctx.fill();
+        if (sr > 2.5) {
+          ctx.globalAlpha = Math.min(1, GHOST_A * 1.8);
+          ctx.strokeStyle = rgba(mixWhite(n._rgb, 0.62), 1);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.5, sr - 0.5), 0, TAU);
+          ctx.stroke();
+        }
+        stats.ghost++;
+        if (GHOST_LABEL_A > 0 && sr >= GHOST_LABEL_PX && labels.length < 40) {
+          labels.push([n, sx, sy, sr]);
+        }
+      }
+      // ghost 文字：只给够大的圆，极淡、无阴影；不进标签预算 / 碰撞网格
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (var k = 0; k < labels.length; k++) {
+        var m = labels[k][0], msx = labels[k][1], msy = labels[k][2], msr = labels[k][3];
+        var fs = Math.round(clamp(msr * 0.30, 12, GHOST_LABEL_MAX));
+        var font = fs + 'px ' + FONT;
+        var full = m.label || m.id;
+        var txt = clipToWidth(m.id, full, font, LABEL_AVAIL * 2 * msr);
+        if (!txt || (txt.length <= 2 && txt !== full)) continue;
+        ctx.font = font;
+        ctx.globalAlpha = GHOST_LABEL_A;
+        ctx.fillStyle = rgba(mixWhite(m._rgb, 0.75), 1);
+        ctx.fillText(txt, msx, msy);
+        stats.ghostLabels++;
+      }
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'left';
     }
 
     // ③′ 强调环：搜索命中 / hover / 选中 / 相邻。单独一趟画在所有圆之上，
@@ -1160,7 +1323,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         ctx.fillStyle = 'rgba(15,17,22,0.85)';
         ctx.fillText(text, sx + 1, sy + 1);
         ctx.globalAlpha = al;
-        ctx.fillStyle = rank === 0 ? '#ffffff' : rank === 1 ? '#E3B341' : '#d6dbe4';
+        ctx.fillStyle = rank === 0 ? '#ffffff' : rank === 1 ? '#E8C88A' : '#E7E3D7';
         ctx.fillText(text, sx, sy);
         placed++;
       }

@@ -6,55 +6,83 @@
 <title>__PAGE_TITLE__</title>
 <style>
   :root {
-    --bg: #0f1116;
-    --panel: #161a22;
-    --panel-2: #1c212b;
-    --line: #2a303c;
-    --text: #d6dbe4;
-    --muted: #7e879a;
-    --accent: #4c8dff;
+    /* 2026-10-24 视觉改版：深青黄昏底色 + 一层暖琥珀高光（用户给的参考图：
+       青灰天幕 / 暖窗光 / 暗红点缀）。克制、不加霓虹、不加装饰元素。
+       背景放在 CSS 层（画布透明），这样改背景不会污染画布的像素判据。 */
+    --bg-0: #060e11;
+    --bg-1: #0c1e23;
+    --bg-2: #12292f;
+    --panel: rgba(12,25,30,.62);
+    --panel-2: rgba(255,255,255,.045);
+    --line: rgba(255,255,255,.08);
+    --text: #d6dde2;
+    --muted: #8a98a2;
+    --accent: #e6bf7d;          /* 暖琥珀：只给焦点/高亮/命中用 */
+    --accent-soft: rgba(230,191,125,.16);
+    --glass-border: rgba(255,255,255,.085);
+    --glass-shadow: 0 14px 44px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.045);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
-    background: var(--bg); color: var(--text);
+    /* 深青径向渐变 + 极淡胶片颗粒（两层背景，颗粒在上方，只负责压色带）。
+       2026-10-24 视觉改版：中心提亮、四角压得更深，模拟参考图里「黄昏天幕 + 远处微光」。 */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+                      radial-gradient(1250px 840px at 52% 38%, #17343b 0%, #0e2329 42%, #060f13 78%, #040a0d 100%);
+    background-repeat: repeat, no-repeat;
+    background-size: 140px 140px, cover;
+    color: var(--text);
     font: 13px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
   /* 画布必须铺满视口并有真实的 clientWidth/clientHeight —— render.js 的
      fitRadius() 与 home_layer 都按这个尺寸算，CSS 不给尺寸就什么都画不出来。
      <canvas> 是替换元素：width/height 为 auto 时取固有尺寸 300×150，inset:0
      撑不开它（left/right 同时为 0 时 right、bottom 被忽略），所以必须写死
-     100%。底部预留 46px 给 footer（render.js 的 FOOTER_H 必须与此一致）。 */
-  #cv { display: block; position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+     100%。底部预留 46px 给 footer（render.js 的 FOOTER_H 必须与此一致）。
+     背景透明：底色由 body 的 CSS 渐变提供，render.js 每帧只 clearRect。 */
+  #cv { display: block; position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; background: transparent; }
 
   /* ── 顶栏 ─────────────────────────────────────────────────────── */
   #topbar {
     position: absolute; top: 0; left: 0; right: 0; height: 46px;
     display: flex; align-items: center; gap: 8px; padding: 0 12px;
-    background: linear-gradient(180deg, rgba(15,17,22,.96), rgba(15,17,22,.75));
-    border-bottom: 1px solid var(--line); z-index: 20;
+    background: linear-gradient(180deg, rgba(8,18,22,.78), rgba(8,18,22,.46));
+    -webkit-backdrop-filter: blur(18px) saturate(125%);
+    backdrop-filter: blur(18px) saturate(125%);
+    border-bottom: 1px solid var(--glass-border);
+    box-shadow: 0 1px 24px rgba(0,0,0,.35);
+    z-index: 20;
   }
   /* 顶栏一行放不下时宁可让 #readout 折成两行，也不让 brand 折成三行溢出顶栏 */
   #topbar .brand { font-weight: 600; letter-spacing: .3px; white-space: nowrap; flex: 0 0 auto; }
   #topbar .brand small { color: var(--muted); font-weight: 400; margin-left: 8px; }
   .spacer { flex: 1; }
   button, select, input {
-    background: var(--panel-2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 6px;
+    background: rgba(255,255,255,.045); color: var(--text);
+    border: 1px solid rgba(255,255,255,.10); border-radius: 7px;
     padding: 5px 9px; font: inherit; outline: none;
+    transition: background .15s ease, border-color .15s ease;
   }
-  button:hover, select:hover { border-color: #3d4657; cursor: pointer; }
-  input:focus { border-color: var(--accent); }
+  button:hover, select:hover { background: rgba(255,255,255,.085); border-color: rgba(255,255,255,.17); cursor: pointer; }
+  input:focus { border-color: rgba(230,191,125,.55); box-shadow: 0 0 0 3px var(--accent-soft); }
+  input::placeholder { color: var(--muted); }
+  option { background: #0d1f24; color: var(--text); }
   #search { width: 150px; }
 
   #levelbar { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
   #levelbar button { width: 22px; padding: 5px 0; text-align: center; }
   .pill {
     padding: 3px 0; width: 22px; text-align: center;
-    border-radius: 999px; border: 1px solid var(--line);
-    background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 12px;
+    border-radius: 999px; border: 1px solid rgba(255,255,255,.09);
+    background: rgba(255,255,255,.03); color: var(--muted); cursor: pointer; font-size: 12px;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
   }
-  .pill.on { color: #fff; border-color: var(--accent); background: #1d2c48; }
+  .pill:hover { background: rgba(255,255,255,.07); color: var(--text); }
+  .pill.on {
+    color: #f6e3bf; border-color: rgba(230,191,125,.55);
+    background: rgba(230,191,125,.14);
+    box-shadow: 0 0 14px rgba(230,191,125,.10) inset;
+  }
   /* ⚠️ 顶栏在 1440px 下仍然是「超额」的：所有控件的 max-content 加起来超过容器宽度
      （2026-10-24 删掉「连线模式」下拉后仍超额 —— 剩下的搜索框/两个下拉/重置视角
      都不该再压）。所以两个可压缩项必须各自封顶，否则会撑出 46px 的顶栏被裁掉 ——
@@ -77,7 +105,11 @@
   /* ── 侧栏 ─────────────────────────────────────────────────────── */
   #sidebar {
     position: absolute; top: 46px; right: 0; bottom: 0; width: 360px;
-    background: var(--panel); border-left: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(9,21,25,.78), rgba(9,21,25,.58));
+    -webkit-backdrop-filter: blur(22px) saturate(125%);
+    backdrop-filter: blur(22px) saturate(125%);
+    border-left: 1px solid var(--glass-border);
+    box-shadow: -24px 0 60px rgba(0,0,0,.42);
     transform: translateX(100%); transition: transform .22s ease;
     overflow-y: auto; padding: 16px; z-index: 15;
   }
@@ -87,22 +119,23 @@
   #sidebar .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .chip {
     font-size: 11px; padding: 2px 8px; border-radius: 999px;
-    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+    background: rgba(255,255,255,.045); border: 1px solid var(--glass-border); color: var(--muted);
   }
   #sidebar .excerpt {
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px; color: #b6bdcb; font-size: 12px; margin-bottom: 12px;
+    background: rgba(255,255,255,.035); border: 1px solid var(--glass-border); border-radius: 9px;
+    padding: 10px; color: #b8c3c8; font-size: 12px; margin-bottom: 12px;
     max-height: 150px; overflow-y: auto; white-space: pre-wrap;
   }
   #sidebar .actions { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
   #sidebar h3 { font-size: 12px; color: var(--muted); text-transform: none;
-    margin: 14px 0 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+    margin: 14px 0 6px; border-top: 1px solid var(--glass-border); padding-top: 10px; }
   .elist { list-style: none; margin: 0; padding: 0; }
   .elist li {
-    padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 12px;
     display: flex; align-items: center; gap: 6px;
+    transition: background .12s ease;
   }
-  .elist li:hover { background: var(--panel-2); }
+  .elist li:hover { background: rgba(255,255,255,.06); }
   .elist .arrow { color: var(--muted); font-family: monospace; }
   .elist .tag { font-size: 10px; color: var(--muted); margin-left: auto; white-space: nowrap; }
   #sidebar .hlist { max-height: 260px; overflow-y: auto; }
@@ -112,8 +145,12 @@
   /* ── 图例与提示 ───────────────────────────────────────────────── */
   #legend {
     position: absolute; left: 12px; bottom: 12px; z-index: 10;
-    background: rgba(22,26,34,.9); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 12px; font-size: 12px; max-width: 280px;
+    background: rgba(9,21,25,.56);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    backdrop-filter: blur(20px) saturate(130%);
+    border: 1px solid var(--glass-border); border-radius: 12px;
+    box-shadow: var(--glass-shadow);
+    padding: 9px 13px; font-size: 12px; max-width: 280px;
     /* 兜底：窗口再矮也不许把图例顶进 46px 的顶栏（它原来能涨到 863px 高、
        y=25，前 21px 躲在顶栏底下）。正常 900px 视口下这条不触发 —— 一旦触发就说明
        内容又长过 max-height 了，面板内部会出现滚动条，那时该压缩垂直留白而不是删信息。 */
@@ -143,32 +180,44 @@
 
   #tooltip {
     position: absolute; pointer-events: none; z-index: 30; display: none;
-    background: rgba(28,33,43,.97); border: 1px solid var(--line); border-radius: 7px;
-    padding: 7px 10px; font-size: 12px; max-width: 320px;
-    box-shadow: 0 6px 20px rgba(0,0,0,.45);
+    background: rgba(10,23,27,.72);
+    -webkit-backdrop-filter: blur(16px) saturate(130%);
+    backdrop-filter: blur(16px) saturate(130%);
+    border: 1px solid var(--glass-border); border-radius: 10px;
+    padding: 8px 11px; font-size: 12px; max-width: 320px;
+    box-shadow: 0 12px 36px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
   }
   #tooltip b { font-size: 13px; }
   #tooltip .sub { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
   #toast {
     position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
-    background: rgba(28,33,43,.97); border: 1px solid var(--line); border-radius: 8px;
+    background: rgba(10,23,27,.78);
+    -webkit-backdrop-filter: blur(16px) saturate(130%);
+    backdrop-filter: blur(16px) saturate(130%);
+    border: 1px solid var(--glass-border); border-radius: 10px;
     padding: 8px 14px; font-size: 12px; opacity: 0; transition: opacity .2s;
     pointer-events: none; z-index: 40;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
   }
   #toast.show { opacity: 1; }
   #footer {
     position: absolute; right: 12px; bottom: 12px; color: var(--muted);
     font-size: 11px; z-index: 10; text-align: right; line-height: 1.5;
+    text-shadow: 0 1px 3px rgba(0,0,0,.6);
   }
   #hits {
     position: absolute; top: 54px; left: 12px; z-index: 18; width: 280px;
-    background: rgba(22,26,34,.96); border: 1px solid var(--line); border-radius: 8px;
+    background: rgba(9,21,25,.72);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    backdrop-filter: blur(20px) saturate(130%);
+    border: 1px solid var(--glass-border); border-radius: 10px;
+    box-shadow: var(--glass-shadow);
     max-height: 300px; overflow-y: auto; display: none;
   }
-  #hits .hit { padding: 6px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+  #hits .hit { padding: 6px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,.05); }
   #hits .hit:last-child { border-bottom: none; }
-  #hits .hit:hover { background: var(--panel-2); }
+  #hits .hit:hover { background: rgba(255,255,255,.06); }
   #hits .hit .why { color: var(--muted); font-size: 11px; }
 
   /* ── KaTeX（构建期内联，字体已换 base64）──────────────────────────── */
@@ -181,16 +230,19 @@
   #preview {
     position: fixed; z-index: 60; display: none;
     width: 700px; max-width: calc(100vw - 32px); max-height: 74vh; overflow-y: auto;
-    background: #1e1e24; color: #d6dbe4;
-    border: 1px solid #2d3138; border-radius: 10px;
-    box-shadow: 0 18px 48px rgba(0,0,0,.6);
+    background: rgba(10,22,26,.86);
+    -webkit-backdrop-filter: blur(26px) saturate(125%);
+    backdrop-filter: blur(26px) saturate(125%);
+    color: #d6dde2;
+    border: 1px solid var(--glass-border); border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.62), inset 0 1px 0 rgba(255,255,255,.05);
     padding: 16px 20px 20px;
     font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
     overscroll-behavior: contain;
   }
   #preview.show { display: block; }
   #preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6 {
-    color: #e6edf3; line-height: 1.4; margin: 16px 0 8px; font-weight: 600;
+    color: #edf2f4; line-height: 1.4; margin: 16px 0 8px; font-weight: 600;
   }
   #preview h1 { font-size: 22px; } #preview h2 { font-size: 19px; }
   #preview h3 { font-size: 17px; } #preview h4, #preview h5, #preview h6 { font-size: 15px; }
@@ -198,29 +250,30 @@
   #preview p { margin: 8px 0; }
   #preview ul, #preview ol { margin: 8px 0 8px 22px; }
   #preview li { margin: 3px 0; }
-  #preview img.pv-img { max-width: 100%; border-radius: 6px; margin: 8px 0; display: block; }
-  #preview code { background: #2a2e36; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-  #preview pre { background: #161a20; padding: 10px 12px; border-radius: 6px; overflow: auto; }
+  #preview img.pv-img { max-width: 100%; border-radius: 8px; margin: 8px 0; display: block; }
+  #preview code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  #preview pre { background: rgba(0,0,0,.28); padding: 10px 12px; border-radius: 8px; overflow: auto; border: 1px solid rgba(255,255,255,.05); }
   #preview pre code { background: none; padding: 0; }
   #preview table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
-  #preview th, #preview td { border: 1px solid #33383f; padding: 5px 9px; }
-  #preview th { background: #262a31; }
-  #preview blockquote { border-left: 3px solid #3b4048; margin: 8px 0; padding: 2px 12px; color: #9aa4b2; }
-  #preview mark { background: rgba(65,132,88,.45); color: #e6edf3; border-radius: 3px; padding: 0 2px; }
-  #preview a { color: #7ea6ff; }
-  #preview .pv-wl { color: #7ea6ff; border-bottom: 1px dashed rgba(126,166,255,.45); cursor: pointer; }
-  #preview .pv-wl.pv-unresolved { color: var(--muted); border-bottom-color: rgba(126,135,154,.35); cursor: default; }
-  #preview .pv-attach { color: #7e879a; background: #262a31; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
-  #preview .pv-missing { color: #f85149; font-size: 12px; }
+  #preview th, #preview td { border: 1px solid rgba(255,255,255,.10); padding: 5px 9px; }
+  #preview th { background: rgba(255,255,255,.05); }
+  #preview blockquote { border-left: 3px solid rgba(230,191,125,.35); margin: 8px 0; padding: 2px 12px; color: #9aa8b0; }
+  #preview mark { background: rgba(230,191,125,.18); color: #f6e3bf; border-radius: 3px; padding: 0 2px; }
+  #preview a { color: #e6bf7d; }
+  #preview .pv-wl { color: #e6bf7d; border-bottom: 1px dashed rgba(230,191,125,.45); cursor: pointer; }
+  #preview .pv-wl.pv-unresolved { color: var(--muted); border-bottom-color: rgba(138,152,162,.35); cursor: default; }
+  #preview .pv-attach { color: var(--muted); background: rgba(255,255,255,.05); border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+  #preview .pv-missing { color: #e07a72; font-size: 12px; }
   /* 第五轮：浮层顶部 sticky 面包屑（哪篇笔记 › 哪一节），滚深了也认得出位置 */
   #preview .pv-crumbs {
     position: sticky; top: -16px; z-index: 2; margin: -16px -20px 10px;
-    padding: 10px 20px; background: #1b1e24;
-    color: #9aa4b2; font-size: 11px; border-bottom: 1px solid #2d3138;
+    padding: 10px 20px; background: rgba(8,18,22,.9);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+    color: #9aa8b0; font-size: 11px; border-bottom: 1px solid rgba(255,255,255,.07);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #preview .pv-crumbs:empty { display: none; }
-  #preview .pv-hint { color: var(--muted); font-size: 11px; border-top: 1px solid #2d3138; margin-top: 14px; padding-top: 8px; }
+  #preview .pv-hint { color: var(--muted); font-size: 11px; border-top: 1px solid rgba(255,255,255,.08); margin-top: 14px; padding-top: 8px; }
 </style>
 </head>
 <body>
@@ -261,19 +314,19 @@
   </section>
   <section id="legend-rel">
     <h4>关系（每处 [[链接]] 各画一条细线，任何尺度都在）</h4>
-    <div class="row"><span class="sw" style="background:#E6EDF3"></span><span class="tx">所有链接<strong>统一近白细线</strong>：整篇级 [[笔记]] 与标题级 [[笔记#标题]] 同色 —— 文件夹/笔记/标题只是存储结构，不参与配色；类型看线型与端点标记</span></div>
-    <div class="row"><span class="sw" style="background:#E6EDF3;height:0;border-top:2px dashed #E6EDF3"></span><span class="tx">并列/对比（方向未知）—— 虚线段，两端都只标圆点</span></div>
-    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#e1e7ee"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#E6EDF3" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#e1e7ee"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
+    <div class="row"><span class="sw" style="background:linear-gradient(90deg,#5B8FCC,#4FAFA8)"></span><span class="tx">链接<strong>颜色 = 学科色</strong>：同一学科内同色，跨学科链接两端渐变；存储粒度（整篇级/标题级）不参与配色，类型看线型与端点标记</span></div>
+    <div class="row"><span class="sw" style="height:2px;background:repeating-linear-gradient(90deg,#7FB2E8 0 5px,transparent 5px 9px)"></span><span class="tx">并列/对比（方向未知）—— 虚线段，两端都只标圆点</span></div>
+    <div class="row"><svg width="24" height="10" viewBox="0 0 24 10" style="flex:none"><circle cx="3.2" cy="5" r="2.6" fill="#C7D5E2"/><line x1="5.5" y1="5" x2="15" y2="5" stroke="#AFC6DA" stroke-width="2"/><path d="M23 5 L14.5 1.4 L14.5 8.6 Z" fill="#C7D5E2"/></svg><span class="tx">链接线的两端：圆点 = 出发点，箭头 = 指向处（线在两个圆的边界处截断，不插进圆心）</span></div>
     <div class="row"><span class="tx"><b>同一对元素之间线的条数 = 关联强度</b>：缩到文件级时两篇笔记之间那一束细线，就是它们互相引用的分量</span></div>
     <div class="row"><span class="tx">缩放<b>只改线的长度和形状</b>，不改颜色、不改浓淡、不减少条数 —— 链接本来就是从一个标题指向一个标题的，不该因为缩小而消失</span></div>
     <div class="row"><span class="sw" style="background:#d6dbe4;height:0;border-top:1.5px dotted rgba(214,219,228,.55)"></span><span class="tx">包含：不画成网，悬停/选中时只用灰色<b>点线</b>画出祖先链 —— 点线是「你在哪」，实线才是「谁链接谁」</span></div>
   </section>
   <section>
     <h4>节点（一律实心圆）</h4>
-    <div class="row"><span class="dot" style="background:#4C8DFF"></span><span class="tx">颜色 = 学科（顶层目录）</span></div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;width:16px;height:16px"></span><span class="tx">大小 = 规模（下辖元素越多越大）</span></div>
+    <div class="row"><span class="dot" style="background:#5B8FCC"></span><span class="tx">颜色 = 学科（顶层目录）</span></div>
+    <div class="row"><span class="dot" style="background:#5B8FCC;width:16px;height:16px"></span><span class="tx">大小 = 规模（下辖元素越多越大）</span></div>
     <div class="row"><span class="dot" style="background:#ffd166;box-shadow:0 0 0 3px rgba(255,209,102,.35)"></span><span class="tx">黄色光环 = 搜索命中</span></div>
-    <div class="row"><span class="dot" style="background:#4C8DFF;box-shadow:0 0 0 2px #4C8DFF"></span><span class="tx">蓝色圆环 = 与选中元素直接相连（含其内部子元素的链接，出入向都算）</span></div>
+    <div class="row"><span class="dot" style="background:#5B8FCC;box-shadow:0 0 0 2px #7FB2E8"></span><span class="tx">蓝色圆环 = 与选中元素直接相连（含其内部子元素的链接，出入向都算）</span></div>
   </section>
   <div class="hint">
     光标放在节点上<b>向上滚 = 逐层深入</b>，向下滚 = 回到更粗的层级 · 拖拽平移，

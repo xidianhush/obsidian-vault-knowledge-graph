@@ -69,6 +69,9 @@ DEFAULTS: dict = {
         "edge_marker_tint": 0.55,
         "raw_edge_width": 1.0,
         "raw_marker_min_len": 6,
+        "ghost_alpha": 0.10,
+        "ghost_label_alpha": 0.14,
+        "ghost_label_min_px": 56,
     },
     # Obsidian 式预览 / 第 11 带「链接带」（2026-10-22 第三轮）。
     # 关掉它 = 完全回到「到第 10 带为止」：payload 不存预览 HTML、lod 里没有 links。
@@ -76,7 +79,8 @@ DEFAULTS: dict = {
         "enabled": True,
         "max_note_chars": 0,   # 0 = 不截断（预览是整篇笔记，用户口径）
     },
-    "theme": {"domains": {}, "fallback": "#8B949E", "raw_edge": "#E6EDF3"},
+    "theme": {"domains": {}, "fallback": "#8B949E",
+              "raw_edge": "#E6EDF3", "edge_color": "domain", "edge_tint": 0.52},
     "output": {"json": "dist/graph.json", "html": "dist/knowledge-graph.html"},
     "annotations": "annotations.yaml",
     "candidates_file": "candidates.yaml",
@@ -200,6 +204,13 @@ def _validate(cfg: dict):
         _fail("lod.edge_marker_tint 必须在 [0, 1] 之间（0 = 端点标记与连线同色，1 = 纯浅灰）")
     if not isinstance(lod.get("raw_edge_width"), (int, float)) or not lod["raw_edge_width"] > 0:
         _fail("lod.raw_edge_width 必须是正数（连线线的固定屏幕线宽 px）")
+    # 2026-10-24 视觉改版：ghost 下一层（纯视觉景深，不参与 LOD / 命中 / 标签竞争）
+    for key in ("ghost_alpha", "ghost_label_alpha"):
+        v = lod.get(key)
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1:
+            _fail(f"lod.{key} 必须在 [0, 1] 之间（0 = 关闭 ghost / 不画 ghost 文字），收到 {v!r}")
+    if not isinstance(lod.get("ghost_label_min_px"), (int, float)) or lod["ghost_label_min_px"] < 0:
+        _fail(f"lod.ghost_label_min_px 必须是 ≥0 的像素值，收到 {lod.get('ghost_label_min_px')!r}")
     for name, color in cfg["theme"].get("domains", {}).items():
         if not _HEX_RE.match(str(color)):
             _fail(f"theme.domains[{name}] 颜色格式应为 #RRGGBB，收到 {color!r}")
@@ -212,10 +223,18 @@ def _validate(cfg: dict):
     raw_edge = cfg["theme"].get("raw_edge", "#E6EDF3")
     if not _HEX_RE.match(str(raw_edge)):
         _fail(f"theme.raw_edge 颜色格式应为 #RRGGBB，收到 {raw_edge!r}")
-    # 2026-10-24：只有逐条链接一种画法，所有链接统一用 theme.raw_edge，按关系类型
-    # 分色的 theme.edges 随之退役（关系类型仍由线型与端点标记表达）。
+    # 2026-10-24 视觉改版：链接默认按**学科色**着色（同域同色、跨域两端渐变）。
+    # edge_color = "flat" 退回旧的「所有链接统一近白」。
+    ec = cfg["theme"].get("edge_color", "domain")
+    if ec not in ("domain", "flat"):
+        _fail(f"theme.edge_color 只能是 'domain'（按学科色，默认）或 'flat'（统一近白），收到 {ec!r}")
+    et = cfg["theme"].get("edge_tint", 0.62)
+    if not isinstance(et, (int, float)) or isinstance(et, bool) or not 0 <= et <= 1:
+        _fail(f"theme.edge_tint 必须在 [0, 1] 之间（学科色向白提亮的比例），收到 {et!r}")
+    # 2026-10-24：只有逐条链接一种画法，按关系类型分色的 theme.edges 随之退役
+    #（关系类型仍由线型与端点标记表达）。
     if "edges" in cfg["theme"]:
-        _fail("theme.edges 已退役（2026-10-24 起所有链接统一用 theme.raw_edge 配色，"
+        _fail("theme.edges 已退役（2026-10-24 起链接统一按学科色 / theme.raw_edge 配色，"
               "关系类型改由线型与端点标记表达），请删掉这个键")
 
 

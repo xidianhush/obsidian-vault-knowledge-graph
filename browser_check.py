@@ -167,7 +167,10 @@ FORCE_LABELS = """(ids) => {
 
 # 「空白兜底提示有没有落笔」的探针：不是取正中心**一个**像素 —— 提示是 textAlign:center
 # 的长文本，屏幕正中那一点很可能正好落在两个字之间的空隙里，单像素抽样会随机假阴性。
-# 改成扫过中心的一条横带（含 dpr 缩放），数有多少像素不是背景色。没画东西 → 0。
+# 改成扫过中心的一条横带（含 dpr 缩放），数有多少像素**不是透明**。
+# 2026-10-24 视觉改版：画布背景改由 CSS 提供（body 的深青渐变 + 颗粒），render.js 每帧
+# 只 clearRect —— 于是「空画布 = alpha 0」是精确判据，比旧的「和 #0f1116 逐通道精确比较」
+# 更稳，也不会因为换背景色而假绿。没画东西 → 0。
 HINT_PIXELS = """() => {
     const cv = document.getElementById('cv'); const g = cv.getContext('2d');
     const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
@@ -176,26 +179,26 @@ HINT_PIXELS = """() => {
     const y0 = Math.max(0, Math.min(cv.height - band, cy - Math.round(band / 2)));
     const d = g.getImageData(0, y0, cv.width, band).data;
     let n = 0;
-    for (let i = 0; i < d.length; i += 4) {
-        if (d[i] !== 15 || d[i+1] !== 17 || d[i+2] !== 22) n++;
+    for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > 8) n++;
     }
     return n;
 }"""
 
-# 整块画布上非背景色的像素数 —— 「画布是不是肉眼全空」的直接度量，比统计量更硬
+# 整块画布上「有东西」的像素数 —— 「画布是不是肉眼全空」的直接度量，比统计量更硬
 # （stats.nodes 是候选集大小、stats.painted 是几何精确的落笔数，两者都只是代理）。
-# 读整块画布比较贵，所以只在 3d 那一段用。
+# 判据同 HINT_PIXELS：画布透明背景 ⇒ alpha > 8 即「落过笔」。读整块画布比较贵，
+# 所以只在 3d 那一段用。
 CANVAS_LIT = """() => {
     const cv = document.getElementById('cv'); const g = cv.getContext('2d');
     const d = g.getImageData(0, 0, cv.width, cv.height).data;
     let n = 0;
-    for (let i = 0; i < d.length; i += 4) {
-        if (d[i] !== 15 || d[i+1] !== 17 || d[i+2] !== 22) n++;
+    for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > 8) n++;
     }
     return {lit: n, shown: window.KG.renderer.stats.nodes,
             painted: window.KG.renderer.stats.painted};
 }"""
-BG = [15, 17, 22]
 
 fails = []
 warns = []
@@ -303,9 +306,9 @@ with sync_playwright() as p:
         const cv = document.getElementById('cv'); const g = cv.getContext('2d');
         const d = g.getImageData(0, 0, cv.width, cv.height).data;
         let n = 0;
-        for (let i = 0; i < d.length; i += 4 * 97) if (d[i] !== 15 || d[i+1] !== 17 || d[i+2] !== 22) n++;
+        for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 8) n++;
         return n; }""")
-    check("canvas painted (non-background samples)", painted > 50, "n=%d" % painted)
+    check("canvas painted (non-transparent samples)", painted > 50, "n=%d" % painted)
 
     # bug C: 标签门槛原来读 label_min_px/reveal，而祖先层被 parent_dim 压到 0.5，
     # 两个条件互相抵消 => shownLabels 恒为 0，整张地图一个文字都没有。
@@ -395,7 +398,7 @@ with sync_playwright() as p:
           str(empty["shownNodes"]))
     hint_n = page.evaluate(HINT_PIXELS)
     check("empty viewport still paints the fallback hint (not a dead black screen)",
-          hint_n > 50, "中心带非背景像素=%d" % hint_n)
+          hint_n > 50, "中心带非透明像素=%d" % hint_n)
     check("no pageerror while roaming past the floor", not perr, "; ".join(perr[:2]))
     # 回到地标，后面的段落都假设从这里开始往上滚
     page.evaluate("() => window.KG.renderer.setZoom(window.KG.renderer.zMin)")
@@ -457,7 +460,7 @@ with sync_playwright() as p:
         print("    !! no gap; skipping (2b 与 3c 已经用同一条兜底提示覆盖了空视口)")
     else:
         hint_n = page.evaluate(HINT_PIXELS)
-        check("hint text painted at screen center", hint_n > 50, "中心带非背景像素=%d" % hint_n)
+        check("hint text painted at screen center", hint_n > 50, "中心带非透明像素=%d" % hint_n)
     shot("07_blank")
 
     print("\n=== 3c. zooming in far past the ceiling: maxzoom hides everything, hint still shows ===")
@@ -491,7 +494,7 @@ with sync_playwright() as p:
     if empty_at is not None:
         hint_n2 = page.evaluate(HINT_PIXELS)
         check("extreme zoom-in still paints the fallback hint",
-              hint_n2 > 50, "中心带非背景像素=%d" % hint_n2)
+              hint_n2 > 50, "中心带非透明像素=%d" % hint_n2)
     check("no pageerror at extreme zoom-in", not perr, "; ".join(perr[:2]))
     # Home 必须能救回来 —— 这是放开缩放之后承诺的找回手段。
     # 判据用「恢复到 zHome」而不是「比某个阈值大」：后者在小视口下会因为

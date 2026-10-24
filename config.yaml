@@ -169,9 +169,14 @@ lod:
                          # 信号，两者不冲突
   fade_span: 1.35        # 淡入的缩放带宽（倍率）：zoom 从 minzoom/fade_span 升到 minzoom，
                          # alpha 从 0 走到 1。滚轮每格 1.12，约 2.6 格淡完，不会突兀
+  ghost_alpha: 0.10      # 「下一层 ghost」的不透明度（2026-10-24 视觉改版）：当前最深层 +1
+                         # 的圆会以这个浓度隐约透出，像隔着磨砂玻璃看到下一层结构。
+                         # 与层级带 LOD 解耦，不参与淡入/命中/标签竞争。0 = 关闭
+  ghost_label_alpha: 0.14 # ghost 层文字的不透明度（只在屏幕半径 ≥ ghost_label_min_px 时画）
+  ghost_label_min_px: 56 # ghost 标签的最小屏幕半径：太小的圆只画轮廓，不画字
   focus_edge_dim: 0.07   # 选中一个元素后，与它无关的连线压到这个不透明度（0 = 彻底不画）。
                          # 留一点残影是为了保住「这片区域连得多密」的环境感知 —— 和
-                         # Obsidian graph view 一致，也和 weak_edge_min_count 的 45%
+                         # Obsidian graph view 一致，也和静息态 idle_edge_dim 的 45%
                          # 基线连贯，不至于从 0.45 直接跳到 0
   hover_edge_dim: 0.75   # 只是悬停（没选中）时无关连线的压暗系数。悬停不做强过滤：
                          # evalHover 每帧重算，相机 tween 期间 hover 目标逐帧变化，
@@ -220,23 +225,27 @@ preview:
   max_note_chars: 0        # 0 = 预览整篇不截断（用户口径「整个目标笔记」）
 
 # ── 配色 ────────────────────────────────────────────────────────────────
+# 2026-10-24 视觉改版：按用户给的参考图（深青黄昏天幕 / 暖窗光 / 暗红点缀）
+# 把七个学科色整体往「低饱和 + 同明度」收，避免深青底上出现糖果色。
+# 色相不变（仍能一眼认出学科），只降饱和度、压亮度。
 theme:
   domains:
-    "Science and Tech":             "#4C8DFF"
-    "Economy and Finance":          "#3FB950"
-    "Medical and Health":           "#F85149"
-    "Literature History Philosophy": "#C08BFF"
-    "Interest":                     "#E3B341"
-    "Projects":                     "#39C5BB"
-    "Study log":                    "#F0883E"   # 公开 scope 的第三个根（vault 里的 Logs/Study log）
+    "Science and Tech":             "#5B8FCC"
+    "Economy and Finance":          "#5AA87A"
+    "Medical and Health":           "#C86A64"
+    "Literature History Philosophy": "#A98FD6"
+    "Interest":                     "#D3A95E"
+    "Projects":                     "#4FAFA8"
+    "Study log":                    "#D08A5A"   # 公开 scope 的第三个根（vault 里的 Logs/Study log）
   fallback: "#8B949E"
-  # 所有语义链接线（含端点标记的派生色）的统一颜色。2026-10-20 起不再按粒度分色：
-  # 整篇级 [[笔记]] 与标题级 [[笔记#标题]] 同色。
-  # 理由：文件夹/笔记/标题只是人为的**存储结构**，这张图要表达的是知识内在的
-  # 包含关系与连接关系，存储粒度不该参与视觉编码（决定记录见 HANDOFF §4 坑 34）。
-  # 关系类型没有丢：contrast 仍是虚线、derives/prerequisite 才画箭头，
-  # 侧栏 `.tag` 与 hover 气泡也照旧标出每条边的类型与来源。
-  # 选近白是因为七个色相已被 domains 占满，且 #4C8DFF 同时是 derives 边色和
-  # Science and Tech 的节点色 —— 拿它当统一色，线会融进最大的那棵子树里。
-  # 改这里只影响链接线；关系类型的线型/箭头不读颜色。
+  # 链接线配色（2026-10-24 起，方案 A）：
+  #   domain（默认）= 同域链接用该学科的 domain 色向白提亮 edge_tint；跨学科链接从
+  #                   源学科色渐变到目标学科色。这样线“属于”它两端的圆，跨学科连接
+  #                   一眼可辨；暗底描边保证亮线压在同色亮圆上仍然读得出来。
+  #   flat          = 退回 2026-10-20 的旧行为：所有链接统一用 raw_edge 近白。
+  # 存储粒度仍然不参与配色（坑 34 的原则没变）：整篇级 [[笔记]] 与标题级
+  # [[笔记#标题]] 用同一套规则；关系类型只由线型（contrast = 虚线）与端点标记表达。
+  edge_color: "domain"
+  edge_tint: 0.52          # 学科色向白提亮的比例（0.52 更接近学科原色；越大越接近白色）
+  # flat 模式 / 无 domain 节点的兜底颜色。
   raw_edge: "#E6EDF3"
