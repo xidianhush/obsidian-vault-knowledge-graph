@@ -16,12 +16,9 @@
 #   known_gaps  预期会红的断言组 + 原因。纪律：红项必须能对上这里的一条，对不上就是回归。
 #               修掉一个就把对应的行删掉。
 #
-# 当前共同红项（2026-10-24 首轮 sweep 标定，全部指向阶段 1.2「缩放行程标定」）：
-#   [LADDER]  M[last] != zMax / 「放到最内见全部 N 个节点」：home_zoom 恒为 0.4612
-#             （根半径归一化到 1000），而 zMax = min_px/min(r) × ceiling 由半径比决定；
-#             小库/浅库的半径比小 → 阶梯铺不到 zMax，镜头被夹住。
-#   [INFLOW]  单格滚轮涌入 >35%：总行程只有 4~26 格（作者库 47 格），一格就吞掉一大片。
-#   这两条是 PLAN §1.1 #4「缩放行程 = 半径比」的实测样本，不是 fixture 的问题。
+# 2026-10-24 阶段 1.2 之后：原来的 [LADDER] / [INFLOW] 两簇红**已修掉**（阶梯按本库自己的
+# 缩放区间夹 anchor、home 由区间反解、wheel_step 按目标格数反解）。现在只剩 tiny 的
+# [ROOT-NOTE]（depth1 是笔记的模型假设），归阶段 1.4。**新增红项必须对得上 known_gaps。**
 
 fixtures:
   tiny:
@@ -30,12 +27,10 @@ fixtures:
     tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
     config: vaults/tiny/config.yaml
     canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
-    expected_ok: {verify: 50}
+    expected_ok: {verify: 54}
     known_gaps:
       - "[ROOT-NOTE] depth=1 是笔记：graph.py 假设 depth1 全是文件夹、笔记 domain 非空 —— 阶段 1.4"
       - "[ROOT-NOTE] 「越界 1 个：Only#唯一标题」：根笔记的标题节点 id 不以目录根开头，verify 的越界判据按 id 首段切 —— 阶段 1.4"
-      - "[LADDER] 阶梯铺不到 zMax"
-      - "[INFLOW] 单格涌入 50%"
 
   shallow:
     title: 浅库
@@ -43,10 +38,8 @@ fixtures:
     tests: 层级带 steps==0 / home_layer 夹取 / 最小规模冒烟
     config: vaults/shallow/config.yaml
     canary: {folders: 1, notes: 15, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 53}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[LADDER] steps = max_depth - home_level = 0，rung 被 1.377 保底抬起，阶梯铺不到 zMax"
-      - "[INFLOW] 单格涌入 94%（总行程 13 格）"
 
   deep-chain:
     title: 深链库
@@ -54,9 +47,8 @@ fixtures:
     tests: 独子链 / 深度轴拉长 / 顶栏层级胶囊溢出（12 个 pill 在 1440px 下超额）
     config: vaults/deep-chain/config.yaml
     canary: {folders: 10, notes: 10, headings: 10, semantic_edges: 0}
-    expected_ok: {verify: 54}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[LADDER] M[12]=12.99 > zMax=6.98（阶梯被 home 锚定、铺过头）"
       - "[PILLS] 浏览器侧胶囊数 = max_depth，12 个在 1440px 下会挤压 / 裁切（template.html:86-91）—— 阶段 2.4"
 
   wide-roots:
@@ -65,11 +57,10 @@ fixtures:
     tests: 根数 ≠ 6 / 最小份额 / 学科色板只有 7 + 单一 fallback / 图例按实际 domain
     config: vaults/wide-roots/config.yaml
     canary: {folders: 30, notes: 150, headings: 150, semantic_edges: 0}
-    expected_ok: {verify: 55}
+    expected_ok: {verify: 57}
     known_gaps:
       - "[COLOR] theme.domains 只写 7 个色，其余 23 个走 fallback #8B949E（PLAN §1.1 #5）—— 阶段 1.3"
       - "[LEGEND] 面板按 depth1 folder 列 30 行，280px 宽 + 一列长滚动（template.html:153,157）—— 阶段 2.5"
-      - "[INFLOW] 单格涌入 45%（总行程 9 格）"
 
   hub-dense:
     title: 稠密链接库
@@ -77,9 +68,8 @@ fixtures:
     tests: 边绘制预算（每帧逐条画）/ 焦点模式 / 端点标记 / chip 折叠 / 标题级链接
     config: vaults/hub-dense/config.yaml
     canary: {folders: 1, notes: 80, headings: 320, semantic_edges: 335}
-    expected_ok: {verify: 55}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[INFLOW] 单格涌入 60%（总行程 25 格）"
 
   heading-zoo:
     title: 标题动物园
@@ -87,10 +77,8 @@ fixtures:
     tests: 标题深度轴 / 锚点唯一性与错位 / KaTeX / 图片相对路径
     config: vaults/heading-zoo/config.yaml
     canary: {folders: 1, notes: 6, headings: 20, semantic_edges: 0}
-    expected_ok: {verify: 53}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[LADDER] M[8]=3.61 > zMax=1.54"
-      - "[INFLOW] 单格涌入 37%（总行程 26 格，刚好过线）"
 
   plain:
     title: 纯文本库
@@ -98,10 +86,8 @@ fixtures:
     tests: 「内容特征被当成契约」—— verify 的公式断言、标题锚点覆盖率、browser 3e 的靶子
     config: vaults/plain/config.yaml
     canary: {folders: 1, notes: 10, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 53}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[LADDER] M[2]=0.53 > zMax=0.12"
-      - "[INFLOW] 单格涌入 91%（总行程 11 格）"
 
   remap-dup:
     title: 重映射 + 同名库
@@ -109,7 +95,5 @@ fixtures:
     tests: scope_file 工作流 / `as` 落地名 / 同名 stem 解析歧义 / 空目录不进图
     config: vaults/remap-dup/config.yaml
     canary: {folders: 2, notes: 4, headings: 4, semantic_edges: 0}
-    expected_ok: {verify: 53}
+    expected_ok: {verify: 57}
     known_gaps:
-      - "[LADDER] M[3]=0.73 > zMax=0.18"
-      - "[INFLOW] 单格涌入 80%（总行程 9 格）"

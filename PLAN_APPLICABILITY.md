@@ -165,12 +165,17 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
 （`metadataCache` + `resolvedLinks`）；图片走 `vault.getResourcePath`；**模型层必须与 Python 同构**，
 用 8 个 fixture 的 payload 当 golden 文件防两个实现漂移。12 条硬约束见 §9.2。
 
-### 阶段 1：参数从「写死」变「派生」 ⬜
+### 阶段 1：参数从「写死」变「派生」 🟡 进行中（1.2 ✅ / 1.1、1.3、1.4、1.5 ⬜）
 1.1 深度轴稠密化（标题级别 → 该笔记内出现过的 level 的**稠密 rank**）+ 清空层 + 单子链折叠
-1.2 缩放行程标定（目标格数反解 `wheel_step`）+ 修 `steps==0` + **`z_lo` 统一用 `min(r)`**
-（现在 `kg/layout.py:459` 用 `max(r)`，与 `verify.py:230`/`render.js:251-256` 的 `min(r)` 两套定义差 13.9×）
+1.2 ✅ **缩放行程标定（2026-10-24）**：① 统一 `z_lo` 为 `min_px/min(r_根)`（原来 layout 用
+   `max(r_根)`，与 render/verify 差 13.9×）；② anchor 加**上界** `z_hi/(fade×1.02)^steps`
+   （旧版没有 → 小库上 M[D] 超调到 zMax 的几倍）；③ `steps==0`（浅库）时 anchor 直接等于 zMax；
+   ④ home 落点改成「第 home_level 层带上的 home_band 位置」，并落盘 `meta.zoom.home_zoom`；
+   ⑤ `wheel_step` 按「目标格数 = clamp(6×(D-1)+8, 20, 48)」反解，不再全库写死 1.12。
+   ⑥ verify 的单格涌入上限改成 `max(35%, 最大层占比 + 2%)` —— 层级带**有意**让同层同现，
+   写死 35% 等于把「一个文件夹装全部笔记」的库形状当 bug。
 1.3 自动色板（golden-angle HSL + 名字 hash，手写覆盖优先）+ 图例改「实际出现过的 domain」+ 无文件夹库降级分组
-1.4 `home_level` 取「有内容的层」、`home_fit` 由最小根反算并**回写 home_layer**
+1.4 `home_level` 取「有内容的层」、根笔记模型（depth1 是 note）与 `roots` 推导
 1.5 `NOMINAL_FIT_RADIUS=(900-46)/2=427` 把 1440×900 写进世界归一化 → 改成运行时视口（扣顶栏 + 侧栏）
 > **阶段 0.5 带来的新约束**：1.x 改出来的算法要写成**可移植的纯函数**（输入=节点树+配置，
 > 输出=坐标/半径/enter[]），浮点舍入点与现状对齐（x/y 3 位、r 4 位、enter 6 位），
@@ -260,31 +265,33 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 ### 7.1 作者库（回归基准，**任何阶段都不许倒退**）
 
-| 项 | 基线（2026-10-24 15:12 实测） | 阶段 0 后（0.3 实测） | 阶段 1 后 | 阶段 2 后 |
+| 项 | 基线（2026-10-24 15:12） | 阶段 0 后（0.3 实测） | 阶段 1 后（1.2 实测） | 阶段 2 后 |
 |---|---|---|---|---|
-| `verify --scope all` | 110 ok / 0 FAIL（55+55） | **112 ok / 0 FAIL（56+56）**（+1/scope = 身份断言） | | |
-| `browser_check` private | 132 ok / 0 FAIL / 1 warn | **132 ok / 0 FAIL / 1 skip**（计数口径改名） | | |
-| `browser_check` public | 133 ok / 0 FAIL / 0 warn | **133 ok / 0 FAIL / 0 skip** | | |
-| 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB（未变） | | |
-| 空闲 fps | 63 | 未复测（0.3 没动渲染） | | |
-| 20 格滚轮 | private 1654 ms / public 1644 ms | 未复测（0.3 没动渲染） | | |
-| 产物 hash | 见 §7.3 | payload **变了**：`meta.link_stats` 新增 `preview_math_notes`（0.3 为公式条件化加的） | | |
+| `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **114 ok / 0 FAIL（57+57）** | |
+| `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **133 ok / 0 FAIL / 0 skip** | |
+| `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **132 ok / 0 FAIL / 1 skip** | |
+| 两份浏览器 ok 合计 | 265 | 265 | **265**（条件跳过互换了位置，用例没少） | |
+| 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB | **6277 / 6303 KB** | |
+| 空闲 fps | 63 | 未复测 | 未复测（1.2 没动渲染） | |
+| 20 格滚轮 | private 1654 ms / public 1644 ms | 未复测 | 未复测（1.2 没动渲染） | |
+| 产物 hash | 见 §7.3 | +`preview_math_notes` | payload 变：`zoom.wheel_step` / `zoom.home_zoom` / `lod.enter[]` | |
 
 ### 7.2 形状体检表（8 个 fixture，2026-10-24 阶段 0.3 实测）
 
 | fixture | 构建 | verify ok / FAIL | browser | HTML KB | depth | 灰节点占比 | 20 格滚轮 |
 |---|---|---|---|---|---|---|---|
-| tiny | ok | 50 / 6 | 待标定 | 776 | 2 | — | — |
-| shallow | ok | 53 / 3 | 待标定 | 784 | 2 | — | — |
-| deep-chain | ok | 54 / 2 | 待标定 | 791 | 12 | — | — |
-| wide-roots | ok | 55 / 1 | 待标定 | 958 | 3 | — | — |
-| hub-dense | ok | 55 / 1 | 待标定 | 1063 | 4 | — | — |
-| heading-zoo | ok | 53 / 3 | 待标定 | 789 | 8 | — | — |
-| plain | ok | 53 / 3 | 待标定 | 781 | 2 | — | — |
-| remap-dup | ok | 53 / 3 | 待标定 | 779 | 3 | — | — |
+| tiny | ok | **54 / 3**（只剩 ROOT-NOTE） | 待标定 | 776 | 2 | — | — |
+| shallow | ok | **57 / 0** | 待标定 | 784 | 2 | — | — |
+| deep-chain | ok | **57 / 0** | 待标定 | 791 | 12 | — | — |
+| wide-roots | ok | **57 / 0** | 待标定 | 958 | 3 | — | — |
+| hub-dense | ok | **57 / 0** | 待标定 | 1063 | 4 | — | — |
+| heading-zoo | ok | **57 / 0** | 待标定 | 789 | 8 | — | — |
+| plain | ok | **57 / 0** | 待标定 | 781 | 2 | — | — |
+| remap-dup | ok | **57 / 0** | 待标定 | 779 | 3 | — | — |
 
-> 「灰节点占比 / 首屏标签 / 20 格滚轮」需要浏览器侧采集，随 `--browser` 那一轮一起标定
-> （阶段 1.2 修完缩放行程之后再跑，否则数会立刻变）。
+> 阶段 1.2（2026-10-24）之后：8 个库合计 **456 ok / 3 FAIL**（1.2 之前是 426 / 22）。
+> 3 条红全是 tiny 的 [ROOT-NOTE]（depth1 是笔记的模型假设），归阶段 1.4。
+> 「灰节点占比 / 首屏标签 / 20 格滚轮」需要浏览器侧采集，随 `--browser` 那一轮一起标定。
 
 ### 7.3 阶段 0.1 的「零改动」证明（已有）
 
@@ -311,9 +318,12 @@ knowledge-graph.public.html 20E14BF9E3B880BCAD7B49FC4E90B009977A8EC2E0B9BDE314FE
 1. **最小学科叶子份额 < 0.32%** ⇒ 最外层会冒出第 2 层节点：`kg/layout.py:456-463` 用 `max(r)` 把
    `M[1]` 压到 `z_lo`，而真实 zMin 由 `min(r)` 决定。作者库 8/2167 = **0.37%，余量仅 7%**。
 2. **< 0.23%** ⇒ `home_zoom < zMin`，home 被夹到 zMin、最大根可能被裁出屏（`render.js:298-300`）。
-3. **两套 zMin 定义**：`kg/layout.py:459`（`max(r)`）vs `verify.py:230`/`render.js:251-256`（`min(r)`），
-   作者库上相差 **13.9×** —— 阶段 1.2 的必改项。
-4. **缩放行程 = 1.286 × 半径比**（`(1.35/1.05)`）：作者库 148 → 190× ≈ 46 格；平铺库 ≈ 2.4 格。
+3. ~~**两套 zMin 定义**~~（2026-10-24 阶段 1.2 已统一）：原 `kg/layout.py` 用 `max(r_根)`、
+   `verify.py`/`render.js` 用 `min(r_根)`，作者库上差 13.9× —— 现在三处同源用 `min(r_根)`。
+4. ~~**缩放行程 = 1.286 × 半径比**~~（阶段 1.2 已改）：现在 `wheel_step` 按「目标格数
+   = clamp(6×(D-1)+8, 20, 48)」反解、`home_zoom` 由本库区间反解、anchor 有上界夹住 ——
+   平铺库/浅库不再出现「2 格滚轮走完全图 / M[D] 超调」。
+   **新口径**：`行程格数 ≈ clamp(6×(D-1)+8, 20, 48)`；`author` 10 层 → 48 格，`tiny` 2 层 → 20 格。
 
 ---
 
@@ -414,3 +424,4 @@ JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这
 | 2026-10-24 | 0.2 | 8 个形状 fixture + 确定性生成器 + manifest（canary / expected_ok / known_gaps）；8 库全部 build 通过 | `feat(fixtures): 阶段 0.2`（见 `git log`） |
 | 2026-10-24 | 0.3 | sweep runner + ok 计数/vault 身份/机器可读结果行；修 2 处崩溃 + 2 处「内容特征当契约」+ 内联 roots 多算附件目录；8 库标定为 426 ok / 22 FAIL | `feat(fixtures): 阶段 0.3`（见 `git log`） |
 | 2026-10-24 | 0.5 | 插件形态探针（只读）：路线 B + 平台代劳解析层 + `getResourcePath` 图片 + golden payload 防漂移；12 条平台硬约束 | `docs(plan): 阶段 0.5`（见 `git log`） |
+| 2026-10-24 | 1.2 | 缩放行程标定：z_lo 三处同源、anchor 加上界、steps==0 特判、home 由区间反解并落盘、wheel_step 按目标格数反解、涌入上限按层占比；8 库 456 ok / 3 FAIL（原 426/22） | `feat(lod): 阶段 1.2`（见 `git log`） |

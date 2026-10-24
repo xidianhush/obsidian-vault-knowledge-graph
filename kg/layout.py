@@ -428,6 +428,7 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
     # minzoom 中位数，会跟着内容漂）。
     fade = float(cfg.get("lod", {}).get("fade_span", 1.35))
     ceiling = float(cfg.get("zoom", {}).get("zoom_in_ceiling", 1.35))
+    floor = float(cfg.get("zoom", {}).get("zoom_out_floor", 1.05))
     home_level = int(cfg.get("zoom", {}).get("home_level", 2))
     home_level = max(1, min(home_level, max_depth))
     # home 落在第 home_level 层淡入带的哪个位置（0 = 刚开始浮现，1 = 完全成熟）。
@@ -436,37 +437,54 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
     # 保住「层级可读」与「父圆还透得出来」的位置。
     home_band = min(1.0, max(0.0, float(cfg.get("zoom", {}).get("home_band", 0.5))))
 
-    home_zoom = NOMINAL_FIT_RADIUS / root_radius * home_fit if root_radius > 0 else 0.0
+    # ── 缩放区间：与 render.js / verify.py **完全同源**（2026-10-24 阶段 1.2）──────
+    # 旧版这里用 `min_px / max(r_roots)` 算「第 1 层成熟点」的钳位，而渲染侧与校验侧的
+    # zMin 是「min_px / min(r_roots)」——两套定义在作者库上相差 13.9×（PLAN §8 #3）。
+    # 现在统一成「**最小的根**在 zMin 处可读」，zMax 仍是「最挤节点可读 × ceiling」。
     all_r = [nodes[nid]["r"] for nid in nodes if nodes[nid]["r"] > 0]
-    max_mz = min_px / min(all_r) if all_r else 1.0
-    z_hi = max_mz * ceiling
-    # 反解锚点：home 在带 [M/fade, M] 上的进度 home_band ⇒ M = home·fade / (1 + p(fade-1))
-    anchor = (home_zoom * fade / (1.0 + home_band * (fade - 1.0))) if home_zoom > 0 else 1.0
-    steps = max_depth - home_level
-    rung = (z_hi / anchor) ** (1.0 / steps) if (steps > 0 and anchor > 0) else 1.0
-    # 每层至少跨一条淡入带，否则相邻两层的带会叠在一起、又变成「同时出现」。
-    rung = max(rung, fade * 1.02)
+    root_ids = by_depth.get(1, [])
+    root_r = [nodes[r]["r"] for r in root_ids if nodes[r]["r"] > 0] or all_r or [1.0]
+    z_hi = (min_px / min(all_r)) * ceiling if all_r else 1.0
+    z_lo = (min_px / min(root_r)) * floor
 
-    mature = [anchor * (rung ** (depth - home_level))
-              for depth in range(1, max_depth + 1)]
-    # 第 1 层必须在**最外层（zMin）之前**就成熟，否则「缩到最小都看不见学科根」。
-    # 两个 scope 的 zMin 差别很大（private 0.367 / public 0.142，由各自最小根决定），
-    # 而阶梯是以 home 锚定的，两者不必自然相容 —— 所以这里直接把 M[1] 压到 zMin 以下。
-    # 只动第 1 层：M[2..] 与 home 锚定保持不变，单调性也不受影响。
-    zoom_out_floor = float(cfg.get("zoom", {}).get("zoom_out_floor", 1.05))
-    roots = by_depth.get(1, [])
-    if roots:
-        z_lo = min_px / max(nodes[r]["r"] for r in roots) * zoom_out_floor
+    # ── 阶梯：anchor = 第 home_level 层的成熟点，两头夹 ─────────────────────
+    # 上界：必须在 (fade×1.02)^steps 步内铺到 zMax。**旧版没有这条**，而 home 又被钉在
+    #   常数 0.4612（根半径归一化 1000 × NOMINAL_FIT_RADIUS）——于是小库/浅库上 anchor
+    #   远高于 zMax，rung 被保底抬到 1.377，M[D] 一路超调到 zMax 的好几倍
+    #   （阶段 0.3 的 [LADDER] 红：8 个 fixture 里 6 个）。
+    # 下界：第 1 层要赶在 zMin 之前成熟，否则缩到最外层连学科根都看不见。
+    fit_zoom = (NOMINAL_FIT_RADIUS / root_radius * home_fit) if root_radius > 0 else z_lo
+    steps = max_depth - home_level
+    rung_min = fade * 1.02
+    anchor_by_fit = fit_zoom * fade / (1.0 + home_band * (fade - 1.0))
+    anchor_cap = (z_hi / (rung_min ** steps)) if steps > 0 else z_hi
+    anchor_floor = min(z_lo * (rung_min ** (home_level - 1)), anchor_cap)
+    anchor = min(max(anchor_by_fit, anchor_floor), anchor_cap)
+    # steps == 0（max_depth == home_level，浅库）时 anchor 就是最深层成熟点 = zMax
+    rung = (z_hi / anchor) ** (1.0 / steps) if (steps > 0 and anchor > 0) else rung_min
+    rung = max(rung, rung_min)
+    mature = [anchor * (rung ** (depth - home_level)) for depth in range(1, max_depth + 1)]
+    # 第 1 层压在 zMin 之前成熟（只动第 1 层，M[2..] 与 home 锚定不受影响）
+    if mature:
         mature[0] = min(mature[0], z_lo)
     # enter[L-1] = 第 L 层「开始淡入」的 zoom（成熟点 / fade_span）。
-    # 渲染侧 alpha = smoothstep(enter[L-1], enter[L-1] * fade_span, zoom)。
     enter = [m / fade for m in mature]
-    home_layer = home_level
 
-    # 第四轮（2026-10-23）起不再有「链接带」窗口：药丸改成**叶子元素圆内**的一枚，
-    # 出现时机由该圆的屏幕半径决定（44px 淡入 / 64px 满），不再是一条全局缩放带。
-    # zMax 之外「放大到极端会空、兜底提示照画」的契约照旧（没有圆就没有药丸）。
-    return layers, enter, home_layer, root_radius
+    # home 落点：第 home_level 层带上的 home_band 位置（线性插值 —— 与 verify 的进度口径一致）
+    band_lo, band_hi = enter[home_level - 1], mature[home_level - 1]
+    home_zoom = band_lo + home_band * (band_hi - band_lo)
+    home_layer = max(1, max([L for L in range(1, max_depth + 1)
+                             if enter[L - 1] <= home_zoom] or [1]))
+
+    # ── 滚轮步长：按「整段行程 ≈ target_steps 格」反解（不再全库写死 1.12）──────
+    # 小库的行程只有 1.3~5×，用 1.12 一格就吞掉半屏（阶段 0.3 体检表的 [INFLOW] 红）。
+    # 目标格数随层数增长（作者库 10 层 → 48 格封顶），钳在 [20, 48]。
+    target_steps = max(20, min(48, int(round(6.0 * (max_depth - 1) + 8))))
+    span = (z_hi / z_lo) if z_lo > 0 else 1.0
+    wheel_step = 1.05 if span <= 1.0 else span ** (1.0 / target_steps)
+    wheel_step = min(1.6, max(1.02, wheel_step))
+
+    return layers, enter, home_layer, root_radius, wheel_step, home_zoom
 
 
 def _median(values):

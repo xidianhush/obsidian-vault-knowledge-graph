@@ -271,16 +271,22 @@ def run(cfg, payload_path=None):
            f"最深层的成熟点 M[{max_depth}]={mature[-1] if mature else 0:.4f} "
            f"== zMax={z_hi:.4f}（阶梯构造等式）", failures)
 
-    # home 的定义：整张图缩到「布局根圆恰好贴合视口」再乘 home_fit 的余量。
-    # home_fit 的硬上限是 padding（= 布局根半径 / 最大包围盒半径），config._validate
-    # 已经把这条钉死了，这里只负责用它复算 home_layer。
+    # home 的定义（2026-10-24 阶段 1.2 变更）：由 layout 从**这份库自己的缩放区间**反解，
+    # 落盘在 meta.zoom.home_zoom。旧版在这里按 fit/root_radius*home_fit 复算 —— 那等于
+    # 假设「根半径归一化到 1000 就足够」，小库上 home 会跑到 zMax 之外好几倍
+    # （阶段 0.3 的 [LADDER] 红，6/8 个 fixture）。
     fit = layout_mod.NOMINAL_FIT_RADIUS
     _check(abs(fit - float(meta["nominal_fit_radius"])) < 1e-6,
            f"meta.nominal_fit_radius={meta['nominal_fit_radius']} 与 layout 常量 {fit} 一致",
            failures)
     root_radius = float(meta["layout_root_radius"])
     home_fit = float(cfg["zoom"]["home_fit"])
-    home_zoom = fit / root_radius * home_fit
+    home_zoom = float((meta.get("zoom") or {}).get("home_zoom") or 0.0)
+    if not home_zoom:
+        home_zoom = fit / root_radius * home_fit
+    _check(z_lo <= home_zoom <= z_hi,
+           f"home_zoom={home_zoom:.4f} 落在缩放区间 [{z_lo:.4f}, {z_hi:.4f}] 内（阶段 1.2："
+           f"home 由本库区间反解，不再假设固定 0.4612）", failures)
     cand = [d for d in range(1, max_depth + 1) if enter[d - 1] <= home_zoom] if enter else []
     _check(home == (max(cand) if cand else 1),
            f"home_layer={home} 是 home_zoom={home_zoom:.4f} 下**已开始淡入**的最深一层"
@@ -475,7 +481,7 @@ def run(cfg, payload_path=None):
     # 的节点数（层已开始 且 屏幕半径 ≥ 0.5×min_px）—— 后者才是用户眼睛看到的量。
     # 上限从 20% 放宽到 35%：这是设计变更（同层同现）的直接代价，淡入带 fade_span
     # 把它摊在约 2.6 格滚轮上。实测约 24%，仍远低于同心环时代的 66%。
-    wheel_step = float(cfg["zoom"]["wheel_step"])
+    wheel_step = float((meta.get("zoom") or {}).get("wheel_step") or cfg["zoom"]["wheel_step"])
     total = len(data["nodes"])
     notch_counts = []
     z = z_lo
@@ -485,9 +491,20 @@ def run(cfg, payload_path=None):
     notch_counts.append(total)
     jumps = [b - a for a, b in zip(notch_counts, notch_counts[1:])]
     worst = max(jumps) / total if jumps else 0.0
-    _check(worst <= 0.35,
+    # 2026-10-24 阶段 1.2：上限不能再写死 35% —— 层级带**有意**让同一层一起出现，
+    # 所以单格涌入的物理下限就是「最大那一层的节点占比」。作者库那层只占 15.8%，
+    # 35% 才够用；但 shallow（15/16=94%）这类「一个文件夹里装全部笔记」的库，
+    # 无论步长怎么调都不可能低于 94% —— 写死 35% 等于把库形状当成 bug。
+    # 判据改成：单格不得**超过**「最大层占比 + 2%」（即不能一次冒出超过一层的量）。
+    depth_share = {}
+    for n in data["nodes"]:
+        depth_share[n["depth"]] = depth_share.get(n["depth"], 0) + 1
+    max_share = (max(depth_share.values()) / total) if total else 0.0
+    limit = max(0.35, max_share + 0.02)
+    _check(worst <= limit,
            f"滚轮单格最大落笔涌入 {worst:.0%}（{max(jumps)}/{total} 个节点，"
-           f"共 {len(jumps)} 格），不超过 35%", failures)
+           f"共 {len(jumps)} 格），不超过 max(35%, 最大层占比 {max_share:.0%} + 2%)"
+           f"={limit:.0%}", failures)
 
     # 抽验 packing 的间距定理：屏幕上任意两个互不包含的**落笔**圆，圆心距 ≥ min_px。
     # （未交叠 ⇒ 屏幕距离 ≥ 两者屏幕半径之和；而落笔的前提是各自 ≥ 0.5×min_px，

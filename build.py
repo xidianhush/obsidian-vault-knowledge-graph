@@ -83,7 +83,8 @@ def build_payload(cfg, quiet=False):
     builder.attach_previews(cfg, os.path.dirname(out_html))
 
     max_depth = max((n["depth"] for n in builder.nodes.values()), default=stats["max_depth"])
-    layers, enter, home_layer, root_radius = layout.compute(builder.nodes, cfg, max_depth)
+    layers, enter, home_layer, root_radius, wheel_step, home_zoom = layout.compute(
+        builder.nodes, cfg, max_depth)
     levels = builder.levels_table(max_depth)
 
     nodes = []
@@ -116,7 +117,10 @@ def build_payload(cfg, quiet=False):
         # home_layer 只是落盘的默认读数。
         "layout_root_radius": round(root_radius, 4),
         "nominal_fit_radius": layout.NOMINAL_FIT_RADIUS,
-        "zoom": cfg["zoom"],
+        # 2026-10-24 阶段 1.2：wheel_step 与 home_zoom 现在由**这一份库自己的缩放区间**
+        # 反解（不再全库写死 1.12 / 0.4612）。渲染侧读 meta.zoom 就够，不必自己再推一遍。
+        "zoom": dict(cfg["zoom"], wheel_step=round(wheel_step, 6),
+                     home_zoom=round(home_zoom, 6)),
         "lod": lod_payload,
         "theme": cfg["theme"],
         "page_title": cfg.get("page_title") or "知识图谱",
