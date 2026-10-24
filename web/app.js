@@ -525,6 +525,25 @@
 
   canvas.addEventListener('mouseleave', () => { R.hover = null; hideTooltip(); });
 
+  // ── 内容区 inset（2026-10-24 阶段 1.5）──────────────────────────────────
+  // 顶栏 / 页脚是覆盖在画布上的面板，侧栏打开时右侧 360px 也不可用。渲染器据此算
+  // fit / home 与相机中心；这里把「看得见的那块」告诉它。侧栏开合用 MutationObserver
+  // 盯 .open 类，不用在十几个调用点里各插一次 syncInsets。
+  const TOP_H = 46, BOTTOM_H = 46;
+  function syncInsets() {
+    const side = $('sidebar');
+    const open = !!(side && side.classList.contains('open'));
+    const right = open ? (side.getBoundingClientRect().width || 0) : 0;
+    R.setInsets({ top: TOP_H, bottom: BOTTOM_H, right: right });
+  }
+  syncInsets();
+  window.addEventListener('resize', syncInsets);
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(syncInsets).observe($('sidebar'), {
+      attributes: true, attributeFilter: ['class'],
+    });
+  }
+
   // ── Obsidian 式预览：Ctrl + 悬停「实心圆」（2026-10-24 第五轮）──────────────
   // 药丸层已经整个删除 —— **圆自己就是入口**：
   //   * 悬停在**标题**圆上 → 预览该笔记，并从**这一节**（锚点 `pv-hN`）滚起；

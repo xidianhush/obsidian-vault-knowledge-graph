@@ -180,7 +180,10 @@ HINT_PIXELS = """() => {
     const cv = document.getElementById('cv'); const g = cv.getContext('2d');
     const [W, H] = window.KG.renderer.size(); const k = cv.width / W;
     const band = Math.max(1, Math.round(28 * k));
-    const cy = Math.round((H - 46) / 2 * k);
+    // 2026-10-24 阶段 1.5：兜底提示画在**内容区中心**（扣掉顶栏/页脚/侧栏），不再固定
+    // (H-46)/2 —— 采样带要跟着内容中心走，否则窗口一变就采不到文字、假红。
+    const cc = window.KG.renderer.centerScreen();
+    const cy = Math.round(cc[1] * k);
     const y0 = Math.max(0, Math.min(cv.height - band, cy - Math.round(band / 2)));
     const d = g.getImageData(0, y0, cv.width, band).data;
     let n = 0;
@@ -1627,6 +1630,50 @@ with sync_playwright() as p:
         warns.append("no empty canvas point found -> dblclick-reset test skipped")
         print("    !! no empty point; skipping")
     shot("06_final")
+
+    # ── 11b. 视口自适应（2026-10-24 阶段 1.5）────────────────────────────────
+    # 构建期的阶梯按**标称视口**（1440×900）锚定；运行时 fit 半径随窗口变，所以 home 的
+    # 绝对 zoom 会变。设计意图是「home 落在 home_layer 的淡入带里」—— 这必须在任何窗口
+    # 尺寸下都成立（小窗略裁外圈、大窗多留边）。这里用渲染器的**原始 zoom**判，
+    # 不用 KG.state()（它对 zoom 做了 4 位舍入，卡在带边界上会假红）。
+    # 放在最后：它会切窗口尺寸，不能夹在预览 / 相机用例中间。
+    print("\n=== 11b. 视口自适应：窗口尺寸不改变 home 的层级（阶段 1.5）===")
+    home_layer = meta["homeLayer"]
+    band_lo = float(meta["enter"][home_layer - 1])
+    band_hi = band_lo * float(meta["fade"])
+    for vw, vh in ((1280, 720), (1920, 1080), (1440, 900)):
+        page.set_viewport_size({"width": vw, "height": vh})
+        page.wait_for_timeout(450)
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(900)
+        raw = page.evaluate("""() => ({zoom: window.KG.renderer.camera.zoom,
+                                       layer: window.KG.renderer.homeLayer,
+                                       insets: window.KG.renderer.getInsets()})""")
+        tol = max(1e-6, band_hi * 1e-4)
+        in_band = (band_lo - tol) <= raw["zoom"] <= (band_hi + tol)
+        check("home stays in layer %d's band at %dx%d" % (home_layer, vw, vh),
+              raw["layer"] == home_layer and in_band,
+              "layer=%s zoom=%.6f band=[%.6f, %.6f] insets=%s"
+              % (raw["layer"], raw["zoom"], band_lo, band_hi, raw["insets"]))
+
+    # 侧栏打开时右侧被面板盖住 —— 内容区 inset 必须扣掉它，否则 fit / 居中会把节点藏到面板下
+    ins0 = page.evaluate("() => window.KG.renderer.getInsets()")
+    picked_side = page.evaluate(PICK_NODE, {"minDepth": 1})
+    if picked_side:
+        page.mouse.click(picked_side["x"], picked_side["y"])
+        page.wait_for_timeout(800)
+        ins1 = page.evaluate("() => window.KG.renderer.getInsets()")
+        check("opening the sidebar reduces the content width",
+              ins1["right"] > 0, "right=%s (was %s)" % (ins1["right"], ins0["right"]))
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(600)
+        ins2 = page.evaluate("() => window.KG.renderer.getInsets()")
+        check("closing the sidebar restores the content width",
+              ins2["right"] == 0, "right=%s" % ins2["right"])
+    else:
+        warns.append("no node picked for sidebar-inset test -> skipped")
+    page.evaluate("() => window.KG.renderer.resetView()")
+    page.wait_for_timeout(600)
 
     print("\n=== 11. perf ===")
     fps = page.evaluate("""() => new Promise(res => {

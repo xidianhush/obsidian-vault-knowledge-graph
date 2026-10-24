@@ -42,6 +42,11 @@
   'use strict';
 
   var FOOTER_H = 46;          // 与 template.html 里 #footer 的高度一致
+  // 2026-10-24 阶段 1.5：**内容区 inset**。顶栏 / 页脚是覆盖在画布上的面板，侧栏打开时
+  // 右侧也被盖住 —— 「把整张图装进视口」必须按**看得见的那块**算，而不是整个窗口。
+  // 尺寸由宿主（app.js，将来的 Obsidian 视图）通过 setInsets() 告知；render.js 不猜 DOM，
+  // 这样插件移植时不需要重写 fit 逻辑。
+  var INSETS = { top: FOOTER_H, bottom: FOOTER_H, right: 0 };
   var LABEL_CELL = 24;        // 标签碰撞网格边长（屏幕像素）
   var LABEL_BUDGET = 400;     // 每帧最多考虑多少个标签候选
   var CULL_MARGIN = 32;       // 视口外扩余量（屏幕像素）
@@ -148,6 +153,8 @@
     var WHEEL_STEP = ZC.wheel_step || 1.12;
     var TRANSITION = ZC.transition_ms || 260;
     var HOME_FIT = ZC.home_fit == null ? 1.08 : ZC.home_fit;
+    // home 应该停在**第几层**（构建期按标称视口落盘）；homeZoom 用它把 fit 夹回该层的带。
+    var HOME_LAYER = (LOD.home_layer | 0) || 2;
     // zoom 的**硬护栏**：只为拦住「任何 bug 把 zoom 推到 0 / Infinity 让画布静默失效」，
     // 不是可用范围。滚轮**不受**下面 zMin / zMax 限制 —— 那两个是地标：
     //   zMin = 最小的顶层学科刚好看得见的那一档（缩到底能看见全部学科）
@@ -289,14 +296,38 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     var textW = new Map();
     var ctx = canvas.getContext('2d');
 
+    // 内容区（去掉顶栏 / 页脚 / 打开的侧栏）—— 相机居中、fit、屏外判据都以它为准
+    function contentRect() {
+      var x0 = 0, y0 = Math.max(0, INSETS.top || 0);
+      var x1 = Math.max(x0 + 80, W - Math.max(0, INSETS.right || 0));
+      var y1 = Math.max(y0 + 80, H - Math.max(0, INSETS.bottom || 0));
+      return { x0: x0, y0: y0, x1: x1, y1: y1 };
+    }
+    function contentCenter() {
+      var r = contentRect();
+      return [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
+    }
+    function contentHeight() {
+      var r = contentRect();
+      return r.y1 - r.y0;
+    }
     function fitRadius() {
-      return Math.max(40, Math.min(W / 2, (H - FOOTER_H) / 2));
+      var r = contentRect();
+      return Math.max(40, Math.min((r.x1 - r.x0) / 2, (r.y1 - r.y0) / 2));
     }
 
-    // home 视角：让整个虚拟根（包住全部六个学科）正好铺满可视半径，再留 home_fit
-    // 的余量。构建期按标称视口算了一个 home_layer 落盘，这里用真实视口复算。
+    // home 视角：让整个虚拟根正好铺满**内容区**半径，再留 home_fit 的余量。
+    // 2026-10-24 阶段 1.5：不同窗口尺寸下「装下全图」的缩放会变，但设计意图是
+    // 「home 停在第 home_layer 层」。所以把 fit 夹回该层的淡入带 ——
+    // 小窗会略裁外圈、大窗会多留一点边，但 HUD 的层级读数在任何窗口上都对。
+    // 构建期落盘的 home_zoom 是**标称视口（1440×900）**下的参考值，仅用于校验与 HUD 兜底。
     function homeZoom() {
-      return clamp(fitRadius() / ROOT_R * HOME_FIT, zMin, zMax);
+      var fit = clamp(fitRadius() / ROOT_R * HOME_FIT, zMin, zMax);
+      var lo = ENTER[HOME_LAYER - 1];
+      if (lo == null) return fit;
+      var hi = Math.min(lo * FADE, zMax);
+      if (hi < lo) hi = lo;
+      return clamp(fit, lo, hi);
     }
 
     // home 层：home 视角下已经解锁的最深一层，即 max{ L : enter[L] ≤ homeZoom }
@@ -366,7 +397,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     }
 
     function setZoom(z, sx, sy) {
-      if (sx == null) { sx = W / 2; sy = (H - FOOTER_H) / 2; }
+      if (sx == null) { var cc = contentCenter(); sx = cc[0]; sy = cc[1]; }
       zoomAt(sx, sy, z);
     }
 
@@ -601,8 +632,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         // 措辞要两个方向都管用：放开缩放后「空视口」既可能是缩得太远（要往回滚、
         // 即往上滚放大），也可能是放大到极端（连最小的圆都铺满视口 → maxzoom 停画，
         // 要往下滚）。原来只写「向下滚」在缩太远时是反的。
+        var cc0 = contentCenter();
         ctx.fillText('此处没有内容 · 往回滚一点，或按 Home / 双击空白回到默认视角',
-                     W / 2, (H - FOOTER_H) / 2);
+                     cc0[0], cc0[1]);
         ctx.textAlign = 'left';
       }
 
@@ -616,7 +648,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 内容视口（去掉 footer 那条）里离 (sx, sy) 最远的角的距离。屏幕半径超过它，
     // 圆就铺满整屏：填充退成均匀色罩、界线退出屏幕外 —— 即地图瓦片的 maxzoom。
     function farCornerDist(sx, sy) {
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var dx = Math.max(sx, W - sx), dy = Math.max(sy, Hc - sy);
       return Math.sqrt(dx * dx + dy * dy);
     }
@@ -630,7 +662,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 于是它的界线弧整条在画布之外 —— 只按「有没有发起绘制调用」计数就会误判成「画了东西」，
     // 兜底提示就不画了，用户看到一片漆黑而没有任何解释（放开缩放后放大到极端即触发）。
     function nearDist(sx, sy) {
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var dx = sx < 0 ? -sx : (sx > W ? sx - W : 0);
       var dy = sy < 0 ? -sy : (sy > Hc ? sy - Hc : 0);
       return Math.sqrt(dx * dx + dy * dy);
@@ -716,7 +748,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       stats.chips = 0;
       var selN = byId.get(selectedId), hovN = byId.get(hoverId);
       var droppedFocus = [];
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var drawn = 0;
       ctx.lineCap = 'round';
       for (var i = 0; i < SEM.length; i++) {
@@ -921,7 +953,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 父圆内部 —— 正是「这里面还有更深知识点」的暗示。
     function rawAnchor(n) {
       var sx = w2sx(n.x), sy = w2sy(n.y);
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var on = !(sx < -CULL_MARGIN || sx > W + CULL_MARGIN ||
                  sy < -CULL_MARGIN || sy > Hc + CULL_MARGIN);
       return { on: on, node: n, sx: sx, sy: sy, sr: n._r * cam.zoom };
@@ -934,7 +966,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 裁剪（Liang–Barsky）求真正的入口。视口取内容区 [0,W]×[0,Hc]、不外扩 CULL_MARGIN，
     // 与单端分支同一口径。返回 null = 这条线段根本没穿过视口。
     function entryToward(N, O) {
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var vx = O.sx - N.sx, vy = O.sy - N.sy;
       var vl = Math.sqrt(vx * vx + vy * vy);
       if (vl <= 1e-6) return null;
@@ -1012,7 +1044,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // chip 只指示方向与名字，点击无行为 —— 导航是侧栏边行的事（点边行 fitPair 框住两端）。
     function drawChips() {
       if (!chipJobs.length) return;
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       ctx.font = '11px ' + FONT;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
@@ -1139,7 +1171,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       if (!baseDepth || baseDepth >= MAXD) return;
       var gd = baseDepth + 1;
       var zoom = cam.zoom;
-      var Hc = H - FOOTER_H;
+      var Hc = contentHeight();
       var labels = [];
       for (var j = 0; j < NODES.length; j++) {
         var n = NODES[j];
@@ -1402,7 +1434,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       // 与可见性脱钩了；拿 _mz 当落点会跳到一个它所在层还没开始淡入的 zoom（alpha≈0）。
       var z = clamp(Math.max(cam.zoom, levelMature(n.depth) * mult, 0.7 * fitRadius() / n._r),
                     zMin, zMax);
-      tweenTo({ zoom: z, panX: W / 2 - n.x * z, panY: (H - FOOTER_H) / 2 - n.y * z },
+      var cc = contentCenter();
+      tweenTo({ zoom: z, panX: cc[0] - n.x * z, panY: cc[1] - n.y * z },
               ms == null ? TRANSITION : ms);
     }
 
@@ -1420,7 +1453,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       // 同样以「层成熟」为准，否则两端可能在屏幕上根本还没浮现
       var z = clamp(Math.max(levelMature(a.depth), levelMature(b.depth)) * 1.15, zMin, zMax);
       z = clamp(Math.min(z, 0.9 * fitRadius() / rr), zMin, zMax);
-      tweenTo({ zoom: z, panX: W / 2 - cx * z, panY: (H - FOOTER_H) / 2 - cy * z },
+      var cc = contentCenter();
+      tweenTo({ zoom: z, panX: cc[0] - cx * z, panY: cc[1] - cy * z },
               ms == null ? TRANSITION : ms);
     }
 
@@ -1432,7 +1466,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     }
 
     function resetView() {
-      tweenTo({ zoom: homeZoom(), panX: W / 2, panY: (H - FOOTER_H) / 2 }, TRANSITION * 1.4);
+      var cc = contentCenter();
+      tweenTo({ zoom: homeZoom(), panX: cc[0], panY: cc[1] }, TRANSITION * 1.4);
     }
 
     // ── 交互 ────────────────────────────────────────────────────────────
@@ -1460,8 +1495,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // fast（按住 Shift）= 半个视口，用来快速跨过很长的连线。
     // 下限 40px 兜住极小窗口，免得一步挪不动。
     function panStep(fast) {
-      var vx = fast ? 0.5 * W : Math.max(40, W / 8);
-      var vy = fast ? 0.5 * (H - FOOTER_H) : Math.max(40, (H - FOOTER_H) / 8);
+      var r = contentRect();
+      var vx = fast ? 0.5 * (r.x1 - r.x0) : Math.max(40, (r.x1 - r.x0) / 8);
+      var vy = fast ? 0.5 * (r.y1 - r.y0) : Math.max(40, (r.y1 - r.y0) / 8);
       return [vx, vy];
     }
 
@@ -1566,7 +1602,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         // 层级胶囊 / KG.setLevel / [ ] 的落点：该层**成熟**的 zoom（= M[L]），
         // 不是「刚开始淡入」的 zoom —— 后者落下去该层几乎还是透明的（alpha≈0.06）。
         var z = ENTER[L - 1] == null ? zMax : levelMature(L);
-        tweenTo({ zoom: clamp(z, zMin, zMax), panX: W / 2, panY: (H - FOOTER_H) / 2 }, TRANSITION);
+        var cc = contentCenter();
+        tweenTo({ zoom: clamp(z, zMin, zMax), panX: cc[0], panY: cc[1] }, TRANSITION);
       },
       // 键盘平移（方向键）。panBy 收屏幕 px 增量，panStep 给出「一步」有多远。
       panBy: panBy,
@@ -1585,13 +1622,24 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       set matchSet(v) { matchSet = v; invalidate(); },
       get labelMode() { return labelMode; },
       set labelMode(v) { labelMode = v; invalidate(); },
-      centerScreen: function () { return [W / 2, (H - FOOTER_H) / 2]; },
+      centerScreen: function () { var cc = contentCenter(); return [cc[0], cc[1]]; },
+      // 2026-10-24 阶段 1.5：宿主把「看得见的内容区」告诉渲染器（顶栏 / 页脚 / 打开的侧栏）。
+      // 侧栏开合、窗口 resize 都要调；render.js 自己不碰 DOM（插件移植时同样调这个口子）。
+      setInsets: function (patch) {
+        if (!patch) return;
+        if (patch.top != null) INSETS.top = Math.max(0, +patch.top || 0);
+        if (patch.bottom != null) INSETS.bottom = Math.max(0, +patch.bottom || 0);
+        if (patch.right != null) INSETS.right = Math.max(0, +patch.right || 0);
+        resize();
+      },
+      getInsets: function () { return { top: INSETS.top, bottom: INSETS.bottom, right: INSETS.right }; },
       size: function () { return [W, H]; }
     };
 
     resize();
-    cam.panX = W / 2;
-    cam.panY = (H - FOOTER_H) / 2;
+    var ccInit = contentCenter();
+    cam.panX = ccInit[0];
+    cam.panY = ccInit[1];
     cam.zoom = homeZoom();
     invalidate();
     return api;

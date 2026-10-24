@@ -165,7 +165,7 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
 （`metadataCache` + `resolvedLinks`）；图片走 `vault.getResourcePath`；**模型层必须与 Python 同构**，
 用 8 个 fixture 的 payload 当 golden 文件防两个实现漂移。12 条硬约束见 §9.2。
 
-### 阶段 1：参数从「写死」变「派生」 🟡 进行中（1.1 ✅ / 1.2 ✅ / 1.3 ✅ / 1.4 ✅ / 1.5 ⬜）
+### 阶段 1：参数从「写死」变「派生」 ✅ 已完成（1.1 / 1.2 / 1.3 / 1.4 / 1.5）
 1.1 ✅ **深度轴稠密化（2026-10-24）**：`depth = 笔记深度 + 标题级别**字面值**` → 改成
    「该笔记自己用到的级别排序后的**稠密 rank**」（h1,h3,h4 → 1,2,3；只用 h5/h6 的笔记占 +1/+2
    而不是 +5/+6）。节点保留 `level` = 原始级别，新增 `rank`。verify 加两条：深度 == 笔记深度 +
@@ -192,7 +192,16 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
    灰、图例空白、校验报「depth1 不是学科」。现在 ① `graph.py` 给根笔记的 `domain` = 笔记自己的 id；
    ② `verify` 允许 depth1 是 note（只禁「顶层出现标题」）；③ 越界判据改走**父链取顶层祖先**
    （原来按 id 第一个 "/" 切，根笔记的标题节点会被误判越界）。tiny 从 3 红变 **0 红**。
-1.5 `NOMINAL_FIT_RADIUS=(900-46)/2=427` 把 1440×900 写进世界归一化 → 改成运行时视口（扣顶栏 + 侧栏）
+1.5 ✅ **视口常数（2026-10-24）**：`NOMINAL_FIT_RADIUS=(900-46)/2=427` 以前同时扮演两个角色
+   （构建期世界归一化的锚 + 运行时 fit 的半径），于是 1280×720 上 home 会偏、2K 屏上偏小。
+   现在拆开：① 渲染器新增 **内容区 inset**（`setInsets({top,bottom,right})`，由宿主
+   app.js 在 resize / 侧栏开合时报「看得见的那块」），`fitRadius` / 相机居中 / 平移步长 /
+   屏外判据全部按内容区算（`render.js` 不碰 DOM，插件移植同样用这个口子）；
+   ② `homeZoom()` 把 fit 结果**夹回 home_layer 的淡入带** —— 小窗略裁外圈、大窗多留边，
+   但「home 停在第 home_layer 层」在任何窗口上都成立；③ `NOMINAL_FIT_RADIUS` 降级为
+   「构建期锚 + 标称视口下的参考值」，不再冒充物理屏幕。
+   验证：`browser_check` 新增 11b 段（1280×720 / 1920×1080 / 1440×900 三个视口下 home 都在层带内）
+   + 侧栏开合的 inset 断言；兜底提示的像素探针改成盯**内容中心**，不再固定 `(H-46)/2`。
 > **阶段 0.5 带来的新约束**：1.x 改出来的算法要写成**可移植的纯函数**（输入=节点树+配置，
 > 输出=坐标/半径/enter[]），浮点舍入点与现状对齐（x/y 3 位、r 4 位、enter 6 位），
 > 不要用 dict 顺序、生成器、Python 独有特性 —— 这样 JS 移植版能拿 8 个 fixture 的 payload
@@ -284,9 +293,9 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 | 项 | 基线（2026-10-24 15:12） | 阶段 0 后（0.3 实测） | 阶段 1 后（1.2 实测） | 阶段 2 后 |
 |---|---|---|---|---|
 | `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **128 ok / 0 FAIL（64+64）** | |
-| `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **133 ok / 0 FAIL / 0 skip** | |
-| `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **132 ok / 0 FAIL / 1 skip** | |
-| 两份浏览器 ok 合计 | 265 | 265 | **265**（条件跳过互换了位置，用例没少） | |
+| `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **138 ok / 0 FAIL / 0 skip**（+5 = 11b 视口自适应 + 侧栏 inset） | |
+| `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **137 ok / 0 FAIL / 1 skip** | |
+| 两份浏览器 ok 合计 | 265 | 265 | **275**（新增 5 条 × 2 份） | |
 | 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB | **6277 / 6303 KB** | |
 | 空闲 fps | 63 | 未复测 | 未复测（1.2 没动渲染） | |
 | 20 格滚轮 | private 1654 ms / public 1644 ms | 未复测 | 未复测（1.2 没动渲染） | |
@@ -308,9 +317,10 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 > 阶段 1.1（2026-10-24）之后：8 个库合计 **512 ok / 0 FAIL**（1.4 后是 496 / 0）——
 > **verify 侧全绿**。两条 `[ROOT-NOTE]` 是按「库形状」修掉的，不是调阈值：
 > 根笔记的 `domain` 改成笔记自己的 id、`depth1` 允许是 note、越界判据改走父链取顶层祖先。
-> 浏览器列只有 tiny 与 wide-roots 跑过（两个极端），红项全是**用例前提不成立**
-> （0 条语义边 / 退化规模 / 最小根在 zMin 处本来就不挂标签 / 3e 锚点差 17px），
-> 已逐条写进 manifest.known_gaps，修法是阶段 2 给浏览器侧加显式跳过与形状感知的阈值。
+> 浏览器列只有 tiny 与 wide-roots 跑过（两个极端，且都是 **1.5 之前**的读数）：
+> 红项全是**用例前提不成立**（0 条语义边 / 退化规模 / 最小根在 zMin 处本来就不挂标签 /
+> 3e 锚点差 17px），已逐条写进 manifest.known_gaps。阶段 2 要做的第一件事就是
+> 给浏览器侧加显式跳过与形状感知阈值，然后把这两列重新标定。
 
 ### 7.3 阶段 0.1 的「零改动」证明（已有）
 
@@ -447,3 +457,4 @@ JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这
 | 2026-10-24 | 1.3 | 自动色板（golden-angle + 手写优先）+ `meta.domains` 成为图例/下拉唯一真源 + 无学科库降级显示；wide-roots 30 学科 30 色 0 灰；8 库 496 ok / 3 FAIL | `feat(theme): 阶段 1.3`（见 `git log`） |
 | 2026-10-24 | 1.4 | 根笔记模型：domain = 笔记自己的 id、depth1 允许 note、越界判据走父链；8 库 **496 ok / 0 FAIL**（形状体检表 verify 侧全绿） | `fix(graph): 阶段 1.4`（见 `git log`） |
 | 2026-10-24 | 1.1 | 标题级别 → 该笔记内的稠密 rank（`######` 不再把轴拉长 5 层）；verify 加 rank/空层断言；heading-zoo 加「只用 h5+h6」靶子；8 库 **512 ok / 0 FAIL** | `fix(depth): 阶段 1.1`（见 `git log`） |
+| 2026-10-24 | 1.5 | 视口自适应：内容区 inset（顶栏/页脚/侧栏）+ home 夹回层带 + 兜底提示探针跟内容中心；browser 新增 11b 段（3 视口 + 侧栏开合）；**阶段 1 收口** | `feat(viewport): 阶段 1.5`（见 `git log`） |

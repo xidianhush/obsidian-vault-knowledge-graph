@@ -330,10 +330,11 @@ def run(cfg, payload_path=None):
            f"最深层的成熟点 M[{max_depth}]={mature[-1] if mature else 0:.4f} "
            f"== zMax={z_hi:.4f}（阶梯构造等式）", failures)
 
-    # home 的定义（2026-10-24 阶段 1.2 变更）：由 layout 从**这份库自己的缩放区间**反解，
-    # 落盘在 meta.zoom.home_zoom。旧版在这里按 fit/root_radius*home_fit 复算 —— 那等于
-    # 假设「根半径归一化到 1000 就足够」，小库上 home 会跑到 zMax 之外好几倍
-    # （阶段 0.3 的 [LADDER] 红，6/8 个 fixture）。
+    # home 的定义（2026-10-24 阶段 1.2/1.5）：由 layout 从**这份库自己的缩放区间**反解，
+    # 落盘在 meta.zoom.home_zoom —— 它是**标称视口（1440×900）**下的参考值，用来校验
+    # 阶梯锚点；运行时渲染器会按真实内容区复算 fit，并把它夹回 home_layer 的淡入带
+    # （所以「带内进度 == home_band」只在标称视口下精确成立，其他窗口由 browser_check
+    #  的 11b 段保证「仍在带内」）。
     fit = layout_mod.NOMINAL_FIT_RADIUS
     _check(abs(fit - float(meta["nominal_fit_radius"])) < 1e-6,
            f"meta.nominal_fit_radius={meta['nominal_fit_radius']} 与 layout 常量 {fit} 一致",
