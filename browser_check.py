@@ -221,6 +221,31 @@ def check(name, cond, detail=""):
         fails.append(name + (" :: " + detail if detail else ""))
 
 
+def skip_check(name, why):
+    """显式跳过一条用例：**必须计数**（阶段 0.3 的纪律：静默少跑 = 假绿）。"""
+    warns.append(why + " :: " + name)
+    print("    [skip] %s（%s）" % (name, why))
+
+
+# 形状感知的前置条件表：边界形状（0 条语义边、退化规模）让某些用例的前提不成立，
+# 这时显式跳过并计数，而不是判红、也不是默默不跑。
+SHAPE_OK = {}
+SHAPE_WHY = {}
+
+
+def require(shape, why):
+    SHAPE_OK[shape] = False
+    SHAPE_WHY[shape] = why
+
+
+def check_edge(name, cond, detail=""):
+    """边相关断言：库里有 0 条语义边时整段跳过。"""
+    if not SHAPE_OK.get("edges", True):
+        skip_check(name, SHAPE_WHY.get("edges", "该形状不支持"))
+        return
+    check(name, cond, detail)
+
+
 def shot(tag):
     page.screenshot(path=SHOT % tag)
 
@@ -304,6 +329,25 @@ with sync_playwright() as p:
     # 否则 setLevel(4) 会落在 zMax、`]` 无路可走 —— 那是 fixture 形状差异，不是回归缺陷。
     LV_START = max(1, min(4, meta["maxDepth"] - 1))
     LV_DBL = max(1, min(3, meta["maxDepth"] - 1))
+
+    # ── 形状前置条件（阶段 2）：边界形状让部分用例前提不成立，显式登记 ──────────
+    n_sem = page.evaluate("() => (window.KG.renderer.SEM || []).length")
+    print("    semantic edges = %d" % n_sem)
+    if not n_sem:
+        require("edges", "这个库没有任何语义边（0 条）")
+        print("    !! 0 条语义边 -> 7b/7c/7d 的边相关用例会显式跳过（并计数）")
+    # 地板处顶层根的屏幕半径范围：只有**全部**根都 <28px 时「地板上有标签」才是不可能达成的
+    # （作者库最小根 18.9px、最大根 262px —— 它照样有标签，所以判据必须看 max）。
+    root_sr = page.evaluate("""() => {
+        const R = window.KG.renderer; let lo = Infinity, hi = 0;
+        for (const n of R.NODES) if (n.depth === 1) {
+            const sr = (n._r || n.r) * R.zMin;
+            lo = Math.min(lo, sr); hi = Math.max(hi, sr);
+        }
+        return [isFinite(lo) ? lo : 0, hi]; }""")
+    print("    top-level root sr @zMin = %.1f .. %.1f px" % (root_sr[0], root_sr[1]))
+    if root_sr[1] < 28:
+        require("floor_labels", "所有顶层根在 zMin 处都 <28px（按设计不挂标签）")
     check("no zoom.min/max in payload", "min" not in meta["zoomKeys"] and "max" not in meta["zoomKeys"],
           str(meta["zoomKeys"]))
     check("initial level == home_layer", st["level"] == meta["homeLayer"],
@@ -331,7 +375,11 @@ with sync_playwright() as p:
         let n = 0;
         for (let i = 3; i < d.length; i += 4 * 97) if (d[i] > 8) n++;
         return n; }""")
-    check("canvas painted (non-transparent samples)", painted > 50, "n=%d" % painted)
+    # 判据原来是「采样到 50 个不透明点」—— 那是按 3500 节点的库调的。退化规模（2 个节点）
+    # 的库采样点必然很少，但那不是缺陷：真正要守的是「画布上有东西，且渲染器确实落了笔」。
+    check("canvas painted (non-transparent samples)",
+          painted > 8 and st["shownNodes"] > 0,
+          "n=%d shownNodes=%d" % (painted, st["shownNodes"]))
 
     # bug C: 标签门槛原来读 label_min_px/reveal，而祖先层被 parent_dim 压到 0.5，
     # 两个条件互相抵消 => shownLabels 恒为 0，整张地图一个文字都没有。
@@ -392,8 +440,12 @@ with sync_playwright() as p:
           band_lo <= out["shownNodes"] <= band_hi,
           "shownNodes=%d, band=[%d..%d], total=%d" % (out["shownNodes"], band_lo, band_hi,
                                                       meta["nodeCount"]))
-    check("the top-level roots are labelled at the zoom floor",
-          out["shownLabels"] >= 1, str(out["shownLabels"]))
+    if SHAPE_OK.get("floor_labels", True):
+        check("the top-level roots are labelled at the zoom floor",
+              out["shownLabels"] >= 1, str(out["shownLabels"]))
+    else:
+        skip_check("the top-level roots are labelled at the zoom floor",
+                   SHAPE_WHY["floor_labels"])
     shot("02_zmin")
 
     print("\n=== 2b. the floor is a landmark, not a wall: the wheel may pass it into empty space ===")
@@ -641,9 +693,12 @@ with sync_playwright() as p:
             else:
                 warns.append("靶子笔记没有图片 -> 图片断言跳过")
             # 「从这一节开始」：锚点标题落在浮层顶部附近，且标题**真的渲染出来了**
-            # 标题要落在**面包屑下方**（不是被 sticky 面包屑盖住）
+            # 标题要落在**面包屑下方**（不是被 sticky 面包屑盖住）。
+            # 2026-10-24 阶段 2：短笔记的锚点本来就在顶部、scrollTop=0 是**正常**的
+            # （wide-roots / tiny 实测），所以「必须滚过 100px」这条不能当硬条件 ——
+            # 真正要守的是锚点相对面包屑的位置。
             check("预览从这一节的标题开始（标题在面包屑下方可见）",
-                  pv["scrollTop"] > 100
+                  (pv["scrollTop"] > 100 or pv["anchorRel"] <= pv["crumbsH"] + 60)
                   and pv["anchorRel"] >= pv["crumbsH"] - 6
                   and pv["anchorRel"] <= pv["crumbsH"] + 180,
                   "scrollTop=%d 锚点 top=%dpx 面包屑高=%dpx"
@@ -772,8 +827,9 @@ with sync_playwright() as p:
     # 每一帧绘制极慢（要把半径上百万像素的圆弧栅格化），rAF 被拖住、tween 迟迟走不完，
     # 后面的段落就会在「相机还在飞」的中间态上取样（实测把 _sr 读成 378442px 而实际
     # 该是 38px，进而挑错目标节点）。测试要的是确定的起始状态，不是动画。
-    page.evaluate("""() => { const R = window.KG.renderer; const s = R.size();
-        R.setZoom(R.zHome); R.camera.panX = s[0] / 2; R.camera.panY = (s[1] - 46) / 2; R.draw(); }""")
+    page.evaluate("""() => { const R = window.KG.renderer;
+        const cc = R.centerScreen();
+        R.setZoom(R.zHome); R.camera.panX = cc[0]; R.camera.panY = cc[1]; R.draw(); }""")
     page.wait_for_timeout(250)
 
     print("\n=== 4. LOD contract: zooming in on a node reveals its descendants ===")
@@ -788,6 +844,9 @@ with sync_playwright() as p:
               % (tgt["id"], tgt["d"], tgt["depth"], tgt["sr"], tgt["x"], tgt["y"]))
         before = page.evaluate(DESC_COUNT, tgt["id"])
         s_before = page.evaluate(STATE)
+        # 在**放大之前**取全库落笔占比（放大后当然会变小，放后面取会永远不成立）
+        painted_ratio_before = page.evaluate(
+            "() => window.KG.renderer.stats.painted / Math.max(1, window.KG.renderer.NODES.length)")
         page.mouse.move(tgt["x"], tgt["y"])
         for _ in range(6):
             page.mouse.wheel(0, -100)
@@ -798,7 +857,28 @@ with sync_playwright() as p:
         print("    revealed descendants %d -> %d ; zoom %.4f -> %.4f ; level %d -> %d ; on-screen %d -> %d"
               % (before, after, s_before["zoom"], s_after["zoom"],
                  s_before["level"], s_after["level"], s_before["shownNodes"], s_after["shownNodes"]))
-        check("zooming in reveals more of the target's subtree", after > before, "%d -> %d" % (before, after))
+        # 2026-10-24 阶段 2：宽扇出的库（wide-roots 实测 90 → 90）在 home 就把靶子的**全部**
+        # 后代画出来了 —— 这时「放大露出更多」的前提不成立。判据直接从节点树数真实后代总数
+        # （与 DESC_COUNT 同口径），而不是用 PICK_NODE 报的 desc（含自身/口径差会误判）。
+        total_desc = page.evaluate("""(id) => {
+            const R = window.KG.renderer; let n = 0;
+            for (const x of R.NODES) {
+                let cur = x.parent, guard = 0;
+                while (cur && guard++ < 200) {
+                    if (cur === id) { n++; break; }
+                    const p = R.byId.get(cur); cur = p ? p.parent : null;
+                }
+            }
+            return n; }""", tgt["id"])
+        if before >= total_desc or meta["maxDepth"] <= s_before["level"] + 1:
+            skip_check("zooming in reveals more of the target's subtree",
+                       "靶子的 %d 个后代在 home 已画出 %d 个；depth=%s、home 在第 %s 层，"
+                       "下面只剩 %d 层可揭（不足两层），本用例前提不成立"
+                       % (total_desc, before, meta["maxDepth"], s_before["level"],
+                          meta["maxDepth"] - s_before["level"]))
+        else:
+            check("zooming in reveals more of the target's subtree",
+                  after > before, "%d -> %d（共 %d 个后代）" % (before, after, total_desc))
         check("the target itself stays visible while zooming in",
               page.evaluate("(id) => window.KG.renderer.alphaOf(id)", tgt["id"]) > 0.05)
         check("level did not go backwards", s_after["level"] >= s_before["level"],
@@ -1018,15 +1098,15 @@ with sync_playwright() as p:
     base_edges = st0["shownEdges"]
     print("    home baseline: shownNodes=%d shownEdges=%d zoom=%.4f"
           % (st0["shownNodes"], base_edges, st0["zoom"]))
-    check("focus test starts from a view that has edges", base_edges > 0, str(base_edges))
-    check("no focus stats while nothing is selected",
+    check_edge("focus test starts from a view that has edges", base_edges > 0, str(base_edges))
+    check_edge("no focus stats while nothing is selected",
           st0["focusEdges"] == 0 and st0["focusNeighbors"] == 0,
           "focusEdges=%s focusNeighbors=%s" % (st0["focusEdges"], st0["focusNeighbors"]))
     # 每条边最多两个端点标记（源端一个 + 目标端一个），所以 marks <= 2*edges 是硬上界。
     # 下界 marks > 0 才是这轮的重点：home 视图里必须有标记，否则「看不出线的头尾」
     # 这个原始痛点根本没被解决。
-    check("endpoint markers are drawn in the home view", st0["marks"] > 0, str(st0["marks"]))
-    check("markers never exceed two per drawn edge",
+    check_edge("endpoint markers are drawn in the home view", st0["marks"] > 0, str(st0["marks"]))
+    check_edge("markers never exceed two per drawn edge",
           st0["marks"] <= 2 * base_edges,
           "%d marks / %d edges" % (st0["marks"], base_edges))
 
@@ -1041,7 +1121,7 @@ with sync_playwright() as p:
     base_edges = st0["shownEdges"]
     print("    probe baseline (level %d): shownNodes=%d shownEdges=%d zoom=%.4f"
           % (st0["level"], st0["shownNodes"], base_edges, st0["zoom"]))
-    check("focus probe view still has edges", base_edges > 0, str(base_edges))
+    check_edge("focus probe view still has edges", base_edges > 0, str(base_edges))
 
     # 靶子探测：把屏上每个圆轮流设成选中、强制重画、读真实 stats。不在测试里复刻
     # isFocusSide 的判据 —— 复刻的判据一旦和实现漂移就会假绿（本文件既有风格）。
@@ -1084,21 +1164,21 @@ with sync_playwright() as p:
         print("    ", json.dumps({k: s[k] for k in
                                  ("selected", "shownEdges", "focusEdges", "focusNeighbors")},
                                 ensure_ascii=False))
-        check("click selected the probed node", s["selected"] == tgt["id"],
+        check_edge("click selected the probed node", s["selected"] == tgt["id"],
               "%s vs %s" % (s["selected"], tgt["id"]))
-        check("focus keeps every edge on canvas (dim, not delete)",
+        check_edge("focus keeps every edge on canvas (dim, not delete)",
               s["shownEdges"] == base_edges, "%d vs base %d" % (s["shownEdges"], base_edges))
-        check("focus marks some (not all) edges related",
+        check_edge("focus marks some (not all) edges related",
               0 < s["focusEdges"] < s["shownEdges"],
               "%d of %d" % (s["focusEdges"], s["shownEdges"]))
-        check("real click agrees with the programmatic probe",
+        check_edge("real click agrees with the programmatic probe",
               s["focusEdges"] == tgt["rel"], "%d vs %d" % (s["focusEdges"], tgt["rel"]))
-        check("focus rings at least one neighbour", s["focusNeighbors"] > 0,
+        check_edge("focus rings at least one neighbour", s["focusNeighbors"] > 0,
               str(s["focusNeighbors"]))
         # 这是本节最锋利的一条断言：上界用 focusEdges（相关边）而不是 shownEdges（全部边）。
         # 无关边被压到 focus_edge_dim=0.07，标记的 alpha 门槛是 0.1 —— 0.07 过不去，
         # 于是冷边一个标记都不该冒出来。上界写成 2*shownEdges 就退化成永真式了。
-        check("markers appear on related edges only (cold 7% edges stay bare)",
+        check_edge("markers appear on related edges only (cold 7% edges stay bare)",
               0 < s["marks"] <= 2 * s["focusEdges"],
               "%d marks / %d related edges (%d drawn in total)"
               % (s["marks"], s["focusEdges"], s["shownEdges"]))
@@ -1106,11 +1186,11 @@ with sync_playwright() as p:
         page.keyboard.press("Escape")
         page.wait_for_timeout(400)
         e = page.evaluate(STATE)
-        check("Escape drops the focus filter",
+        check_edge("Escape drops the focus filter",
               e["selected"] is None and e["focusEdges"] == 0 and e["focusNeighbors"] == 0,
               json.dumps({k: e[k] for k in ("selected", "focusEdges", "focusNeighbors")},
                          ensure_ascii=False))
-        check("Escape restores the full edge count", e["shownEdges"] == base_edges,
+        check_edge("Escape restores the full edge count", e["shownEdges"] == base_edges,
               "%d vs %d" % (e["shownEdges"], base_edges))
         shot("10_focus_off")
     else:
@@ -1153,24 +1233,24 @@ with sync_playwright() as p:
                 zoom: Math.round(z * 10000) / 10000};
     }""")
     print("    ", json.dumps(geo, ensure_ascii=False))
-    check("three marker knobs reached META.lod through build.py",
+    check_edge("three marker knobs reached META.lod through build.py",
           geo["trim"] is not None and geo["rawMinLen"] is not None
           and geo["tint"] is not None,
           "trim=%s rawMinLen=%s tint=%s"
           % (geo["trim"], geo["rawMinLen"], geo["tint"]))
-    check("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
-    check("every marker resolves to the node it is attached to",
+    check_edge("markers exist to measure", geo["marks"] > 0, str(geo["marks"]))
+    check_edge("every marker resolves to the node it is attached to",
           geo["checked"] == geo["marks"], "%d of %d" % (geo["checked"], geo["marks"]))
-    check("no marker is buried inside its node circle",
+    check_edge("no marker is buried inside its node circle",
           geo["inside"] == 0, "%d of %d inside" % (geo["inside"], geo["checked"]))
     # 截断把端点放在「屏幕半径 + TRIM」处，所以间隙应当**恒等于** TRIM（连线恒为
     # 直线、端点沿弦方向截断，取整只会带来零点几 px 的余量）。
-    check("markers sit just outside the circle, by the configured clearance",
+    check_edge("markers sit just outside the circle, by the configured clearance",
           geo["minGap"] >= geo["trim"] - 0.75 and geo["maxGap"] <= geo["trim"] + 2.0,
           "gap in [%s, %s] px vs trim=%s px" % (geo["minGap"], geo["maxGap"], geo["trim"]))
     # 有向边（derives / prerequisite）目标端画箭头，源端画点；无向边两端都是点。
     # 本库当前 92 条 derives、0 条 contrast —— 所以 home 视图里两种标记都该有。
-    check("both arrow heads and source dots are produced",
+    check_edge("both arrow heads and source dots are produced",
           geo["arrows"] > 0 and geo["dots"] > 0,
           "%d arrows / %d dots" % (geo["arrows"], geo["dots"]))
 
@@ -1255,13 +1335,13 @@ with sync_playwright() as p:
     # 它们让「这一档 marks=0」可解释（边太短，守卫正常工作）而不是靠猜。
     long_rungs = [r for r in rungs if r[4] > 0]
     print("    rungs with an edge long enough for markers: %s" % [r[0] for r in long_rungs])
-    check("deep rungs still draw markers for the long edges",
+    check_edge("deep rungs still draw markers for the long edges",
           bool(long_rungs) and all(m > 0 for _, _, _, m, _, _, _ in long_rungs),
           "rungs %s" % [(L, e, m, lg) for L, _, e, m, lg, _, _ in long_rungs])
     # 硬不变式是 **≤** 2×edges：每条画出的边最多落两个标记（源端圆点 + 目标端箭头）。
     # 不能写成严格 `<`：一条边上两个标记本来就是正常的，所以「三条边全长、共 6 个标记」
     # 完全合法（实测 rung L=7 就是 3/6），严格小于会在正常数据上假红。
-    check("never more than two markers per drawn edge (hard invariant)",
+    check_edge("never more than two markers per drawn edge (hard invariant)",
           all(m <= 2 * e for _, _, e, m, _, _, _ in rungs),
           "all %s" % [(L, m, 2 * e) for L, _, e, m, _, _, _ in rungs])
     # 这里也刻意**不**断言 marks == 2×long。看着像等式，其实不是：long 是探针在 canvas 侧
@@ -1273,7 +1353,7 @@ with sync_playwright() as p:
     # 来证明 —— 也就是确实有短边被压掉了。只要有边界够短，这一条就会亮；守卫一旦被删掉
     # 整条阶梯都会顶满 2×edges，这条就红。
     suppressed = [(L, e, m) for L, _, e, m, _, _, _ in rungs if m < 2 * e]
-    check("the min-length guard really suppresses some markers somewhere on the ladder",
+    check_edge("the min-length guard really suppresses some markers somewhere on the ladder",
           bool(suppressed), "rungs with marks < 2*edges: %s" % [(L, m, 2 * e) for L, e, m in suppressed])
     page.evaluate("() => window.KG.renderer.resetView()")
     page.wait_for_timeout(900)
@@ -1340,15 +1420,15 @@ with sync_playwright() as p:
                     selDot: R.markJobs.some(j => j.k === 0 && j.id === ids[0])};
         }""", [SEL_ID, TGT_ID])
         print("    ", json.dumps(a, ensure_ascii=False))
-        check("focus edge to an off-screen target still counts as drawn",
+        check_edge("focus edge to an off-screen target still counts as drawn",
               a["focusEdges"] >= 1, str(a["focusEdges"]))
-        check("off-screen target gets a name chip",
+        check_edge("off-screen target gets a name chip",
               a["chips"] >= 1 and len(a["chipTexts"]) >= 1,
               "chips=%s texts=%s" % (a["chips"], a["chipTexts"]))
-        check("chip carries the off-screen target's name",
+        check_edge("chip carries the off-screen target's name",
               bool(a["chipTexts"]) and a["chipTexts"][0].startswith(TGT_KEY),
               str(a["chipTexts"][:1]))
-        check("on-screen end keeps its source dot", a["selDot"])
+        check_edge("on-screen end keeps its source dot", a["selDot"])
         shot("11_chip")
 
         # (a2) 两端都出屏：纯平移把选中圆整个推出屏（缩放不动），链接目标本来就已经在
@@ -1410,15 +1490,15 @@ with sync_playwright() as p:
                          % (a2["bothOff"], a2["crosses"]))
             print("    !! both ends not off screen across the viewport; skipping a2")
         else:
-            check("both ends off screen: the crossing edge still keeps one name chip",
+            check_edge("both ends off screen: the crossing edge still keeps one name chip",
                   a2["chips"] == 1,
                   "chips=%s focusEdges=%s shownEdges=%s"
                   % (a2["chips"], a2["focusEdges"], a2["shownEdges"]))
-            check("that chip names the off-screen target, not the selection",
+            check_edge("that chip names the off-screen target, not the selection",
                   bool(a2["tgtChips"]) and not a2["selChips"] and
                   all(t.startswith(TGT_KEY) for t in a2["tgtChips"]),
                   "tgt=%s sel=%s" % (a2["tgtChips"], a2["selChips"]))
-            check("both-off chip anchor lands inside the content viewport",
+            check_edge("both-off chip anchor lands inside the content viewport",
                   a2["anchored"], str(a2["anchored"]))
             shot("11b_both_off_chip")
 
@@ -1454,10 +1534,10 @@ with sync_playwright() as p:
         for p in probes[:6]:
             print("      deg=%3d mult=%-4s -> chips=%2d last=%r"
                   % (p["deg"], p["mult"], p["n"], p["lastText"]))
-        check("chip list never exceeds CHIP_MAX+1",
+        check_edge("chip list never exceeds CHIP_MAX+1",
               all(p["n"] <= chip_max + 1 for p in probes),
               str(max(p["n"] for p in probes)))
-        check("overflow collapses into exactly one right-anchored +k chip",
+        check_edge("overflow collapses into exactly one right-anchored +k chip",
               all((p["n"] > chip_max) == p["lastRight"] for p in probes) and
               all(p["lastText"].startswith("+") and p["lastText"][1:].isdigit()
                   for p in probes if p["n"] > chip_max),
@@ -1496,7 +1576,7 @@ with sync_playwright() as p:
         else:
             page.mouse.click(pt["x"], pt["y"])
             page.wait_for_timeout(600)
-            check("real click selects the fixture node",
+            check_edge("real click selects the fixture node",
                   page.evaluate(STATE)["selected"] == SEL_ID)
             row = page.evaluate("""(ids) => {
                 const lis = [...document.querySelectorAll('#sidebar li')];
@@ -1506,7 +1586,7 @@ with sync_playwright() as p:
                 return {found: true, rows: lis.length};
             }""", [SEL_ID, TGT_ID])
             print("    sidebar edge rows=%d, fixture row found=%s" % (row["rows"], row["found"]))
-            check("sidebar lists the fixture edge as a clickable row", row["found"], str(row["rows"]))
+            check_edge("sidebar lists the fixture edge as a clickable row", row["found"], str(row["rows"]))
             page.wait_for_timeout(900)
             fit = page.evaluate("""(ids) => {
                 const R = window.KG.renderer;
@@ -1523,10 +1603,10 @@ with sync_playwright() as p:
                         okA: inside(box(ids[0])), okB: inside(box(ids[1]))};
             }""", [SEL_ID, TGT_ID])
             print("    ", json.dumps(fit, ensure_ascii=False))
-            check("clicking the edge row selects the link target",
+            check_edge("clicking the edge row selects the link target",
                   fit["selected"] == TGT_ID, str(fit["selected"]))
-            check("fitPair frames both link ends inside the viewport", fit["okA"] and fit["okB"])
-            check("the framed pair still draws its focus edge + markers",
+            check_edge("fitPair frames both link ends inside the viewport", fit["okA"] and fit["okB"])
+            check_edge("the framed pair still draws its focus edge + markers",
                   fit["focusEdges"] >= 1 and fit["marks"] > 0,
                   "focusEdges=%s marks=%s" % (fit["focusEdges"], fit["marks"]))
             shot("13_fitpair")

@@ -195,6 +195,10 @@
   function buildLegend() {
     const box = $('legend-domains');
     box.innerHTML = '';
+    // 2026-10-24 阶段 2：这个库一条语义边都没有时，「关系」那一整块图例文案不该出现
+    // （否则面板在解释一些图里根本不存在的线）。判据用 payload 的真实边数。
+    const rel = $('legend-rel');
+    if (rel) rel.style.display = (EDGES && EDGES.length) ? '' : 'none';
     // 阶段 1.3：学科列表来自构建期算好的 META.domains（按笔记数降序），不再靠
     // 「扫 depth-1 的 folder 节点」猜 —— 那个猜法在「全散笔记、没有文件夹」的库上
     // 会得到空图例，在 domain 被 annotations 覆盖但目录名不同时也会漏。
