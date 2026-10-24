@@ -48,9 +48,13 @@
   // 这样插件移植时不需要重写 fit 逻辑。
   var INSETS = { top: FOOTER_H, bottom: FOOTER_H, right: 0 };
   var LABEL_CELL = 24;        // 标签碰撞网格边长（屏幕像素）
-  var LABEL_BUDGET = 400;     // 每帧最多考虑多少个标签候选
+  // 每帧最多画多少张标签：**由内容区面积派生**（阶段 2.1）。旧版是写死的 400 个「候选」，
+  // 而且在「sr/出屏/碰撞」这些门之前就截断 —— 宽扇出的层上，前 400 个候选可能全是
+  // 小到不挂标签的圆，整层 0 标签、连学科标签也被挤掉。现在预算是「真正画出来的张数」。
   var CULL_MARGIN = 32;       // 视口外扩余量（屏幕像素）
   var LABEL_INSIDE_PX = 28;   // 屏幕半径超过这个值的容器，标签压在圆内顶部
+  // 候选数组的硬上限：纯粹防「极端帧」把排序变慢（比预算大得多，不会成为标签饿死的来源）。
+  var LABEL_CAND_CAP = 4000;
   // 「这一笔算不算画出来了」的最低不透明度。低于它的落笔在 8 位画布上合成后与背景
   // 完全同值（≈0.2/255，四舍五入成 0），肉眼与像素都看不见 —— 判「视口是不是空的」
   // 必须按这个门槛算，而不能按「候选集是否为空」，否则会出现「画布上一片漆黑、
@@ -119,6 +123,16 @@
     var LABEL_FS_MIN = LOD.label_font_min == null ? 11 : LOD.label_font_min;
     var LABEL_FS_MAX = LOD.label_font_max == null ? 64 : LOD.label_font_max;
     var LABEL_FS_SCALE = LOD.label_font_scale == null ? 0.3 : LOD.label_font_scale;
+    // 2026-10-24 阶段 2.1：字号上限不再是一个死的 64px，而是按**内容区短边**派生。
+    // 死的 64px 在「只有 3 个圆、单个圆直径上千 px」的库上只占直径 3%（用户 2026-10-21
+    // 报过的「满屏实心色块」的另一面）；反过来在小窗口上 64px 又会压满整圆。
+    // 系数 0.085：1440×900（内容区短边 808）→ 69px，只比定稿的 64 大 8%；1920×1080 → 84px。
+    // 下限仍取 config 的 label_font_max（用户定稿的视觉不因窗口小而缩水），上限 160 兜极端屏。
+    function labelFsMax() {
+      var r = contentRect();
+      var shortSide = Math.max(1, Math.min(r.x1 - r.x0, r.y1 - r.y0));
+      return clamp(Math.round(shortSide * 0.085), LABEL_FS_MAX, 160);
+    }
     // 圆内可用宽度占直径的比例。0.8 × 直径 = 竖直方向居中处弦长的 0.8 倍，
     // 左右各留 10% 让文字不贴到描边上。
     var LABEL_AVAIL = 0.8;
@@ -315,6 +329,13 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       var r = contentRect();
       return Math.max(40, Math.min((r.x1 - r.x0) / 2, (r.y1 - r.y0) / 2));
     }
+    // 每帧标签预算：由内容区面积派生（阶段 2.1）。一张标签平均要 ~3.2 个碰撞格的净面积
+    // 才不至于互相压住；夹在 [120, 1200]（再多也画不出可读的字，再少大屏会显得空）。
+    function labelBudget() {
+      var r = contentRect();
+      var area = Math.max(1, (r.x1 - r.x0) * (r.y1 - r.y0));
+      return clamp(Math.floor(area / (LABEL_CELL * LABEL_CELL * 3.2)), 120, 1200);
+    }
 
     // home 视角：让整个虚拟根正好铺满**内容区**半径，再留 home_fit 的余量。
     // 2026-10-24 阶段 1.5：不同窗口尺寸下「装下全图」的缩放会变，但设计意图是
@@ -509,7 +530,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     function fitFontFor(sr, text, weight) {
       if (!(sr > 0)) return LABEL_FS_MIN;
       var availW = LABEL_AVAIL * 2 * sr;
-      var want = Math.round(clamp(sr * LABEL_FS_SCALE, LABEL_FS_MIN, LABEL_FS_MAX));
+      var want = Math.round(clamp(sr * LABEL_FS_SCALE, LABEL_FS_MIN, labelFsMax()));
       while (want > LABEL_FS_MIN &&
              measure(text, weight + want + 'px ' + FONT) + 6 > availW) want--;
       return want;
@@ -1267,9 +1288,14 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     function drawLabels(drawn, alpha) {
       if (labelMode === 'off') { stats.labels = 0; return; }
       var forceAll = labelMode === 'on';
+      // 2026-10-24 阶段 2.1：新增 'selected' 模式 —— 只给选中的圆、它的邻居与悬停项挂标签。
+      // 旧版把「只显示选中」错映射成 'off'（一个标签都不画，选中也不画），语义没实现。
+      var onlySel = labelMode === 'selected';
       var cands = [];
       for (var i = 0; i < drawn.length; i++) {
         var n = drawn[i];
+        if (onlySel && !(n.id === selectedId || n.id === hoverId ||
+                         (hotNeighbors && hotNeighbors.has(n.id)))) continue;
         var forced = forceAll || (matchSet && matchSet.has(n.id)) ||
                      n.id === selectedId || n.id === hoverId;
         if (!forced) {
@@ -1278,6 +1304,11 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
           // 在任何 zoom 下都拿不到标签（pitfall 8）。
           if (levelFade(n.depth, cam.zoom) < LABEL_A) continue;
         }
+        // 阶段 2.1：门全部**前移到预算之前**（旧版先截断 400 个候选，再逐条丢掉
+        // 「太小 / 锚点出屏」的，于是宽扇出层上整层 0 标签、连学科标签也被挤掉）。
+        if (!(n._sr >= LABEL_INSIDE_PX)) continue;
+        var nsx = w2sx(n.x), nsy = w2sy(n.y);
+        if (nsx < -n._sr || nsx > W + n._sr || nsy < -n._sr || nsy > H + n._sr) continue;
         cands.push(n);
       }
       // 优先级：选中/hover/搜索命中 > 当前不透明度降序 > 规模降序 > 深度升序。
@@ -1296,12 +1327,14 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         if (matchSet && matchSet.has(n.id)) return 1;
         return 2;
       }
-      if (cands.length > LABEL_BUDGET) cands.length = LABEL_BUDGET;
+      if (cands.length > LABEL_CAND_CAP) cands.length = LABEL_CAND_CAP;
 
+      var budget = labelBudget();
       var occupied = new Map();
       var placed = 0;
       ctx.textBaseline = 'middle';
       for (var j = 0; j < cands.length; j++) {
+        if (placed >= budget) break;      // 预算 = 真正画出来的张数（阶段 2.1）
         var m = cands[j];
         var text = m.label || m.id;
         var sr = m._sr;
@@ -1633,6 +1666,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         resize();
       },
       getInsets: function () { return { top: INSETS.top, bottom: INSETS.bottom, right: INSETS.right }; },
+      // 暴露给回归用：这一帧的标签预算由内容区面积派生（阶段 2.1），测试要能读它。
+      labelBudget: labelBudget,
       size: function () { return [W, H]; }
     };
 

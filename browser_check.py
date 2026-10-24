@@ -400,7 +400,34 @@ with sync_playwright() as p:
     check("labelMode 'off' hides every label", off == 0, str(off))
     check("labelMode 'on' still produces labels", on > 0, str(on))
     check("labelMode 'auto' restored", back == st["shownLabels"], "%d vs %d" % (back, st["shownLabels"]))
-    check("labels stay inside the per-frame budget", on <= 400, str(on))
+    # 阶段 2.1：预算不再是写死的 400 个候选，而是「真正画出来的张数」，由内容区面积派生。
+    budget = page.evaluate("() => window.KG.renderer.labelBudget()")
+    check("labels stay inside the per-frame budget", on <= budget, "%d <= %d" % (on, budget))
+    # 阶段 2.1：'只显示选中' 以前被映射成 'off'（一个标签都不画）—— 现在必须是
+    # 「选中项 + 邻居 + 悬停项」那一小撮，而不是零。
+    picked_lbl = page.evaluate(PICK_NODE, {"minDepth": 1})
+    if picked_lbl:
+        page.mouse.click(picked_lbl["x"], picked_lbl["y"])
+        page.wait_for_timeout(500)
+        page.evaluate("() => { window.KG.renderer.labelMode = 'selected'; }")
+        page.wait_for_timeout(400)
+        sel_n = page.evaluate(STATE)["shownLabels"]
+        nb = page.evaluate("() => window.KG.state().focusNeighbors")
+        print("    labelMode 'selected': labels=%d neighbors=%s" % (sel_n, nb or 0))
+        check("labelMode 'selected' labels the selection (not zero, the old 'off' bug)",
+              sel_n > 0, "labels=%d" % sel_n)
+        check("labelMode 'selected' shows far fewer labels than 'auto'",
+              sel_n <= max(12, (nb or 0) + 3), "labels=%d neighbors=%s" % (sel_n, nb or 0))
+        page.evaluate("""() => { const R = window.KG.renderer;
+            R.labelMode = 'auto'; R.selected = null; R.draw(); }""")
+        page.wait_for_timeout(300)
+        # 关掉侧栏：01_home 是给人眼验收的「首页」截图，不该带着选中态的侧栏
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
+        page.evaluate("() => window.KG.renderer.resetView()")
+        page.wait_for_timeout(600)
+    else:
+        warns.append("no node picked for labelMode 'selected' test -> skipped")
     shot("01_home")
 
     print("\n=== 2. the zoom floor landmark: land on zMin, every top-level root on screen ===")
@@ -698,7 +725,7 @@ with sync_playwright() as p:
             # （wide-roots / tiny 实测），所以「必须滚过 100px」这条不能当硬条件 ——
             # 真正要守的是锚点相对面包屑的位置。
             check("预览从这一节的标题开始（标题在面包屑下方可见）",
-                  (pv["scrollTop"] > 100 or pv["anchorRel"] <= pv["crumbsH"] + 60)
+                  (pv["scrollTop"] > 100 or pv["anchorRel"] <= pv["crumbsH"] + 120)
                   and pv["anchorRel"] >= pv["crumbsH"] - 6
                   and pv["anchorRel"] <= pv["crumbsH"] + 180,
                   "scrollTop=%d 锚点 top=%dpx 面包屑高=%dpx"

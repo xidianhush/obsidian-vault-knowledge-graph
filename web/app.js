@@ -68,7 +68,7 @@
   // ── 状态 ──────────────────────────────────────────────────────────────
   let filterDomain = 'all';
   let searchQ = '';
-  let labelMode = 'auto';      // 'auto' | 'on' | 'off'，与渲染器同词汇
+  let labelMode = 'auto';      // 'auto' | 'on' | 'off' | 'selected'，与渲染器同词汇
 
   // 用户选的图例收起状态要记住：这份 HTML 是 file:// 直接打开的，Chrome 下
   // localStorage 可能抛 SecurityError，所以两个方向都整段兜住，失败就退回默认值。
@@ -775,7 +775,11 @@
   $('domain').addEventListener('change', (e) => { filterDomain = e.target.value; applyFilters(); });
   $('labels').addEventListener('change', (e) => {
     const v = e.target.value;
-    labelMode = v === 'all' ? 'on' : v === 'none' ? 'off' : 'auto';
+    // 2026-10-24 阶段 2.1：'只显示选中' 以前被映射成 'off'（一个标签都不画，选中也不画），
+    // 语义是错的。现在是独立模式 'selected'：选中项 + 邻居 + 悬停项才挂标签。
+    labelMode = v === 'all' ? 'on'
+      : v === 'selected' ? 'selected'
+      : 'auto';
     R.labelMode = labelMode;
   });
 

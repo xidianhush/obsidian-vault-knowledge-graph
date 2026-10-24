@@ -27,7 +27,7 @@ fixtures:
     tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
     config: vaults/tiny/config.yaml
     canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 86}
+    expected_ok: {verify: 64, browser: 88}
     # 2026-10-24 阶段 1.4：根笔记模型已修（domain = 笔记自己的 id、depth1 允许是 note、
     # 越界判据改走父链取顶层祖先）—— verify 侧 **0 红**。
     # 2026-10-24 阶段 2：浏览器侧 4 类「用例前提不成立」已改成**显式跳过并计数**
@@ -60,7 +60,7 @@ fixtures:
     tests: 根数 ≠ 6 / 最小份额 / 学科色板只有 7 + 单一 fallback / 图例按实际 domain
     config: vaults/wide-roots/config.yaml
     canary: {folders: 30, notes: 150, headings: 150, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 92}
+    expected_ok: {verify: 64, browser: 94}
     # 2026-10-24 阶段 2：浏览器侧的 5 类前提不成立已改成显式跳过并计数
     # （0 条语义边 → 7b/7c/7d；子树在 home 已全展开 / 深度余量不足两层 → 不再要求「露出更多」；
     #  短笔记锚点；图例「关系」一节在 0 链接时由 app.js 隐藏）。现在 92 ok / 0 FAIL / 22 skip。
@@ -73,7 +73,7 @@ fixtures:
     tests: 边绘制预算（每帧逐条画）/ 焦点模式 / 端点标记 / chip 折叠 / 标题级链接
     config: vaults/hub-dense/config.yaml
     canary: {folders: 1, notes: 80, headings: 320, semantic_edges: 335}
-    expected_ok: {verify: 64}
+    expected_ok: {verify: 64, browser: 131}
     known_gaps:
 
   heading-zoo:
