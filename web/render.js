@@ -160,8 +160,9 @@
     var ZOOM_HARD_LO = 1e-6, ZOOM_HARD_HI = 1e6;
     var ENTER = LOD.enter || [];
     var MAXD = META.max_depth || ENTER.length || 1;
-    // 第四轮（2026-10-23）起没有「全局链接带」：药丸改成叶子元素圆内的一枚，
-    // 出现由该圆自己的屏幕半径决定（44px 淡入 / 64px 满），见 drawLeafPills()。
+    // 第五轮（2026-10-24）：药丸层删除 —— **实心圆自己就是入口**。
+    // Ctrl + 悬停某个圆 → app.js 用 hitTest 取到节点：标题圆就弹预览并从那一节滚起，
+    // 文件夹/笔记圆则提示「还没到标题层」。
     // 虚拟根的世界半径（构建期落盘）。home 视角 = 让整个根正好铺满可视半径。
     var ROOT_R = META.layout_root_radius || 1000;
 
@@ -286,6 +287,7 @@
     var tween = null;
     var dirty = true, rafId = 0;
     var hoverId = null, selectedId = null;
+var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提示）
     var lastMouse = null;
     var filterSet = null, matchSet = null, labelMode = 'auto';
     // 链接线的画法：'raw' = 逐条链接（默认，不聚合、颜色与透明度不随缩放变），
@@ -295,10 +297,8 @@
                   // painted = 真正按 PAINT_MIN 以上不透明度落了笔的节点数。nodes 是「候选
                   // 集大小」，painted 才是「屏幕上到底有没有东西」—— 兜底提示按 painted 判。
                   painted: 0,
-                  // 第 11 带（叶子圆内药丸）：这一帧画出的药丸数。空视口判据是
-                  // 「painted 为 0 且 links 也为 0」——药丸不画圆，光看 painted
-                  // 会把「满屏药丸」误判成空。
-                  links: 0 };
+                  // Ctrl 模式：这一帧给多少个标题圆画了「可预览」虚线圈
+                  ctrlRings: 0 };
     // 本帧与选中元素直接相连的**代表**节点 id。drawEdges 的挑边循环里就地收集
     // （那里才知道每条原始边塌到了哪一层的哪个代表上），drawEmphasis 读它画蓝环。
     // 只用于绘制与计数，不落盘、不参与布局。
@@ -609,14 +609,12 @@
       //     截断（`rawAnchor` + TRIM），所以线不会插进自己的圆。
       if (edgeMode !== 'raw') drawEdges(alpha);
       drawNodes(front, alpha);
+      drawCtrlRings(front, alpha);
       if (edgeMode === 'raw') drawEdges(alpha);
       // 祖先点线（悬停/选中时的包含链）同样提到圆之上：它和连线是一起读的，
       // 留在圆下会只剩连线可见、点线消失。
       drawChainHighlight();
       drawEdgeMarkers();
-      // 第 11 带（第四轮）：叶子圆内药丸。排在实心圆之后（要压在圆上、可读可点）、
-      // 强调环与标签之前（选中环仍压过药丸）。
-      drawLeafPills(drawn, alpha);
       drawEmphasis(drawn, alpha);
       drawLabels(drawn, alpha);
       // ⑥ 屏外 chip：屏幕空间的 HUD 覆盖层，压在所有世界内容之上
@@ -628,7 +626,7 @@
       // PAINT_MIN 而合成后与背景同值时，画布上其实一无所有 —— 那时用候选集判定就会
       // 出现「一片漆黑且没有任何提示」的死局。放开缩放之后放大到极端正好撞上这个坑
       // （实测 public 在 z ≥ 5000 时 0 个非背景像素、stats.nodes 却是 1）。
-      if (!stats.painted && !stats.links) {
+      if (!stats.painted) {
         ctx.globalAlpha = 1;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -645,12 +643,6 @@
       // 相机一动（滚轮 / 拖拽 / tween），光标下的圆就换了；鼠标没动就不会再有
       // mousemove，悬停提示会停在旧节点上。落笔后用最近一次鼠标位置重算 hover。
       if (lastMouse && !dragging) evalHover(lastMouse[0], lastMouse[1]);
-      // 链接药丸的悬停高亮同理：相机动了药丸位置也变，按最近一次鼠标位置重算。
-      if (lastMouse) {
-        var hotJob = linkAt(lastMouse[0], lastMouse[1]);
-        var hotId = hotJob ? hotJob.t : null;
-        if (hotId !== linkHover) { linkHover = hotId; invalidate(); }
-      }
 
       if (hooks.onFrame) hooks.onFrame(stats);
     }
@@ -1539,79 +1531,39 @@
       stats.labels = placed;
     }
 
-    // ── 第四轮：叶子圆内药丸（2026-10-23）──────────────────────────────────
-    // 用户口径：**只有「下一级直接是正文」的元素**（没有子元素、自己直接含正文）
-    // 才在**它自己的实心圆里**挂一枚药丸；每枚药丸只归它所在的那个圆。
-    // 出现时机由该圆自己的屏幕半径决定（44px 淡入 / 64px 满），不再是全局缩放带 ——
-    // 于是「放大到哪个叶子元素，就在那个圆里看到它」。
-    // 位置：标签下方、圆内偏下（y = cy + 0.42·sr）；宽度 ≤ 1.6·sr 保证不出圆。
-    // 文案：`正文 · N 字`；Ctrl 悬停 / 单击 → 预览浮层并从这一节的锚点滚起。
-    var linkJobs = [];
-    var linkHover = null;
-    var PILL_IN = 44, PILL_FULL = 64, PILL_H = 20, PILL_FS = 11;
-
-    function roundRectPath(x, y, w, h, r) {
-      ctx.beginPath();
-      if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
-    }
-
-    function drawLeafPills(drawn, alpha) {
-      linkJobs = [];
-      for (var i = 0; i < drawn.length; i++) {
-        var n = drawn[i];
-        // 判据只有一条：这个元素自己直接含正文（有子元素也可以 —— 章导语也算）。
-        // 文件夹永远不挂。
-        if (!n.hasText || !(n.tlen > 0)) continue;
-        if (n.kind !== 'heading' && n.kind !== 'note') continue;
-        var sr = n._sr;
-        if (!(sr >= PILL_IN)) continue;
-        var a = (alpha.get(n.id) || 0) * smoothstep(PILL_IN, PILL_FULL, sr);
-        if (a <= 0.02) continue;
-        var label = '正文 · ' + n.tlen + ' 字';
-        var font = PILL_FS + 'px ' + FONT;
-        var w = Math.min(measure(label, font) + 22, sr * 1.6);
-        var h = PILL_H;
-        var cx = w2sx(n.x), cy = w2sy(n.y);
-        var x = cx - w / 2, y = cy + sr * 0.42;
-        if (x + w < -40 || x > W + 40 || y < -40 || y > H + 40) continue;
-        var hot = linkHover === n.id;
-        ctx.save();
-        ctx.globalAlpha = a * 0.95;
-        roundRectPath(x, y, w, h, Math.min(10, h / 2));
-        ctx.fillStyle = hot ? 'rgba(52,64,86,.98)' : 'rgba(30,33,40,.95)';
-        ctx.fill();
-        ctx.strokeStyle = hot ? 'rgba(200,222,255,1)' : 'rgba(150,187,255,.8)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = hot ? '#ffffff' : '#e6edf3';
-        ctx.font = font;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(clipToWidth('pv:' + n.id, label, font, w - 12), x + w / 2, y + h / 2 + 0.5);
-        ctx.restore();
-        linkJobs.push({ x: x, y: y, w: w, h: h, t: n.id, l: label, a: n.anchor || '' });
-      }
-      stats.links = linkJobs.length;
-    }
-
-    // 光标下的药丸（app.js 的 Ctrl 悬停 / 单击预览用它）
-    function linkAt(sx, sy) {
-      for (var i = linkJobs.length - 1; i >= 0; i--) {
-        var j = linkJobs[i];
-        if (sx >= j.x && sx <= j.x + j.w && sy >= j.y && sy <= j.y + j.h) return j;
-      }
-      return null;
-    }
-
     // 拾取：线性扫上一帧真正画出来的圆，取「包含该点的最小圆」。
     // 不能用固定边长的屏幕网格 —— packing 下圆的屏幕半径从 18px 到几百 px，
     // 大圆的中心常常离鼠标好几个格子远。每帧至多几百个候选，扫一遍比建网格便宜。
+    // Ctrl 模式：按住 Ctrl 时给「标题圆」加一圈细虚线 —— 药丸删除后，这是唯一的
+    // 可发现性线索（否则用户不知道哪些圆可以悬停预览）。
+    function drawCtrlRings(drawn, alpha) {
+      if (!ctrlMode) { stats.ctrlRings = 0; return; }
+      stats.ctrlRings = 0;
+      ctx.save();
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(190,214,255,0.9)';
+      for (var i = 0; i < drawn.length; i++) {
+        var n = drawn[i];
+        if (n.kind !== 'heading' || !n.anchor) continue;
+        var sr = n._sr;
+        if (!(sr >= 12)) continue;
+        var a = (alpha.get(n.id) || 0) * 0.5;
+        if (a <= 0.05) continue;
+        ctx.globalAlpha = Math.min(0.45, a);
+        ctx.beginPath();
+        ctx.arc(w2sx(n.x), w2sy(n.y), sr - 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        stats.ctrlRings++;
+      }
+      ctx.restore();
+    }
+
+    function setCtrlMode(v) {
+      v = !!v;
+      if (ctrlMode !== v) { ctrlMode = v; invalidate(); }
+    }
+
     function hitTest(sx, sy) {
       var best = null, bestR = Infinity;
       for (var i = 0; i < lastDrawn.length; i++) {
@@ -1799,11 +1751,8 @@
       invalidate: invalidate,
       draw: draw,
       hitTest: hitTest,
+      setCtrlMode: setCtrlMode,
       enterAt: enterAt,
-      // 第 11 带（叶子圆内药丸）：命中与清单。app.js 的 Ctrl 悬停 / 单击预览
-      // 与自动化验证都直接读这几个入口。
-      linkAt: linkAt,
-      get linkJobs() { return linkJobs; },
       alphaOf: function (id) { var n = byId.get(id); return n ? alphaOf(n) : 0; },
       // 兼容别名：payload 字段 reveal 已改名 r（世界半径）
       revealOf: function (id) { var n = byId.get(id); return n ? n.r : 0; },

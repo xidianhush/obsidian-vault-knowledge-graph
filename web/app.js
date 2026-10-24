@@ -151,15 +151,14 @@
     // 「第几层 + z」放最前面，被省略掉的只会是末尾的计数与提示，而不是缩放值。
     const text = 'LOD ' + lv + '/' + MAX_DEPTH + ' · z=' + zoom.toFixed(3) +
       ' · ' + levelCounts(lv);
-    // 第 11 带（叶子圆内药丸）：不占层级数字（enter[] 仍是 10 项），只在提示位说一句
-    // 「药丸出现了 / 继续放大就会出现」——药丸是**每个叶子圆自己**的，没有全局窗口。
+    // 第 11 带（第五轮：圆即入口）：不占层级数字（enter[] 仍是 10 项），只在提示位说一句。
+    // 药丸层已删除 → 文案必须教会用户「Ctrl + 悬停标题圆」，否则功能等于不存在。
     let hint;
+    const pvHint = 'Ctrl + 悬停标题圆可预览正文';
     if (lv < MAX_DEPTH) {
-      hint = ' <span style="color:#7e879a">— 继续向上滚可深入</span>';
-    } else if (R.stats.links) {
-      hint = ' <span style="color:#7e879a">— Ctrl 悬停 / 单击「正文」药丸可预览</span>';
+      hint = ' <span style="color:#7e879a">— 继续向上滚可深入 · ' + pvHint + '</span>';
     } else {
-      hint = ' <span style="color:#7e879a">— 继续放大，叶子圆内会出现「正文」药丸</span>';
+      hint = ' <span style="color:#7e879a">— ' + pvHint + '</span>';
     }
     if (text !== lastReadout) {
       lastReadout = text;
@@ -537,26 +536,25 @@
 
   canvas.addEventListener('mouseleave', () => { R.hover = null; hideTooltip(); });
 
-  // ── Obsidian 式预览：Ctrl 悬停 / 单击「正文」药丸（2026-10-23 第四轮）─────
-  // 画布负责在**叶子元素的圆里**画一枚药丸（drawLeafPills），这里负责浮层：
-  //   * 内容 = 构建期渲好的 HTML 片段（markdown 排版、图片按相对路径引用 vault）；
-  //   * 公式 = 内联 KaTeX 当场渲染（只渲染当前这一篇，渲染结果按笔记缓存）；
-  //   * 起点 = 滚到**这一节的锚点**（`pv-hN`，构建期给每个标题打好的 id）；
-  //   * 位置 = 光标右下，超出视口就翻到另一侧；浮层内部可滚动；
-  //   * Ctrl+悬停 = 临时预览（移开就收），单击药丸 = 固定预览（Esc / 点外面收）。
+  // ── Obsidian 式预览：Ctrl + 悬停「实心圆」（2026-10-24 第五轮）──────────────
+  // 药丸层已经整个删除 —— **圆自己就是入口**：
+  //   * 悬停在**标题**圆上 → 预览该笔记，并从**这一节**（锚点 `pv-hN`）滚起；
+  //   * 悬停在**文件夹 / 笔记**圆上 → 不预览，toast 提示「还没到标题层」；
+  //   * Ctrl 松开 / 移到空白 / Esc → 收起。
+  // 预览内容沿用构建期的 HTML 片段（markdown 排版 + 运行时 KaTeX + 按路径引用的图片；
+  // 标题本身就是片段里的 `<hN>`，所以从这一节滚起时标题是渲染出来的）。
   const PV = $('preview');
   const pvCache = new Map();       // note id → 已含 KaTeX 结果的 innerHTML
   let ctrlDown = false;
   let pvNote = null;
-  let pvPinned = false;
   let pvLast = null;               // 最近一次鼠标位置（按下 Ctrl 那一刻要用）
+  let hintNode = null;             // 上一次提示过的节点 id（避免每次移动都 toast）
 
   function hidePreview() {
     if (!PV.classList.contains('show')) return;
     PV.classList.remove('show');
     PV.innerHTML = '';
     pvNote = null;
-    pvPinned = false;
   }
 
   function canvasPoint(evt) {
@@ -564,41 +562,51 @@
     return [evt.clientX - rect.left, evt.clientY - rect.top];
   }
 
-  function showPreview(job, cx, cy, pinned) {
-    const node = NODE.get(job.t);
-    if (!node) return hidePreview();
+  function buildPreviewHtml(note) {
+    if (pvCache.has(note.id)) return pvCache.get(note.id);
+    PV.innerHTML = '<div class="pv-crumbs"></div>' + note.preview +
+      '<div class="pv-hint">Ctrl + 悬停其它标题圆可继续预览 · 浮层内链接可点 · Esc / 松开 Ctrl 关闭</div>';
+    if (window.renderMathInElement) {
+      try {
+        window.renderMathInElement(PV, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+          ],
+          throwOnError: false,
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
+        });
+      } catch (e) { /* 单个坏公式不该炸掉整个浮层 */ }
+    }
+    const html = PV.innerHTML;
+    pvCache.set(note.id, html);
+    return html;
+  }
+
+  function showPreviewFor(node, cx, cy) {
     const note = node.kind === 'note' ? node : NODE.get(node.note);
-    if (!note || !note.preview) return hidePreview();
+    if (!note || !note.preview) { hidePreview(); return; }
     if (pvNote !== note.id) {
-      if (pvCache.has(note.id)) {
-        PV.innerHTML = pvCache.get(note.id);
-      } else {
-        PV.innerHTML = note.preview +
-          '<div class="pv-hint">Ctrl 悬停 / 单击药丸预览 · 浮层内链接可点 · Esc 关闭</div>';
-        if (window.renderMathInElement) {
-          try {
-            window.renderMathInElement(PV, {
-              delimiters: [
-                { left: '$$', right: '$$', display: true },
-                { left: '\\[', right: '\\]', display: true },
-                { left: '$', right: '$', display: false },
-                { left: '\\(', right: '\\)', display: false },
-              ],
-              throwOnError: false,
-              ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
-            });
-          } catch (e) { /* 单个坏公式不该炸掉整个浮层 */ }
-        }
-        pvCache.set(note.id, PV.innerHTML);
-      }
+      PV.innerHTML = buildPreviewHtml(note);
       pvNote = note.id;
     }
-    pvPinned = !!pinned;
     hideTooltip();
     PV.classList.add('show');
-    // 从「这一节」滚起：构建期给每个标题打的锚点 id（拿不到就退回顶部）
-    const anchorEl = job.a ? PV.querySelector('#' + job.a) : null;
-    PV.scrollTop = anchorEl ? Math.max(0, anchorEl.offsetTop - 8) : 0;
+    // 面包屑：滚深了也知道「哪篇笔记 › 哪一节」
+    const crumbs = PV.querySelector('.pv-crumbs');
+    if (crumbs) {
+      crumbs.textContent = node.kind === 'heading'
+        ? (note.label || note.id) + '  ›  ' + (node.label || '')
+        : (note.label || note.id);
+    }
+    // 从这一节滚起：锚点是构建期给每个标题打的 id（拿不到就退回顶部）。
+    // 注意要**给 sticky 面包屑让位** —— 只减 12px 的话，标题正好被面包屑盖住，
+    // 看起来就是「预览里没有标题」（2026-10-24 实测踩到）。
+    const anchorEl = node.anchor ? PV.querySelector('#' + node.anchor) : null;
+    const crumbH = (PV.querySelector('.pv-crumbs') || {}).offsetHeight || 0;
+    PV.scrollTop = anchorEl ? Math.max(0, anchorEl.offsetTop - crumbH - 10) : 0;
     const w = PV.offsetWidth, h = PV.offsetHeight;
     let x = cx + 18, y = cy + 18;
     if (x + w > window.innerWidth - 12) x = cx - w - 18;
@@ -610,51 +618,43 @@
   function evalPreview(evt) {
     pvLast = [evt.clientX, evt.clientY];
     if (evt.target && evt.target.closest && evt.target.closest('#preview')) return;
+    if (!ctrlDown) { hidePreview(); hintNode = null; return; }
     const p = canvasPoint(evt);
-    const job = R.linkAt(p[0], p[1]);
-    if (ctrlDown) {
-      if (job) showPreview(job, evt.clientX, evt.clientY, false);
-      else if (!pvPinned) hidePreview();
+    const node = R.hitTest(p[0], p[1]);
+    if (!node) { hidePreview(); hintNode = null; return; }
+    if (node.kind === 'heading') {
+      hintNode = null;
+      showPreviewFor(node, evt.clientX, evt.clientY);
       return;
     }
-    if (!job && !pvPinned) hidePreview();     // 固定预览只在 Esc / 点外面时收
+    // 文件夹 / 笔记：这一层还没有「标题」，没有可读的正文
+    hidePreview();
+    if (hintNode !== node.id) {
+      hintNode = node.id;
+      toast(node.kind === 'folder'
+        ? '这一层是文件夹，还没到标题 —— 继续放大到标题圆'
+        : '这是笔记本身，还没到标题 —— 继续放大到标题圆');
+    }
   }
 
   window.addEventListener('mousemove', evalPreview, true);
   window.addEventListener('keydown', (evt) => {
     if (evt.key === 'Control' && !ctrlDown) {
       ctrlDown = true;
+      R.setCtrlMode(true);
       if (pvLast) {
         const rect = canvas.getBoundingClientRect();
-        const job = R.linkAt(pvLast[0] - rect.left, pvLast[1] - rect.top);
-        if (job) showPreview(job, pvLast[0], pvLast[1], false);
+        const node = R.hitTest(pvLast[0] - rect.left, pvLast[1] - rect.top);
+        if (node && node.kind === 'heading') showPreviewFor(node, pvLast[0], pvLast[1]);
       }
     }
   }, true);
   window.addEventListener('keyup', (evt) => {
-    if (evt.key === 'Control') {
-      ctrlDown = false;
-      if (!pvPinned) hidePreview();
-    }
+    if (evt.key === 'Control') { ctrlDown = false; R.setCtrlMode(false); hidePreview(); hintNode = null; }
   });
-  window.addEventListener('blur', () => { ctrlDown = false; hidePreview(); });
+  window.addEventListener('blur', () => { ctrlDown = false; R.setCtrlMode(false); hidePreview(); });
 
-  // 单击药丸 = 固定预览。用捕获阶段的 document 监听先于画布自己的 click
-  // （画布 click 会选中节点），命中药丸时 stopPropagation 把它吃掉。
-  document.addEventListener('click', (evt) => {
-    if (evt.target && evt.target.closest && evt.target.closest('#preview')) return;
-    const p = canvasPoint(evt);
-    const job = R.linkAt(p[0], p[1]);
-    if (job) {
-      evt.preventDefault();
-      evt.stopPropagation();
-      showPreview(job, evt.clientX, evt.clientY, true);
-      return;
-    }
-    if (pvPinned) hidePreview();
-  }, true);
-
-  // 浮层里的 [[链接]] 点击 → 选中目标（与画布上点药丸一致）
+  // 浮层里的 [[链接]] 点击 → 选中目标（与画布上点圆一致）
   PV.addEventListener('click', (e) => {
     const wl = e.target.closest ? e.target.closest('.pv-wl[data-wl]') : null;
     if (!wl) return;
@@ -784,8 +784,6 @@
       focusNeighbors: R.stats.focusNeighbors,
       marks: R.stats.marks,
       chips: R.stats.chips,
-      // 第 11 带（叶子圆内药丸）：这一帧画出的药丸数（每枚都属于它所在的叶子圆）
-      links: R.stats.links,
       shownLabels: R.stats.labels,
       selected: R.selected,
       hovered: R.hover,

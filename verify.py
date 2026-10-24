@@ -346,55 +346,41 @@ def run(cfg, payload_path=None):
         all_links = [l for n in notes for l in (n.get("links") or [])]
         _check(all(l.get("t") in node_ids for l in all_links),
                f"预览里的链接目标都落在图上节点（{len(all_links)} 条）", failures)
-        # ── 叶子 / 正文长度 / 锚点（第四轮新增）────────────────────────────
-        texted = [n for n in all_nodes
-                  if n.get("kind") in ("note", "heading")
-                  and n.get("hasText") and (n.get("tlen") or 0) > 0]
-        _check(len(texted) > 0,
-               f"含正文的节点 {len(texted)} 个（药丸就画在这些圆里）", failures)
-        kids = {}
-        for n in all_nodes:
-            p = n.get("parent")
-            if p:
-                kids[p] = kids.get(p, 0) + 1
-        mixed = [n for n in texted if kids.get(n["id"], 0) > 0]
-        # 用户 2026-10-23 补充：「有子元素但自己也带一段导语」的节点也要挂药丸
-        _check(len(mixed) > 0,
-               f"其中有子元素但仍带导语的 {len(mixed)} 个（第四轮补充要覆盖）", failures)
-        _check(all(n.get("kind") in ("note", "heading") for n in texted),
-               "药丸只给笔记/标题节点，文件夹不挂", failures)
+        # ── 标题锚点（第五轮：圆即入口，Ctrl + 悬停标题圆 → 从这一节滚起）────
         anchors = [n.get("anchor") for n in heads if n.get("anchor")]
-        # 锚点只在**同一篇笔记的预览 HTML 内**唯一（每篇都从 pv-h0 起，跨笔记重复是正常的）
         per_note_anchor = {}
         for n in heads:
             if n.get("anchor"):
                 per_note_anchor.setdefault(n.get("note"), []).append(n["anchor"])
         n_dup = [k for k, v in per_note_anchor.items() if len(v) != len(set(v))]
         _check(not n_dup, f"同一篇笔记内标题锚点不重复（重复 {len(n_dup)} 篇）", failures)
-        per_note = {}
-        for h in heads:
-            if h.get("anchor"):
-                per_note.setdefault(h.get("note"), set()).add(h["anchor"])
         missing_anchor = []
         for note in notes:
             html = note.get("preview") or ""
-            for a in per_note.get(note["id"], ()):
+            for a in per_note_anchor.get(note["id"], ()):
                 if ('id="%s"' % a) not in html:
                     missing_anchor.append(a)
         _check(not missing_anchor,
                f"每个标题锚点都能在所属笔记的预览 HTML 里找到（缺 {len(missing_anchor)} 个）",
                failures)
-        with_text = [n for n in heads if (n.get("tlen") or 0) > 0]
-        with_anchor = [n for n in with_text if n.get("anchor")]
-        ratio = len(with_anchor) / max(1, len(with_text))
+        # 锚点标题必须是合法开标签（`<hN id="pv-hX">`）—— 少个 `>` 会让浏览器把后面
+        # 的内容吞进标题，连标题文字都消失（2026-10-24 实测踩到，用户看到的就是「没标题」）
+        bad_tag = 0
+        for note in notes:
+            html = note.get("preview") or ""
+            want = len(per_note_anchor.get(note["id"], ()))
+            got = len(re.findall(r'<h[1-6] id="pv-h\d+">', html))
+            bad_tag += max(0, want - got)
+        _check(bad_tag == 0,
+               f"锚点标题都是合法开标签 `<hN id=\"pv-hX\">`（坏 {bad_tag} 个）", failures)
+        with_anchor = [n for n in heads if n.get("anchor")]
+        ratio = len(with_anchor) / max(1, len(heads))
         _check(ratio >= 0.95,
-               f"含正文的标题里 {len(with_anchor)}/{len(with_text)} 有锚点"
-               f"（≥95%：python-markdown 与我们的标题解析口径允许极少数差异，"
-               f"没锚点的会退回预览顶部）", failures)
-        n_h = len([n for n in texted if n["kind"] == "heading"])
-        print(f"         含正文 {len(texted)} 个（标题 {n_h} / 笔记 {len(texted) - n_h}，"
-              f"其中非叶子 {len(mixed)}）；锚点 {len(anchors)} 个；预览 {total} 字；"
-              f"出站链接 {len(all_links)} 条")
+               f"标题锚点覆盖 {len(with_anchor)}/{len(heads)}（≥95%；没锚点的标题悬停时"
+               f"预览退回顶部，不会报错）", failures)
+        print(f"         标题锚点 {len(anchors)} 个（覆盖 {len(with_anchor)}/{len(heads)}）；"
+              f"预览 {total} 字；出站链接 {len(all_links)} 条")
+
 
     # ── 「落笔」的解析复刻（与 render.js 的 draw() 判据对齐）─────────────
     # 一个节点这一帧会被画出来，当且仅当：

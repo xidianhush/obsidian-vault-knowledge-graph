@@ -178,6 +178,10 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
         path = index.get(os.path.basename(src).lower())
         if _usable(path):
             real = _rel(path, base_dir).replace('"', "%22")
+            # vault 里的 <img> 常自带 width/height：先删掉再加我们读到的尺寸，
+            # 否则同一标签上出现两组 width/height（非法 HTML）。
+            tag = re.sub(r'\s+width="[^"]*"', '', tag)
+            tag = re.sub(r'\s+height="[^"]*"', '', tag)
             return tag.replace(src, real).replace(
                 "<img", "<img" + _img_size_attrs(path), 1)
         alt_m = re.search(r'alt="([^"]*)"', tag)
@@ -192,7 +196,7 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
 
     def add_id(m):
         anchors.append("pv-h%d" % len(anchors))
-        return '<h%s id="%s"' % (m.group(1), anchors[-1])
+        return '<h%s id="%s">' % (m.group(1), anchors[-1])
 
     html = re.sub(r"<h([1-6])>", add_id, html)
     return html, links, anchors

@@ -213,6 +213,14 @@
   #preview .pv-wl.pv-unresolved { color: var(--muted); border-bottom-color: rgba(126,135,154,.35); cursor: default; }
   #preview .pv-attach { color: #7e879a; background: #262a31; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
   #preview .pv-missing { color: #f85149; font-size: 12px; }
+  /* 第五轮：浮层顶部 sticky 面包屑（哪篇笔记 › 哪一节），滚深了也认得出位置 */
+  #preview .pv-crumbs {
+    position: sticky; top: 0; z-index: 2; margin: 0 -20px 10px;
+    padding: 8px 20px; background: #1b1e24;
+    color: #9aa4b2; font-size: 11px; border-bottom: 1px solid #2d3138;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #preview .pv-crumbs:empty { display: none; }
   #preview .pv-hint { color: var(--muted); font-size: 11px; border-top: 1px solid #2d3138; margin-top: 14px; padding-top: 8px; }
 </style>
 </head>

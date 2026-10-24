@@ -14,10 +14,6 @@ TYPE_CONTRAST = "contrast"
 TYPE_CONTAINS = "contains"
 
 
-def _textlen(text: str) -> int:
-    """数「非空白字符」：药丸文案 `正文 · N 字` 与 `hasText` 判据都用它（不存正文）。"""
-    return len(re.sub(r"\s+", "", text or ""))
-
 
 class GraphBuilder:
     def __init__(self, cfg: dict, notes, folders):
@@ -207,27 +203,13 @@ class GraphBuilder:
             node["preview"] = html
             node["links"] = links
             total += len(html)
-            # 第四轮：算出「每个元素直接含多少正文」+ 它在预览里的锚点。
-            # 只存字数（不存正文）：药丸文案用 `正文 · N 字`，判据是 `N > 0`。
-            offset = note.text.count("\n") - note.body.count("\n")
-            preamble, sections = parse.section_texts(note.body, note.headings, offset)
-            node["tlen"] = _textlen(preamble)
-            node["anchor"] = ""
+            # 第五轮（2026-10-24）：药丸层整个删掉 —— **实心圆自己就是入口**。
+            # 所以只需要给每个标题记一个预览锚点（悬停标题圆时从那一节滚起）。
             for i, h in enumerate(note.headings):
                 hn = self.nodes.get(h.id)
-                if hn is None:
-                    continue
-                hn["tlen"] = _textlen(sections.get(h.id, ""))
-                hn["anchor"] = anchors[i] if i < len(anchors) else ""
-        # 药丸的判据只有一条：**这个元素自己直接含正文**（tlen > 0）。是否还有子元素
-        # 不再影响挂不挂 —— 用户 2026-10-23 补充：「但凡元素内部包含了正文，都应该有
-        # 药丸可以点」（章下面先有一段导语、再是小节，那段导语也要能看）。
-        for n in self.nodes.values():
-            n["hasText"] = (n.get("tlen") or 0) > 0
+                if hn is not None:
+                    hn["anchor"] = anchors[i] if i < len(anchors) else ""
         self.stats["preview_chars"] = total
-        self.stats["text_nodes"] = sum(
-            1 for n in self.nodes.values()
-            if n.get("hasText") and n.get("kind") in ("note", "heading"))
 
     def _heading_at_line(self, note_id: str, line):
         """返回覆盖该行的标题 id：行号 ≤ line 的最后一个标题。

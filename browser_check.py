@@ -604,7 +604,7 @@ with sync_playwright() as p:
         # 判据必须是 stats.painted（几何精确的落笔数），**不能**用 shownNodes：
         # 那是候选集大小，会被「中心远在屏外、半径极大的圆」撑住 —— public 在 z=1e6 时
         # shownNodes 恒为 1，而画布上其实一无所有、提示正常画着（见 3d 的说明）。
-        if st["painted"] == 0 and not st.get("links"):
+        if st["painted"] == 0:
             empty_at = page.evaluate("() => window.KG.renderer.camera.zoom")
             break
     print("    home z=%.3f -> 空于 z=%s（%s× home，%s× zMax）" % (
@@ -628,54 +628,44 @@ with sync_playwright() as p:
           abs(home_after - meta["zHome"]) < 1e-6,
           "%.6f vs zHome %.6f" % (home_after, meta["zHome"]))
 
-    print("\n=== 3e. 第 11 带：叶子圆内药丸 + Ctrl 悬停 / 单击预览 ===")
-    # 用户 2026-10-23 的口径：**只有「下一级直接是正文」的元素**（没有子元素、自己直接
-    # 含正文）才在它**自己的实心圆里**挂一枚药丸，出现由该圆自己的屏幕半径决定
-    # （44→64px 淡入），不再有全局缩放带；Ctrl 悬停 / 单击 → 浮层从**这一节的锚点**滚起。
-    # 这段钉六件事：
-    #   ① 有正文的叶子圆：放大到 sr≥64 时**恰好一枚**药丸，且药丸落在该圆内部；
-    #   ② 有子元素的节点（非叶子）绝不挂药丸；
-    #   ③ Ctrl 悬停 → 浮层出现，KaTeX/图片真的渲染（靶子笔记要有）；
-    #   ④ 浮层确实滚到了这一节的锚点（不是永远从顶部开始）；
-    #   ⑤ 单击药丸 → 浮层固定住（移开鼠标不消失），Esc 收起；
-    #   ⑥ 缩小到圆只有十几 px 时不挂药丸（44px 门槛以下）。
-    if not page.evaluate("() => !!(window.KG.renderer.linkAt)") :
-        warns.append("preview 未启用 -> 跳过第 11 带（叶子药丸/预览）断言")
-        print("    !! preview disabled; skipping leaf-pill checks")
+    print("\n=== 3e. 第 11 带：圆即入口（Ctrl + 悬停标题圆 → 从这一节滚起）===")
+    # 2026-10-24 第五轮：药丸层整个删除 —— **实心圆自己就是入口**。
+    #   * Ctrl + 悬停**标题**圆 → 弹预览并从该标题的锚点滚起；
+    #   * Ctrl + 悬停**文件夹/笔记**圆 → 不预览，toast 提示「还没到标题」；
+    #   * 松开 Ctrl → 收起；药丸相关的 API / 统计必须不存在（防止改回去）。
+    if not page.evaluate("() => !!(window.KG.renderer.hitTest)"):
+        warns.append("renderer.hitTest 不存在 -> 跳过第 11 带断言")
+        print("    !! no hitTest; skipping preview checks")
     else:
-        # 靶子：挑一个有正文、且**所属笔记同时带公式和图片**的叶子标题（数据驱动）。
-        # 第一版只按「有图或有式」打分，结果挑中了没有公式的笔记、KaTeX 断言假红。
+        # 靶子：深一点的标题（小圆 → 放大后圆够大才方便悬停），且所属笔记带公式和图片
         tgt = page.evaluate("""() => {
             const R = window.KG.renderer;
             let best = null, fallback = null;
             for (const n of R.NODES) {
-                if (n.kind !== 'heading' || !n.hasText || !(n.tlen > 0)) continue;
+                if (n.kind !== 'heading' || !n.anchor) continue;
                 const note = R.byId.get(n.note) || {};
                 const p = note.preview || '';
-                const hasImg = p.indexOf('<img') >= 0;
-                // 公式要排除代码块里的 `$`（auto-render 会忽略 <pre>/<code>）
                 const box = document.createElement('div');
                 box.innerHTML = p;
                 box.querySelectorAll('pre,code').forEach(e => e.remove());
                 const txt = box.textContent || '';
+                const hasImg = p.indexOf('<img') >= 0;
                 const hasMath = txt.split('$').length >= 3;
-                const score = (n.tlen || 0) + (hasImg ? 5000 : 0) + (hasMath ? 5000 : 0);
-                const cand = {id: n.id, x: n.x, y: n.y, r: n._r || n.r,
-                              tlen: n.tlen || 0, anchor: n.anchor || '',
-                              img: hasImg, math: hasMath, score: score};
-                if (hasImg && hasMath && (!best || score > best.score)) best = cand;
-                if (!fallback || score > fallback.score) fallback = cand;
+                const rec = {id: n.id, x: n.x, y: n.y, r: n._r || n.r,
+                             anchor: n.anchor, note: n.note,
+                             noteLabel: note.label || '', label: n.label || '',
+                             img: hasImg, math: hasMath};
+                if (hasImg && hasMath && (!best || rec.r < best.r)) best = rec;
+                if (!fallback || rec.r < fallback.r) fallback = rec;
             }
             return best || fallback;
         }""")
-        # 没有正文的节点（tlen==0）绝不该挂药丸 —— 不管有没有子元素
-        nonleaf = page.evaluate("""() => {
-            const R = window.KG.renderer;
-            for (const n of R.NODES) {
-                if (n.kind === 'heading' && !n.hasText) return {id: n.id, x: n.x, y: n.y, r: n._r || n.r};
-            }
-            return null;
-        }""")
+        print("    靶子标题: %s（anchor=%s，sr≈%.2f @zoom=1）"
+              % (tgt["label"][:34], tgt["anchor"], tgt["r"]))
+        z_big = 120.0 / max(tgt["r"], 1e-6)
+
+        VW = page.viewport_size["width"]
+        VH = page.viewport_size["height"]
 
         def center_on(node, z):
             page.evaluate("""(a) => {
@@ -686,114 +676,120 @@ with sync_playwright() as p:
                 R.camera.panY = (H - 46) / 2 - a.y * R.camera.zoom;
                 R.draw();
             }""", {"z": z, "x": node["x"], "y": node["y"]})
-            page.wait_for_timeout(180)
+            page.wait_for_timeout(200)
 
-        print("    靶子叶子: %s（%d 字，anchor=%s，sr≈%.1f @zoom=1）"
-              % (tgt["id"].rsplit("/", 1)[-1][:34], tgt["tlen"], tgt["anchor"], tgt["r"]))
-
-        # ① 放大到该圆 sr≈80px
-        z_big = 80.0 / max(tgt["r"], 1e-6)
         center_on(tgt, z_big)
-        st = page.evaluate(STATE)
-        jobs = page.evaluate("() => window.KG.renderer.linkJobs.map(j => "
-                             "({x: j.x, y: j.y, w: j.w, h: j.h, t: j.t, a: j.a, l: j.l}))")
-        check("叶子圆放大后出现药丸", (st.get("links") or 0) >= 1,
-              "z=%.2f links=%s" % (z_big, st.get("links")))
-        mine = [j for j in jobs if j["t"] == tgt["id"]]
-        check("药丸挂在这个叶子元素的圆里（恰好一枚）", len(mine) == 1,
-              "同 id 药丸 %d 枚" % len(mine))
-        if mine:
-            j = mine[0]
-            VW = page.viewport_size["width"]
-            VH = page.viewport_size["height"]
-            cx = (j["x"] + j["w"] / 2) - VW / 2
-            cy = (j["y"] + j["h"] / 2) - (VH - 46) / 2
-            dist = (cx * cx + cy * cy) ** 0.5
-            check("药丸落在该圆内部（中心距 < 屏幕半径）", dist < 80,
-                  "中心距=%.1fpx（圆半径≈80px）" % dist)
-            check("药丸文案带字数", ("正文" in j["l"]) and ("字" in j["l"]), j["l"])
-            check("药丸带着这一节的锚点", bool(j["a"]), str(j["a"]))
-            pill = j
+        hit = page.evaluate("() => { const R = window.KG.renderer;"
+                            " const h = R.hitTest(window.innerWidth / 2, (window.innerHeight - 46) / 2);"
+                            " return h ? {id: h.id, kind: h.kind} : null; }")
+        check("放大后视口中心命中的就是这个标题圆", hit and hit["id"] == tgt["id"],
+              "hit=%s" % (hit and hit["id"].rsplit("/", 1)[-1][:26]))
 
-        # ② 非叶子节点：绝不挂
-        if nonleaf:
-            z_nl = 80.0 / max(nonleaf["r"], 1e-6)
-            center_on(nonleaf, z_nl)
-            st2 = page.evaluate(STATE)
-            jobs2 = page.evaluate("() => window.KG.renderer.linkJobs || []")
-            check("没有正文的节点不挂药丸",
-                  not any(x["t"] == nonleaf["id"] for x in jobs2),
-                  "z=%.2f 该节点药丸=%d" % (z_nl, sum(1 for x in jobs2 if x["t"] == nonleaf["id"])))
-
-        # ③④ Ctrl 悬停 → 浮层 + 锚点滚动
-        center_on(tgt, z_big)
+        # ① Ctrl + 悬停标题圆 → 预览浮层（顺带：Ctrl 模式要给标题圆画虚线圈）
         page.keyboard.down("Control")
-        page.mouse.move(pill["x"] + pill["w"] / 2, pill["y"] + pill["h"] / 2)
-        page.wait_for_timeout(1100)
+        page.mouse.move(VW / 2, (VH - 46) / 2)
+        page.wait_for_timeout(600)
+        rings = page.evaluate("() => window.KG.renderer.stats.ctrlRings")
+        check("按住 Ctrl 时标题圆出现「可预览」虚线圈", rings > 0, "rings=%d" % rings)
+        page.wait_for_timeout(600)
         pv = page.evaluate("""() => {
             const el = document.getElementById('preview');
             if (!el || !el.classList.contains('show')) return null;
             const imgs = [...el.querySelectorAll('img')];
             const a = el.querySelector('#' + %r);
             const pr = el.getBoundingClientRect();
+            const crumbs = el.querySelector('.pv-crumbs');
             return {
                 katex: el.querySelectorAll('.katex').length,
                 imgs: imgs.length,
                 broken: imgs.filter(i => !i.naturalWidth).length,
                 scrollTop: el.scrollTop,
                 anchorRel: a ? (a.getBoundingClientRect().top - pr.top) : -9999,
-                inViewport: el.getBoundingClientRect().left >= -1 &&
-                            el.getBoundingClientRect().top >= -1 &&
-                            el.getBoundingClientRect().right <= window.innerWidth + 1 &&
-                            el.getBoundingClientRect().bottom <= window.innerHeight + 1,
+                anchorTag: a ? a.tagName : '',
+                anchorText: a ? (a.textContent || '').trim().slice(0, 40) : '',
+                crumbs: crumbs ? (crumbs.textContent || '') : '',
+                crumbsH: crumbs ? crumbs.offsetHeight : 0,
+                inViewport: pr.left >= -1 && pr.top >= -1 &&
+                            pr.right <= window.innerWidth + 1 &&
+                            pr.bottom <= window.innerHeight + 1,
             };
-        }""" % tgt["anchor"] if tgt["anchor"] else """() => null""")
-        check("Ctrl 悬停打开预览浮层", pv is not None, tgt["id"].rsplit("/", 1)[-1][:28])
+        }""" % tgt["anchor"])
+        check("Ctrl + 悬停标题圆打开预览", pv is not None, tgt["label"][:26])
         if pv:
-            if tgt.get("math"):
+            if tgt["math"]:
                 check("预览里的 KaTeX 公式真的渲染了", pv["katex"] > 0, "katex=%d" % pv["katex"])
             else:
                 warns.append("靶子笔记没有公式 -> KaTeX 断言跳过")
-            if tgt.get("img"):
+            if tgt["img"]:
                 check("预览里的图片真的加载了", pv["imgs"] > 0 and pv["broken"] == 0,
                       "imgs=%d broken=%d" % (pv["imgs"], pv["broken"]))
             else:
-                warns.append("靶子笔记没有图片 -> 图片加载断言跳过")
-            # 语义判据：锚点落在浮层可视区顶部附近（±160px 内），而不是「永远从顶部开始」。
-            # 不用 scrollTop 精确相等：图片是异步加载的，加载后上方高度变化会让 scrollTop
-            # 漂几十像素 —— 那是正常的，别让回归卡在像素级。
-            check("预览从这一节的锚点滚起（不是永远从顶部）",
-                  pv["scrollTop"] > 100 and -60 <= pv["anchorRel"] <= 160,
-                  "scrollTop=%d 锚点相对浮层顶部=%dpx" % (pv["scrollTop"], pv["anchorRel"]))
+                warns.append("靶子笔记没有图片 -> 图片断言跳过")
+            # 「从这一节开始」：锚点标题落在浮层顶部附近，且标题**真的渲染出来了**
+            # 标题要落在**面包屑下方**（不是被 sticky 面包屑盖住）
+            check("预览从这一节的标题开始（标题在面包屑下方可见）",
+                  pv["scrollTop"] > 100
+                  and pv["anchorRel"] >= pv["crumbsH"] - 6
+                  and pv["anchorRel"] <= pv["crumbsH"] + 180,
+                  "scrollTop=%d 锚点 top=%dpx 面包屑高=%dpx"
+                  % (pv["scrollTop"], pv["anchorRel"], pv["crumbsH"]))
+            check("这一节的标题本身渲染出来了（<hN> 有文字）",
+                  pv["anchorTag"][:1] == "H" and len(pv["anchorText"]) > 0,
+                  "%s %r" % (pv["anchorTag"], pv["anchorText"]))
+            check("浮层面包屑显示「笔记 › 这一节」",
+                  tgt["noteLabel"][:6] in pv["crumbs"] and tgt["label"][:6] in pv["crumbs"],
+                  pv["crumbs"][:60])
             check("预览浮层没有超出视口", pv["inViewport"])
-        shot("15_preview")
+        shot("16_circle_preview")
+
+        # ② Ctrl + 悬停「笔记」圆 → 不预览 + toast 提示
+        note_target = None
+        note_zoom = 0
+        for cand in page.evaluate("""() => {
+            const R = window.KG.renderer;
+            return R.NODES.filter(n => n.kind === 'note' && n.preview)
+                .sort((a, b) => (b.r || 0) - (a.r || 0)).slice(0, 12)
+                .map(n => ({id: n.id, x: n.x, y: n.y, r: n._r || n.r}));
+        }"""):
+            z = 120.0 / max(cand["r"], 1e-6)
+            center_on(cand, z)
+            h = page.evaluate("() => { const R = window.KG.renderer;"
+                              " const x = R.hitTest(window.innerWidth / 2, (window.innerHeight - 46) / 2);"
+                              " return x ? {id: x.id, kind: x.kind} : null; }")
+            if h and h["id"] == cand["id"]:
+                note_target, note_zoom = cand, z
+                break
+        if note_target:
+            page.mouse.move(VW / 2, (VH - 46) / 2)
+            page.wait_for_timeout(420)
+            st = page.evaluate("""() => ({
+                shown: document.getElementById('preview').classList.contains('show'),
+                toast: (document.getElementById('toast') || {}).textContent || '',
+            })""")
+            check("悬停笔记圆不弹预览（还没到标题层）", not st["shown"], "shown=%s" % st["shown"])
+            check("悬停笔记圆给出「还没到标题」提示", "还没到标题" in st["toast"], st["toast"][:40])
+        else:
+            warns.append("没找到中心落在笔记圆上的视图 -> 笔记圆提示未测")
+
+        # ③ 松开 Ctrl → 收起
         page.keyboard.up("Control")
         page.wait_for_timeout(350)
         check("松开 Ctrl 后浮层收起",
               page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
+        check("松开 Ctrl 后提示圆环消失",
+              page.evaluate("() => window.KG.renderer.stats.ctrlRings") == 0,
+              "rings=%s" % page.evaluate("() => window.KG.renderer.stats.ctrlRings"))
 
-        # ⑤ 单击 → 固定预览（移开鼠标不消失），Esc 收起
-        page.mouse.click(pill["x"] + pill["w"] / 2, pill["y"] + pill["h"] / 2)
-        page.wait_for_timeout(500)
-        pinned = page.evaluate("() => document.getElementById('preview').classList.contains('show')")
-        page.mouse.move(30, 700)
-        page.wait_for_timeout(350)
-        still = page.evaluate("() => document.getElementById('preview').classList.contains('show')")
-        check("单击药丸打开并固定预览（移开鼠标不消失）", pinned and still,
-              "打开=%s 移开后=%s" % (pinned, still))
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(250)
-        check("Esc 收起固定预览",
-              page.evaluate("() => !document.getElementById('preview').classList.contains('show')"))
-
-        # ⑥ 圆太小（sr≈20px）不挂药丸
-        z_small = 20.0 / max(tgt["r"], 1e-6)
-        center_on(tgt, z_small)
-        small_jobs = page.evaluate("() => window.KG.renderer.linkJobs || []")
-        check("靶子圆小于 44px 时它自己不再挂药丸",
-              not any(x["t"] == tgt["id"] for x in small_jobs),
-              "z=%.2f 该节点药丸=%d（一屏其它大圆可能有药丸，属正常）"
-              % (z_small, sum(1 for x in small_jobs if x["t"] == tgt["id"])))
+        # ④ 药丸层必须真的没了（防止有人把 pills 改回来）
+        gone = page.evaluate("""() => {
+            const R = window.KG.renderer;
+            return {jobs: typeof R.linkJobs, at: typeof R.linkAt,
+                    links: window.KG.state().links};
+        }""")
+        check("药丸层已删除（无 linkJobs / linkAt / stats.links）",
+              gone["jobs"] == "undefined" and gone["at"] == "undefined"
+              and gone["links"] is None,
+              str(gone))
 
         page.evaluate("() => window.KG.renderer.resetView()")
         page.wait_for_timeout(700)
