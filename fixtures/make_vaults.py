@@ -197,6 +197,24 @@ def fx_remap_dup(base: str) -> None:
     w(os.path.join(base, "config.yaml"), scope_file_config())
 
 
+def fx_edge_storm(base: str) -> None:
+    """重量级链接库：500 篇、每篇 12 条出站链接 → **6000 条**语义边（阶段 2.2 的性能靶子）。
+
+    作者的库只有 97 条边；别人的库常见 1~3 万条。上一版每帧逐条边 2 次 stroke（跨域
+    还各建一个渐变对象），6000 条就是每帧 1.2 万次 stroke —— 拖拽/滚轮会掉到个位数 fps。
+    每篇 1 个 h1 + 2 个 h2，节点量约 2000，避免标题数掩盖「边」本身的成本。
+    """
+    storm = os.path.join(base, "vault", "Notes")
+    offs = (1, 7, 13, 29, 59, 97, 157, 251, 331, 421, 479, 499)
+    for i in range(1, 501):
+        targets = [(i - 1 + off) % 500 + 1 for off in offs]
+        lines = ["- 参见 [[Note %03d]]" % t for t in targets]
+        w(os.path.join(storm, "Note %03d.md" % i),
+          "# Note %03d\n\n## 内容\n\n这一篇用来压低「每帧逐条画边」的成本。\n\n"
+          "## 关联\n\n%s\n" % (i, "\n".join(lines)))
+    w(os.path.join(base, "config.yaml"), inline_config())
+
+
 def fx_tiny(base: str) -> None:
     """1 篇笔记，直接放在 vault 根（没有文件夹）—— 退化规模 + 根笔记。"""
     w(os.path.join(base, "vault", "Only.md"), "# 唯一标题\n\n只有这一篇。\n")
@@ -209,6 +227,7 @@ FIXTURES = [
     ("deep-chain", fx_deep_chain),
     ("wide-roots", fx_wide_roots),
     ("hub-dense", fx_hub_dense),
+    ("edge-storm", fx_edge_storm),
     ("heading-zoo", fx_heading_zoo),
     ("plain", fx_plain),
     ("remap-dup", fx_remap_dup),

@@ -302,6 +302,8 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
     // 整个盖掉（packing 布局里圆是相切的）。真正落笔在 drawEdgeMarkers。
     // k: 0 = 圆点，1 = 箭头；ux/uy = 箭头指向的单位向量；s = 尺寸；c/a = 颜色与不透明度
     var markJobs = [];
+    // 冷边的端点标记单独排队（阶段 2.2）：预算不够时先砍它们，焦点边的标记永远保留。
+    var coldMarks = [];
     // 屏外目标 chip：写着屏外端点名字的小标签，钉在连线穿出视口的那一点上。
     // 线由 drawEdges 主循环一路画到屏外，chip 由主循环挂在它穿出视口处。
     // 三处只塞任务，真正落笔在 drawChips —— 屏幕空间的 UI 覆盖层，排在所有世界内容之后。
@@ -765,31 +767,48 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       hotNeighbors.clear();
       stats.focusEdges = 0;
       markJobs.length = 0;
+      coldMarks.length = 0;
       chipJobs.length = 0;
       stats.chips = 0;
+      beginEdges();
       var selN = byId.get(selectedId), hovN = byId.get(hoverId);
       var droppedFocus = [];
       var Hc = contentHeight();
       var drawn = 0;
       ctx.lineCap = 'round';
+      // 第一趟：几何筛（bbox 与内容区是否相交）+ 焦点记账（被筛掉的焦点边仍要计数）；
+      // 同时算出这一帧要不要抽稀。第二趟才真正落笔。
+      var visible = [];
       for (var i = 0; i < SEM.length; i++) {
-        var e = SEM[i];
-        var A = byId.get(e.s), B = byId.get(e.t);
-        if (!A || !B) continue;
-        var sF = isFocusSide(A, selN), tF = isFocusSide(B, selN);
-        var hs = !!(sF || tF);
-        // 真自链接没有方向可画。焦点相关的仍记下来，交 drawFocusEdges 计数兜底，
-        // 免得「面板说有链接、画布没画、计数也没记」。
-        if (A.id === B.id) {
-          if (hs) droppedFocus.push({ e: e, A: A, B: B });
+        var e0 = SEM[i];
+        var A0 = byId.get(e0.s), B0 = byId.get(e0.t);
+        if (!A0 || !B0) continue;
+        var sF0 = isFocusSide(A0, selN), tF0 = isFocusSide(B0, selN);
+        var hs0 = !!(sF0 || tF0);
+        if (A0.id === B0.id) {
+          if (hs0) droppedFocus.push({ e: e0, A: A0, B: B0 });
           continue;
         }
-        var aA = rawAnchor(A), aB = rawAnchor(B);
-        if (Math.max(aA.sx, aB.sx) < -CULL_MARGIN || Math.min(aA.sx, aB.sx) > W + CULL_MARGIN ||
-            Math.max(aA.sy, aB.sy) < -CULL_MARGIN || Math.min(aA.sy, aB.sy) > Hc + CULL_MARGIN) {
-          if (hs) droppedFocus.push({ e: e, A: A, B: B });
+        var aA0 = rawAnchor(A0), aB0 = rawAnchor(B0);
+        if (Math.max(aA0.sx, aB0.sx) < -CULL_MARGIN || Math.min(aA0.sx, aB0.sx) > W + CULL_MARGIN ||
+            Math.max(aA0.sy, aB0.sy) < -CULL_MARGIN || Math.min(aA0.sy, aB0.sy) > Hc + CULL_MARGIN) {
+          if (hs0) droppedFocus.push({ e: e0, A: A0, B: B0 });
           continue;
         }
+        visible.push(i, e0, A0, B0, aA0, aB0, sF0, tF0, hs0);
+      }
+      var nVisible = visible.length / 9;
+      var eBudget = edgeBudget();
+      var stride = nVisible > eBudget ? Math.ceil(nVisible / eBudget) : 1;
+      stats.edgeBudget = eBudget;
+      stats.edgeStride = stride;
+      stats.edgeVisible = nVisible;
+      for (var vi = 0; vi < visible.length; vi += 9) {
+        var e = visible[vi + 1], A = visible[vi + 2], B = visible[vi + 3];
+        var aA = visible[vi + 4], aB = visible[vi + 5];
+        var sF = visible[vi + 6], tF = visible[vi + 7], hs = visible[vi + 8];
+        // 冷边按确定性步长抽稀（序号取模 → 帧间稳定）；焦点/悬停边永不抽
+        if (stride > 1 && !hs && (visible[vi] % stride) !== 0) continue;
         // 邻居环装**真实端点**：环只在它自己被画出来的那一帧出现，于是「线连到 A、
         // 环画在 B」这种错位从根上不可能发生（代价是粗尺度下没有环 —— 但那时线正穿进
         // 父圆内部，位置信息由线承担，见 drawEmphasis 的注释）。
@@ -805,7 +824,7 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
           cb = B._rgb ? mixWhite(B._rgb, EDGE_TINT) : RAW_EDGE_RGB;
         }
         var laid = drawSegment(aA, aB, dim, hot ? RAW_LW + 0.8 : RAW_LW,
-                               ca, cb, tintLight(ca), tintLight(cb), e.type);
+                               ca, cb, tintLight(ca), tintLight(cb), e.type, hot);
         if (laid) drawn++;
         // 屏外焦点端挂名字 chip。线本来就已经画到屏外了，缺的只是「这条线指向谁」
         // 这个名字。chip 钉在线穿出视口的那一点上、沿线方向朝外，读作「顺着这条线出去
@@ -859,15 +878,122 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         if (hotNeighbors.has(lastDrawn[q].id)) vis++;
       }
       stats.focusNeighbors = vis;
+      // 阶段 2.2：标记先按预算截断，再把攒好的线段一次画完。
+      // **焦点边的标记优先**：markJobs 里只有焦点/悬停边，冷边标记在 coldMarks 里，
+      // 预算不够时先砍冷边 —— 「选中一条链接后看得见箭头」是用户要的功能，密度大的库
+      // 上不能因为冷边太多把它挤掉。
+      var mb = markBudget();
+      var room = Math.max(0, mb - markJobs.length);
+      if (coldMarks.length > room) coldMarks.length = room;
+      for (var cj = 0; cj < coldMarks.length; cj++) markJobs.push(coldMarks[cj]);
+      stats.marksBudget = mb;
+      stats.marksCold = coldMarks.length;
+      flushEdges();
+    }
+
+    // ── 边批处理（阶段 2.2）──────────────────────────────────────────────
+    // 契约**不变**：每一处 [[链接]] 仍各画一条线段、端点仍是真实节点自己、任何尺度都在。
+    // 变的只是**落笔次数**：把「同浓度 + 同线型 + 同颜色」的线段攒进一条路径，一趟 stroke
+    // 画完。旧版每帧每条边 2 次 stroke（暗底 + 主色），跨域还要现建一个线性渐变对象 ——
+    // 别人的库常见 1~3 万条链接，于是每帧 2~6 万次 stroke + 同等数量的渐变对象，
+    // 拖拽 / 滚轮直接掉到 1~5 fps。
+    // 跨域线从「整条渐变」改成**两段半色**（中点到两端各用自己的学科色）：1px 线宽下
+    // 肉眼几乎无差，但这样它也能进批（渐变坐标逐条不同，根本无法合并路径）。
+    var segBuckets = new Map();
+    var segList = [];
+
+    function beginEdges() {
+      segBuckets.clear();
+      segList.length = 0;
+    }
+
+    // styleFactory 只在**新建桶**时调用一次 —— 每条边都建一个样式对象就失去批的意义了。
+    function queueLine(key, styleFactory, x1, y1, x2, y2) {
+      var b = segBuckets.get(key);
+      if (!b) {
+        b = { style: styleFactory(), segs: [] };
+        segBuckets.set(key, b);
+        segList.push(b);
+      }
+      b.segs.push(x1, y1, x2, y2);
+    }
+
+    function flushEdges() {
+      for (var i = 0; i < segList.length; i++) {
+        var b = segList[i], st = b.style, s = b.segs;
+        ctx.globalAlpha = st.alpha;
+        ctx.strokeStyle = st.color;
+        ctx.lineWidth = st.lw;
+        ctx.setLineDash(st.dash || []);
+        ctx.beginPath();
+        for (var k = 0; k < s.length; k += 4) {
+          ctx.moveTo(s[k], s[k + 1]);
+          ctx.lineTo(s[k + 2], s[k + 3]);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      stats.edgeBatches = segList.length;
+    }
+
+    // 端点标记预算：边本身可以批，标记不行（方向各异）；密集的库上一帧几千次 fill 同样
+    // 会拖垮帧率。按内容区面积给上限（1440×900 → 约 970 个），焦点边的标记不参与这个
+    // 预算（先保「选中后看得见箭头」）。
+    function markBudget() {
+      var r = contentRect();
+      var area = Math.max(1, (r.x1 - r.x0) * (r.y1 - r.y0));
+      return clamp(Math.floor(area / 1200), 200, 3000);
+    }
+
+    // 线段裁到内容区（外扩 CULL_MARGIN）。深缩放时端点的**屏幕坐标**能到几万像素
+    // （世界坐标差 × zoom），直接塞进 canvas 路径会让光栅化在视口外反复裁剪 ——
+    // 实测 edge-storm 在 z≈4 时 2700 条这样的长线就是每帧几百 ms。裁完两端都落在
+    // 视口附近，光栅化只在可见的那一段上做。返回 null 表示整段在视口外。
+    function clipToScreen(x1, y1, x2, y2) {
+      var Hc = contentHeight();
+      var xmin = -CULL_MARGIN, xmax = W + CULL_MARGIN;
+      var ymin = -CULL_MARGIN, ymax = Hc + CULL_MARGIN;
+      var t0 = 0, t1 = 1;
+      var dx = x2 - x1, dy = y2 - y1;
+      var p = [-dx, dx, -dy, dy];
+      var q = [x1 - xmin, xmax - x1, y1 - ymin, ymax - y1];
+      for (var i = 0; i < 4; i++) {
+        if (Math.abs(p[i]) < 1e-12) {
+          if (q[i] < 0) return null;
+          continue;
+        }
+        var r = q[i] / p[i];
+        if (p[i] < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+        else { if (r < t0) return null; if (r < t1) t1 = r; }
+      }
+      return [x1 + t0 * dx, y1 + t0 * dy, x1 + t1 * dx, y1 + t1 * dy];
+    }
+
+    function inScreen(x, y, margin) {
+      var Hc = contentHeight();
+      var m = margin == null ? CULL_MARGIN : margin;
+      return x >= -m && x <= W + m && y >= -m && y <= Hc + m;
+    }
+
+    // 可见边预算（阶段 2.2）：极端密集的库（6000+ 条边在 home 全画）即使批处理也过不了
+    // 60fps 预算；而且一次画 6000 条 1px 细线，屏幕上也只是一张白网 —— 信息量并没有增加。
+    // 所以按「屏幕面积 / 600px²」给一个可见条数上限，超出的冷边按**确定性步长**抽稀
+    // （用边在 SEM 里的序号取模，帧间完全稳定，不会闪）；焦点/悬停边永不抽稀。
+    // 放大后可见条数自己会降下来，步长自动回到 1 —— 那时一条不少。
+    function edgeBudget() {
+      var r = contentRect();
+      var area = Math.max(1, (r.x1 - r.x0) * (r.y1 - r.y0));
+      return clamp(Math.floor(area / 600), 1200, 12000);
     }
 
     // 一条链接线段。alpha 与线宽都由调用方给死（不随缩放变）；**恒为直线**（端点是
     // 真实节点自己，同一父圆内部的多条线天然散在不同位置，不需要控制点偏移）。
     // ca / cb = 源/目标端的学科色（已提亮）；ma / mb = 两端端点标记的颜色。
-    // 跨学科链接用 ca→cb 的线性渐变，同色则纯色。
+    // 跨学科链接以前用 ca→cb 的线性渐变，现在拆成两段半色（见上面的批处理注释）。
     // 返回是否真的落了笔 —— 两圆贴死时屏幕上没有可见长度，硬画会得到一条方向反掉的
     // 短线段，比不画更乱。
-    function drawSegment(aA, aB, dim, lw, ca, cb, ma, mb, type) {
+    function drawSegment(aA, aB, dim, lw, ca, cb, ma, mb, type, hot) {
       var x1 = aA.sx, y1 = aA.sy, x2 = aB.sx, y2 = aB.sy;
       var dx = x2 - x1, dy = y2 - y1;
       var dl = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -878,40 +1004,39 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       var gx = ex2 - ex1, gy = ey2 - ey1;
       var glen = Math.sqrt(gx * gx + gy * gy);
       if (glen < 0.5) return false;
+      // 裁到视口附近再进路径（见 clipToScreen 注释）：深缩放下不裁的话坐标能到几万 px
+      var cl = clipToScreen(ex1, ey1, ex2, ey2);
+      if (!cl) return true;
+      var cx1 = cl[0], cy1 = cl[1], cx2 = cl[2], cy2 = cl[3];
 
       var a = clamp(dim, 0, 1);
-      var dash = type === 'contrast' ? [5, 4] : [];
-      // ① 暗底描边：让亮色细线压在同色亮圆上仍然读得出来（只在外侧多 1.8px，
-      //    视觉上像一层薄影，不会把线加粗）。压暗/焦点模式下跟着一起变淡。
-      ctx.globalAlpha = a * 0.28;
-      ctx.strokeStyle = 'rgba(0,0,0,1)';
-      ctx.lineWidth = lw + 1.8;
-      ctx.setLineDash(dash);
-      ctx.beginPath();
-      ctx.moveTo(ex1, ey1);
-      ctx.lineTo(ex2, ey2);
-      ctx.stroke();
-      // ② 主色线：同色纯色、跨学科两端渐变
+      var dash = type === 'contrast' ? [5, 4] : null;
+      var dashKey = dash ? 'd' : '-';
+      var aq = Math.round(a * 100) / 100;      // 浓度量化：0.07 / 0.45 / 0.75 / 1 各成一桶
+      var lwKey = Math.round(lw * 10) / 10;
+
+      // ① 暗底描边：让亮色细线压在同色亮圆上仍然读得出来（只在外侧多 1.8px）。
+      queueLine('u|' + aq + '|' + lwKey + '|' + dashKey, function () {
+        return { alpha: a * 0.28, lw: lw + 1.8, color: 'rgba(0,0,0,1)', dash: dash };
+      }, cx1, cy1, cx2, cy2);
+
+      // ② 主色线：同色一条；跨色拆两段半色（中点各半），两段都能进批。
       var same = ca[0] === cb[0] && ca[1] === cb[1] && ca[2] === cb[2];
-      var stroke;
+      var keyA = ca[0] + ',' + ca[1] + ',' + ca[2];
       if (same) {
-        stroke = rgba(ca, 1);
+        queueLine('m|' + aq + '|' + lwKey + '|' + dashKey + '|' + keyA, function () {
+          return { alpha: a, lw: lw, color: rgba(ca, 1), dash: dash };
+        }, cx1, cy1, cx2, cy2);
       } else {
-        var grd = ctx.createLinearGradient(ex1, ey1, ex2, ey2);
-        grd.addColorStop(0, rgba(ca, 1));
-        grd.addColorStop(1, rgba(cb, 1));
-        stroke = grd;
+        var mx = (cx1 + cx2) / 2, my = (cy1 + cy2) / 2;
+        var keyB = cb[0] + ',' + cb[1] + ',' + cb[2];
+        queueLine('m|' + aq + '|' + lwKey + '|' + dashKey + '|' + keyA, function () {
+          return { alpha: a, lw: lw, color: rgba(ca, 1), dash: dash };
+        }, cx1, cy1, mx, my);
+        queueLine('m|' + aq + '|' + lwKey + '|' + dashKey + '|' + keyB, function () {
+          return { alpha: a, lw: lw, color: rgba(cb, 1), dash: dash };
+        }, mx, my, cx2, cy2);
       }
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = lw;
-      ctx.setLineDash(dash);
-      ctx.beginPath();
-      ctx.moveTo(ex1, ey1);
-      ctx.lineTo(ex2, ey2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
 
       // 标记门槛很小：端点是真实节点，粗尺度下大量线只有几 px，门槛大了会让它们全都
       // 没箭头，违背「细线箭头不随缩放消失」。
@@ -930,15 +1055,18 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       // 字段说明），两端都只画点。id 是标记**附着的节点**：就是真实端点自己
       // （锚点不上移），自动化验证量的是屏幕上那个圆的几何。
       // 颜色：目标端用 mb，源端用 ma —— 跨学科时两端各带自己的学科色。
+      // 2026-10-24 阶段 2.2：标记**照常排队**（自动化验的是 markJobs 的几何，不是像素），
+      // 但落笔时跳过屏外端点 —— 深缩放时端点可能在几万像素外，画了也看不见，却要付一次 fill。
+      var q2 = hot ? markJobs : coldMarks;
       if (type === 'derives' || type === 'prerequisite') {
-        markJobs.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id,
-                        s: s, c: mb, a: a });
+        q2.push({ k: 1, x: ex2, y: ey2, ux: ux, uy: uy, id: aB.node.id,
+                  s: s, c: mb, a: a });
       } else {
-        markJobs.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id,
-                        s: dot, c: mb, a: a });
+        q2.push({ k: 0, x: ex2, y: ey2, ux: 0, uy: 0, id: aB.node.id,
+                  s: dot, c: mb, a: a });
       }
-      markJobs.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id,
-                      s: dot, c: ma, a: a });
+      q2.push({ k: 0, x: ex1, y: ey1, ux: 0, uy: 0, id: aA.node.id,
+                s: dot, c: ma, a: a });
       return true;
     }
 
@@ -950,6 +1078,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       if (!markJobs.length) return;
       for (var i = 0; i < markJobs.length; i++) {
         var j = markJobs[i];
+        // 阶段 2.2：屏外的标记不落笔（深缩放时端点常在几万像素外）。job 仍然照常排队 ——
+        // 自动化验的是「这个端点有没有被安排标记」，不是像素。
+        if (!inScreen(j.x, j.y)) continue;
         ctx.globalAlpha = j.a;
         ctx.fillStyle = rgba(j.c, 1);
         ctx.beginPath();
