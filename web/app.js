@@ -32,6 +32,33 @@
   const NODE = new Map(NODES.map((n) => [n.id, n]));
   const EDGES = DATA.edges;
 
+  // 阶段 3.4：payload 列式化（整数引用）——启动时**一次**展开回旧形状，
+  // 之后所有读 payload 的代码一行不用改。（构建期 python 侧 kg/codec.py 是同一个格式。）
+  (function decodePayload() {
+    const meta = DATA.meta || {};
+    if (meta.codec !== 'idx1') return;         // 旧 payload / 未编码：原样通过
+    const ids = NODES.map((n) => n.id);
+    const domains = (meta.domains || []).map((d) => d.name);
+    const types = meta.edge_types || [];
+    const unref = (v) => (typeof v === 'number' ? (v >= 0 ? ids[v] : null) : v);
+    for (const n of NODES) {
+      if ('parent' in n) n.parent = unref(n.parent);
+      if ('note' in n) n.note = unref(n.note);
+      if (typeof n.domain === 'number') n.domain = domains[n.domain] || '';
+      for (const l of (n.links || [])) if ('t' in l) l.t = unref(l.t);
+    }
+    for (const e of EDGES) {
+      e.s = unref(e.s);
+      e.t = unref(e.t);
+      if (typeof e.type === 'number') e.type = types[e.type] || '';
+    }
+    for (const h of (DATA.heading_links || [])) {
+      for (const k of ['source', 'from_heading', 'heading', 'note']) {
+        if (k in h) h[k] = unref(h[k]);
+      }
+    }
+  }());
+
   const domainColor = (d) => (THEME.domains && THEME.domains[d]) || THEME.fallback || '#8B949E';
   const TYPE_LABEL = { prerequisite: '前置', derives: '引用', contrast: '并列', contains: '包含' };
   const TYPE_HINT = {

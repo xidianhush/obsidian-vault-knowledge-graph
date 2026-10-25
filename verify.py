@@ -61,6 +61,9 @@ def run(cfg, payload_path=None):
         raise CheckFailure(f"找不到 {payload_path}，先跑 python build.py build")
     with open(payload_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
+    # 阶段 3.4：payload 是列式化（整数引用）的——先展开回旧形状，下面所有断言零改动。
+    from kg import codec
+    codec.decode(data)
 
     meta = data["meta"]
     nodes = {n["id"]: n for n in data["nodes"]}

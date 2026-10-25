@@ -57,6 +57,11 @@ def _run(args, env=None, timeout=900):
 def payload_stats(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as fh:
         d = json.load(fh)
+    # 阶段 3.4：payload 是列式化的（edge.type 是下标）——先展开再统计，
+    # 否则 `type == "contains"` 永远为假，所有边都被算成语义边（sweep 会集体 MISMATCH）。
+    sys.path.insert(0, KG)
+    from kg import codec
+    codec.decode(d)
     meta = d["meta"]
     contains = sum(1 for e in d["edges"] if e["type"] == "contains")
     return {

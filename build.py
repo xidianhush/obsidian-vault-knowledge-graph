@@ -35,6 +35,7 @@ import yaml
 from kg import candidates as cand_mod
 from kg import config as config_mod
 from kg import emit, graph, layout, palette as palette_mod, parse, scan
+from kg import codec
 
 
 def _bar(label, count, total, width=24):
@@ -245,6 +246,9 @@ def cmd_suggest(cfg, args):
 
 def cmd_build(cfg, args):
     payload, builder = build_payload(cfg)
+    # 阶段 3.4：列式化（整数引用）——只改传输形状，不改语义。解码在 verify.py 与
+    # web/app.js 的启动阶段完成，读 payload 的代码一行不用改。
+    codec.encode(payload)
     json_path = emit.write_json(cfg, payload)
     html_path = emit.build_html(cfg, payload)
     meta = payload["meta"]

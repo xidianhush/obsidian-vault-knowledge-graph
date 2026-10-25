@@ -272,7 +272,7 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
    图例面板 ≤ 半屏），并把 `selected` 模式用例改成「先把选中的圆放大再验」
    （<28px 的圆按设计不挂标签，wide-roots 上点中小圆会假红）。
 
-### 阶段 3：规模上限落地 🟡 进行中（3.1 ✅ / 3.2 ✅ / 3.3 ✅ / 3.4 ⬜）
+### 阶段 3：规模上限落地 ✅ 已完成（3.1 / 3.2 / 3.3 / 3.4）
 3.1 ✅ **预览预算（2026-10-25）**：契约（预览是整篇笔记）**默认不变**，但给总预算兜底。
    ① `preview.total_chars_budget`（默认 **6M 字符**）：按笔记数平分到每篇，超了在**行边界**
    截断并带标记「…（预览已按预算截断）」—— 围栏代码块被切到时自动补一个闭合围栏；
@@ -307,7 +307,18 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
    都退化成「指向整篇笔记」。换成真索引后它们正确落到**标题节点**（作者库 60 条），
    verify 新增断言守住「预览里指向标题的链接，其 note 指向真实笔记节点」。
    注：作者库构建耗时看不出差别（3.31 → 3.41 s，被 markdown 渲染压着；收益要到 2 万节点才显形）。
-3.4 payload 列式化（现在节点字段 0.9~1.3 KB，中文 id/path/title 三重冗余；实测边 366 B/条）
+3.4 ✅ **payload 列式化（2026-10-25）**：`kg/codec.py` 的 `idx1` 编码 —— 把「字符串引用」
+   换成「数组下标」，**不改任何语义**：
+   `node.parent` / `node.note` / `edge.s` / `edge.t` / `heading_links.*` / `links[].t`
+   → nodes 下标（-1 为空）；`node.domain` → `meta.domains` 下标；`edge.type` → `meta.edge_types` 下标。
+   解码方在启动时**一次原地展开回旧形状**（`verify.py`、`fixtures/run_sweep.py`、`web/app.js`），
+   所有既有读 payload 的代码一行没改；没有 `meta.codec` 的旧 payload 原样通过（向后兼容）。
+   **实测（作者库 private）**：`graph.json` 5836 → **4196 KB（-28%）**，单文件 HTML
+   6338 → **4699 KB（-26%）**；`parent` 398→12 KB、`note` 238→9 KB、边 1322→399 KB、
+   `domain` 61→3 KB。public 同步：4217 KB / 4751 KB。
+   验证：verify **138 ok / 0 FAIL（69+69）**、browser **147/146 不变**、11 个 fixture 全量
+   浏览器回归（`--browser`）全绿；`run_sweep` 的 canary 统计也接上了 decode（否则 edge.type
+   是下标，「contains」永远匹配不到 → 所有边被算成语义边，sweep 集体 MISMATCH）。
 
 ### 阶段 4：Obsidian 插件 ⬜
 抽 `GraphCore`（payload + canvas，无宿主依赖）+ 浏览器适配层 + Obsidian `ItemView` 适配层，
@@ -386,7 +397,7 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 | `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **147 ok / 0 FAIL / 0 skip** | |
 | `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **146 ok / 0 FAIL / 1 skip** | |
 | 两份浏览器 ok 合计 | 265 | 265 | **293** | |
-| 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB | **6324 / 6358 KB**（2.2 的批处理代码） | |
+| 单文件 | 6277 KB / 6303 KB | 6277 / 6303 KB | **4699 / 4751 KB**（3.4 列式化后；此前 6338 / 6386） | |
 | 空闲 fps | 63 | 未复测 | **63**（2.2 后复测） | |
 | 20 格滚轮 | private 1654 ms / public 1644 ms | 未复测 | **private 1146 ms**（2026-10-25 同机复测；20 次 Playwright 滚轮含协议开销） | |
 | `draw()` 单帧 | — | — | **private 1.1 ms**（home）/ 2.3 ms（深缩放） | |
@@ -396,17 +407,17 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 | fixture | 构建 | verify ok / FAIL | browser | HTML KB | depth | 灰节点占比 | 20 格滚轮 |
 |---|---|---|---|---|---|---|---|
-| tiny | ok | **69 / 0** | **94 / 0 / 25 skip** | 776 | 2 | — | — |
-| shallow | ok | **69 / 0** | **79 / 0 / 23 skip** | 784 | 2 | — | — |
-| deep-chain | ok | **69 / 0** | **98 / 0 / 23 skip** | 791 | 12 | — | — |
-| ultra-deep | ok | **69 / 0** | **99 / 0 / 22 skip** | 862 | **32** | — | — |
-| wide-roots | ok | **69 / 0** | **101 / 0 / 22 skip** | 958 | 3 | **0 / 30** | — |
-| hub-dense | ok | **69 / 0** | **136 / 0 / 8 skip** | 1063 | 4 | — | — |
-| edge-storm | ok | **69 / 0** | **133 / 0 / 12 skip** | 3542 | 4 | — | **2.6 ms/帧**（stride 2） |
-| heading-zoo | ok | **69 / 0** | **100 / 0 / 21 skip** | 789 | 8 | — | — |
-| plain | ok | **69 / 0** | **77 / 0 / 24 skip** | 781 | 2 | — | — |
-| remap-dup | ok | **69 / 0** | **98 / 0 / 23 skip** | 779 | 3 | — | — |
-| long-notes | ok | **69 / 0** | **98 / 0 / 23 skip** | 838 | 4 | — | — |
+| tiny | ok | **69 / 0** | **94 / 0 / 25 skip** | 796 | 2 | — | — |
+| shallow | ok | **69 / 0** | **79 / 0 / 23 skip** | 804 | 2 | — | — |
+| deep-chain | ok | **69 / 0** | **98 / 0 / 23 skip** | 809 | 12 | — | — |
+| ultra-deep | ok | **69 / 0** | **99 / 0 / 22 skip** | 843 | **32** | — | — |
+| wide-roots | ok | **69 / 0** | **101 / 0 / 22 skip** | 954 | 3 | **0 / 30** | — |
+| hub-dense | ok | **69 / 0** | **136 / 0 / 8 skip** | 1042 | 4 | — | — |
+| edge-storm | ok | **69 / 0** | **133 / 0 / 12 skip** | 3114 | 4 | — | **2.6 ms/帧**（stride 2） |
+| heading-zoo | ok | **69 / 0** | **100 / 0 / 21 skip** | 809 | 8 | — | — |
+| plain | ok | **69 / 0** | **77 / 0 / 24 skip** | 801 | 2 | — | — |
+| remap-dup | ok | **69 / 0** | **98 / 0 / 23 skip** | 799 | 3 | — | — |
+| long-notes | ok | **69 / 0** | **98 / 0 / 23 skip** | 836 | 4 | — | — |
 
 > 2026-10-25 阶段 3.2 之后：**11 个 fixture**（新增 `ultra-deep`），verify 侧 11×68 = **748 ok / 0 FAIL**，
 > 浏览器列 **全部 0 FAIL**。`long-notes` 是为预览预算新增的（小预算强制截断）；`ultra-deep`
@@ -560,3 +571,4 @@ JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这
 | 2026-10-25 | 3.1 | 预览预算：`preview.total_chars_budget`（默认 6M，按笔记数平分）+ `max_note_chars` 真接上 + 行边界/围栏安全截断；新增 fixture `long-notes`；verify 64→67 | `feat(preview): 阶段 3.1`（见 `git log`） |
 | 2026-10-25 | 3.2 | `r` 落盘钳到 ≥1e-4（防 ZeroDivisionError）+ 坐标精度随最小半径自适应（3→5~9 位）+ verify 几何断言扣量化误差；新增 fixture `ultra-deep`（30 层，32 个深度）；作者库产物 A/B 证明逐位不变；verify 67→68 | `fix(layout): 阶段 3.2`（见 `git log`） |
 | 2026-10-25 | 3.3 | `_heading_id` 用分组索引（20k 节点实测 2185×）+ `resolve` 后缀索引（2005×）；顺手修「预览锚点链接恒退化成指向整篇笔记」的隐形 bug（作者库 60 条链接）；verify 68→69 | `perf(index): 阶段 3.3`（见 `git log`） |
+| 2026-10-25 | 3.4 | payload `idx1` 列式化（字符串引用 → 数组下标 + 域/类型字典）；作者库 graph.json -28%（5836→4196 KB）、单文件 -26%（6338→4699 KB）；解码在 verify/sweep/app.js 启动时一次展开 | `perf(payload): 阶段 3.4`（见 `git log`） |
