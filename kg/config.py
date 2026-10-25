@@ -87,6 +87,11 @@ DEFAULTS: dict = {
     "preview": {
         "enabled": True,
         "max_note_chars": 0,   # 0 = 不截断（预览是整篇笔记，用户口径）
+        # 2026-10-25 阶段 3.1：**全部笔记的预览总预算**（字符）。0 = 不限制。
+        # 预览是 payload 里最大的一块（作者库实测占节点字段的 48%：114 篇 1.6 MB），
+        # 20 万字的库会直接把单文件撑爆 20 MB 上限。默认 6M 字符：
+        # 作者库 1.6M 远低于它 → **产物逐位不变**；大库按笔记数平分，超了就在行边界截断。
+        "total_chars_budget": 6000000,
     },
     "theme": {"domains": {}, "fallback": "#8B949E",
               "raw_edge": "#E6EDF3", "edge_color": "domain", "edge_tint": 0.52,
@@ -159,6 +164,9 @@ def _validate(cfg: dict):
     mc = pv.get("max_note_chars", 0)
     if not isinstance(mc, int) or isinstance(mc, bool) or mc < 0:
         _fail(f"preview.max_note_chars 必须是 ≥0 的整数（0 = 整篇不截断），收到 {mc!r}")
+    tb = pv.get("total_chars_budget", 6000000)
+    if not isinstance(tb, int) or isinstance(tb, bool) or tb < 0:
+        _fail(f"preview.total_chars_budget 必须是 ≥0 的整数（0 = 不限制），收到 {tb!r}")
     lcfg = cfg["layout"]
     if not isinstance(lcfg.get("leaf_radius"), (int, float)) or lcfg["leaf_radius"] <= 0:
         _fail("layout.leaf_radius 必须是正数（退化子树与孤点的兜底半径）")

@@ -272,10 +272,21 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
    图例面板 ≤ 半屏），并把 `selected` 模式用例改成「先把选中的圆放大再验」
    （<28px 的圆按设计不挂标签，wide-roots 上点中小圆会假红）。
 
-### 阶段 3：规模上限落地 ⬜
-preview 真接 `max_note_chars` + 笔记间预算分摊 + 分块懒解析；payload 列式化（现在节点字段
-0.9~1.3 KB，中文 id/path/title 三重冗余）；`r` 落盘钳到 ≥1e-4（`kg/layout.py:395` 现在 round 4 位，
-30 层深链会落成 0.0 → `verify.py:229` ZeroDivisionError）；`_heading_id`/`resolve` 的全表扫改成按 note 分组索引。
+### 阶段 3：规模上限落地 🟡 进行中（3.1 ✅ / 3.2~3.4 ⬜）
+3.1 ✅ **预览预算（2026-10-25）**：契约（预览是整篇笔记）**默认不变**，但给总预算兜底。
+   ① `preview.total_chars_budget`（默认 **6M 字符**）：按笔记数平分到每篇，超了在**行边界**
+   截断并带标记「…（预览已按预算截断）」—— 围栏代码块被切到时自动补一个闭合围栏；
+   ② `preview.max_note_chars` 终于真接上了（配置早就有，代码从没用过）；
+   ③ 落盘 `link_stats.preview_limit / preview_truncated`，verify 新增 3 条断言
+   （总字符 ≤ 预算+余量、limit 落盘值一致、截断标记数 == 真超限笔记数）。
+   **量化依据**：作者库 payload 里 preview 占节点字段 **48%**（114 篇 1.6 MB，平均 10.5k 字符）；
+   作者库 1.6M < 6M → **不触发截断**（产物只有 `link_stats` 多了两个键，预览 HTML 逐字不变）。
+   新 fixture `long-notes`（8 篇 × 3000 字符 + 预算压到 12000）实测：总预览 10263 ≤ 12000、
+   8/8 触发截断、围栏 `<pre>/</pre>` 配平；浏览器 **98 ok / 0 FAIL / 23 skip**。
+   作者库 `verify` **67 ok / 0 FAIL**（64+3）、browser **147/146** 不变。
+3.2 `r` 落盘钳到 ≥1e-4（`kg/layout.py` 现在 round 4 位，30 层深链会落成 0.0 → `verify.py:229` ZeroDivisionError）
+3.3 `_heading_id`/`resolve` 的全表扫改成按 note 分组索引
+3.4 payload 列式化（现在节点字段 0.9~1.3 KB，中文 id/path/title 三重冗余；实测边 366 B/条）
 
 ### 阶段 4：Obsidian 插件 ⬜
 抽 `GraphCore`（payload + canvas，无宿主依赖）+ 浏览器适配层 + Obsidian `ItemView` 适配层，
@@ -350,7 +361,7 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 | 项 | 基线（2026-10-24 15:12） | 阶段 0 后（0.3 实测） | 阶段 1 后（1.2 实测） | 阶段 2 后 |
 |---|---|---|---|---|
-| `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **128 ok / 0 FAIL（64+64）** | |
+| `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **134 ok / 0 FAIL（67+67）**（3.1 的预览预算断言） | |
 | `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **147 ok / 0 FAIL / 0 skip** | |
 | `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **146 ok / 0 FAIL / 1 skip** | |
 | 两份浏览器 ok 合计 | 265 | 265 | **293** | |
@@ -364,18 +375,20 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 | fixture | 构建 | verify ok / FAIL | browser | HTML KB | depth | 灰节点占比 | 20 格滚轮 |
 |---|---|---|---|---|---|---|---|
-| tiny | ok | **64 / 0** | **94 / 0 / 25 skip** | 776 | 2 | — | — |
-| shallow | ok | **64 / 0** | **79 / 0 / 23 skip** | 784 | 2 | — | — |
-| deep-chain | ok | **64 / 0** | **98 / 0 / 23 skip** | 791 | 12 | — | — |
-| wide-roots | ok | **64 / 0** | **101 / 0 / 22 skip** | 958 | 3 | **0 / 30** | — |
-| hub-dense | ok | **64 / 0** | **136 / 0 / 8 skip** | 1063 | 4 | — | — |
-| edge-storm | ok | **64 / 0** | **133 / 0 / 12 skip** | 3542 | 4 | — | **2.6 ms/帧**（stride 2） |
-| heading-zoo | ok | **64 / 0** | **100 / 0 / 21 skip** | 789 | 8 | — | — |
-| plain | ok | **64 / 0** | **77 / 0 / 24 skip** | 781 | 2 | — | — |
-| remap-dup | ok | **64 / 0** | **98 / 0 / 23 skip** | 779 | 3 | — | — |
+| tiny | ok | **67 / 0** | **94 / 0 / 25 skip** | 776 | 2 | — | — |
+| shallow | ok | **67 / 0** | **79 / 0 / 23 skip** | 784 | 2 | — | — |
+| deep-chain | ok | **67 / 0** | **98 / 0 / 23 skip** | 791 | 12 | — | — |
+| wide-roots | ok | **67 / 0** | **101 / 0 / 22 skip** | 958 | 3 | **0 / 30** | — |
+| hub-dense | ok | **67 / 0** | **136 / 0 / 8 skip** | 1063 | 4 | — | — |
+| edge-storm | ok | **67 / 0** | **133 / 0 / 12 skip** | 3542 | 4 | — | **2.6 ms/帧**（stride 2） |
+| heading-zoo | ok | **67 / 0** | **100 / 0 / 21 skip** | 789 | 8 | — | — |
+| plain | ok | **67 / 0** | **77 / 0 / 24 skip** | 781 | 2 | — | — |
+| remap-dup | ok | **67 / 0** | **98 / 0 / 23 skip** | 779 | 3 | — | — |
+| long-notes | ok | **67 / 0** | **98 / 0 / 23 skip** | 838 | 4 | — | — |
 
-> 2026-10-25 阶段 2.4 之后：**9 个 fixture 的浏览器列全部标定完成**（`--browser` 全量跑过一次），
-> verify 侧 9×64 = **576 ok / 0 FAIL**，浏览器列 **全部 0 FAIL**。
+> 2026-10-25 阶段 3.1 之后：**10 个 fixture**（新增 `long-notes`），verify 侧 10×67 = **670 ok / 0 FAIL**，
+> 浏览器列 **全部 0 FAIL**。`long-notes` 是为预览预算新增的：小预算强制截断，验收「截断标记、
+> 围栏配平、总字符不超预算」；浏览器 98 ok / 0 FAIL / 23 skip。
 > `plain` 的 1 条 `[skip]` 已写进 manifest.known_gaps：这个库最深层就是笔记本身，
 > 放大到 ZOOM_HARD 上限仍有 2 个圆覆盖视口 —— 「空视口」这个状态在它上面**不存在**
 > （前景层不参与 wash 的 maxzoom 退场），不是缺陷。
@@ -522,3 +535,4 @@ JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这
 | 2026-10-25 | 2.3 | ghost 与边吃 `filterSet`（过滤后不留残线）+ ghost 只扫目标层（BY_DEPTH）；browser 新增「过滤后画边数 ≤ 两端都保留的边数」；顺带修 sweep `--update-manifest` 会抹掉 browser 标定的 bug | `fix(filter): 阶段 2.3`（见 `git log`） |
 | 2026-10-25 | 2.5 | 搜索 120ms 防抖 + 命中封顶 2000；图例 >12 学科两列（面板 `min(460px,46vw)`）；侧栏/命中列表/搜索框宽度随 vw；browser 新增 8b 段 5 条 | `perf(ui): 阶段 2.5`（见 `git log`） |
 | 2026-10-25 | 2.4 | 深层库 HUD：`#levelbar` 可收缩 + `#pills` 横向滚动（作者库 10 个胶囊本已溢出）；browser 新增「顶栏子元素不越界」；**明确不做树深压缩与虚拟簇节点**（理由见 §4）；9 个库浏览器列全部标定 | `fix(hud): 阶段 2.4`（见 `git log`） |
+| 2026-10-25 | 3.1 | 预览预算：`preview.total_chars_budget`（默认 6M，按笔记数平分）+ `max_note_chars` 真接上 + 行边界/围栏安全截断；新增 fixture `long-notes`；verify 64→67 | `feat(preview): 阶段 3.1`（见 `git log`） |

@@ -387,6 +387,26 @@ def run(cfg, payload_path=None):
         _check(all(previews), f"{len(notes)} 篇笔记都有预览 HTML", failures)
         total = sum(len(p) for p in previews)
         _check(total > 0, f"预览 HTML 总字符 {total}", failures)
+        # 阶段 3.1：预览预算。总预算按笔记数平分，超了在行边界截断并带标记；
+        # 这里守三件事 —— （a）总字符不超过预算（留 5% + 每篇标记文字的余量）；
+        # （b）截断标记与该笔记**源正文超限**一一对应；（c）没触发预算时不许出现标记。
+        budget = int(pv_cfg.get("total_chars_budget") or 0)
+        max_note = int(pv_cfg.get("max_note_chars") or 0)
+        per_note = int(budget / max(1, len(notes))) if budget else 0
+        lims = [x for x in (per_note, max_note) if x > 0]
+        limit = min(lims) if lims else 0
+        limit_stat = int((meta.get("link_stats") or {}).get("preview_limit", 0))
+        trunc_stat = int((meta.get("link_stats") or {}).get("preview_truncated", 0))
+        marker = "…（预览已按预算截断）"
+        trunc_seen = sum(1 for p in previews if marker in p)
+        if budget:
+            _check(total <= int(budget * 1.05) + len(notes) * 60,
+                   f"预览总字符 {total} ≤ 预算 {budget}（+5% 与标记余量）", failures)
+        _check(limit_stat == limit, f"preview_limit 落盘 {limit_stat} = 预期 {limit}", failures)
+        _check(trunc_stat == trunc_seen,
+               f"preview_truncated {trunc_stat} = 带截断标记的预览数 {trunc_seen}", failures)
+        if not limit:
+            _check(trunc_seen == 0, "未启用预览预算时不应出现截断标记", failures)
         # 只查「正文文本」里的残留：代码块里的 `np.array([[1, 2]])` 是内容不是语法
         text_only = [re.sub(r"<(pre|code)\b[^>]*>.*?</\1>", "", p, flags=re.S) for p in previews]
         _check(not any("[[" in p for p in text_only),

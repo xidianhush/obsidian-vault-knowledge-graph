@@ -190,12 +190,27 @@ class GraphBuilder:
         if not (cfg.get("preview") or {}).get("enabled"):
             return
         index = preview_mod.build_attachment_index(cfg["vault"])
+        preview_cfg = cfg.get("preview") or {}
+        # 阶段 3.1：预览预算。预览是 payload 里最大的一块（作者库占节点字段 48%），
+        # 不设上限时一篇 2 万字的笔记就能单独贡献几百 KB。规则：
+        #   per_note = total_chars_budget / 笔记数（总预算按笔记数平分）
+        #   limit    = min(per_note, max_note_chars)（用户显式设的每篇上限更优先）
+        #   0 表示该项不限制；两项都不限 = 整篇（默认总预算 6M，作者库 1.6M 不触发）。
+        total_budget = int(preview_cfg.get("total_chars_budget") or 0)
+        max_note = int(preview_cfg.get("max_note_chars") or 0)
+        per_note = int(total_budget / max(1, len(self.notes))) if total_budget else 0
+        limits = [x for x in (per_note, max_note) if x > 0]
+        limit = min(limits) if limits else 0
+        truncated = 0
         total = 0
         for note in self.notes:
             node = self.nodes.get(note.file.id)
             if node is None:
                 continue
-            html, links, anchors = preview_mod.render(note, cfg, index, base_dir, self.resolve)
+            html, links, anchors = preview_mod.render(
+                note, cfg, index, base_dir, self.resolve, limit_chars=limit)
+            if limit and len(note.body) > limit and "…（预览已按预算截断）" in html:
+                truncated += 1
             node["preview"] = html
             node["links"] = links
             total += len(html)
@@ -206,6 +221,8 @@ class GraphBuilder:
                 if hn is not None:
                     hn["anchor"] = (anchors[i] if i < len(anchors) else "") or ""
         self.stats["preview_chars"] = total
+        self.stats["preview_limit"] = limit
+        self.stats["preview_truncated"] = truncated
         # 2026-10-24（阶段 0.3）：verify 原来断言「预览里必须有 $ 公式」—— 那是把作者库的
         # 内容特征当契约，纯文本库必红。这里给出**源文件里真带公式的笔记数**，让 verify 能
         # 问「有公式的库，公式定界符是否活过管线」，而不是「每个库都必须有公式」。

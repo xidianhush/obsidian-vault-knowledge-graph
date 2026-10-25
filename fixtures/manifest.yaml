@@ -27,7 +27,7 @@ fixtures:
     tests: 退化规模 / 根笔记（depth1 是 note 而不是 folder）
     config: vaults/tiny/config.yaml
     canary: {folders: 0, notes: 1, headings: 1, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 94}
+    expected_ok: {verify: 67, browser: 94}
     # 2026-10-24 阶段 1.4：根笔记模型已修（domain = 笔记自己的 id、depth1 允许是 note、
     # 越界判据改走父链取顶层祖先）—— verify 侧 **0 红**。
     # 2026-10-24 阶段 2：浏览器侧 4 类「用例前提不成立」已改成**显式跳过并计数**
@@ -41,7 +41,7 @@ fixtures:
     tests: 层级带 steps==0 / home_layer 夹取 / 最小规模冒烟
     config: vaults/shallow/config.yaml
     canary: {folders: 1, notes: 15, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 79}
+    expected_ok: {verify: 67, browser: 79}
     known_gaps:
 
   deep-chain:
@@ -50,7 +50,7 @@ fixtures:
     tests: 独子链 / 深度轴拉长 / 顶栏层级胶囊溢出（12 个 pill 在 1440px 下超额）
     config: vaults/deep-chain/config.yaml
     canary: {folders: 10, notes: 10, headings: 10, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 98}
+    expected_ok: {verify: 67, browser: 98}
     known_gaps:
       - "[PILLS] 浏览器侧胶囊数 = max_depth，12 个在 1440px 下会挤压 / 裁切（template.html:86-91）—— 阶段 2.4"
 
@@ -60,7 +60,7 @@ fixtures:
     tests: 根数 ≠ 6 / 最小份额 / 学科色板只有 7 + 单一 fallback / 图例按实际 domain
     config: vaults/wide-roots/config.yaml
     canary: {folders: 30, notes: 150, headings: 150, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 101}
+    expected_ok: {verify: 67, browser: 101}
     # 2026-10-24 阶段 2：浏览器侧的 5 类前提不成立已改成显式跳过并计数
     # （0 条语义边 → 7b/7c/7d；子树在 home 已全展开 / 深度余量不足两层 → 不再要求「露出更多」；
     #  短笔记锚点；图例「关系」一节在 0 链接时由 app.js 隐藏）。现在 92 ok / 0 FAIL / 22 skip。
@@ -73,7 +73,7 @@ fixtures:
     tests: 边绘制预算（每帧逐条画）/ 焦点模式 / 端点标记 / chip 折叠 / 标题级链接
     config: vaults/hub-dense/config.yaml
     canary: {folders: 1, notes: 80, headings: 320, semantic_edges: 335}
-    expected_ok: {verify: 64, browser: 136}
+    expected_ok: {verify: 67, browser: 136}
     known_gaps:
 
   edge-storm:
@@ -82,7 +82,16 @@ fixtures:
     tests: 边批处理与可见面积预算（stride）/ 标记预算与焦点优先 / 深缩放裁剪 / 浏览器性能
     config: vaults/edge-storm/config.yaml
     canary: {folders: 1, notes: 500, headings: 1500, semantic_edges: 6000, max_depth: 4}
-    expected_ok: {verify: 64, browser: 133}
+    expected_ok: {verify: 67, browser: 133}
+    known_gaps: []
+
+  long-notes:
+    title: 超长笔记 + 小预览预算
+    shape: 8 篇 × 约 3000 字符；config 把 `preview.total_chars_budget` 压到 12000 → 每篇上限 1500，**全部触发截断**（其中 1 篇的截断点落在围栏代码块内）
+    tests: 预览预算截断（阶段 3.1）/ 围栏安全截断 / 锚点只覆盖保留部分 / verify 的预算断言
+    config: vaults/long-notes/config.yaml
+    canary: {folders: 1, notes: 8, headings: 24, semantic_edges: 0, max_depth: 4}
+    expected_ok: {verify: 67, browser: 98}
     known_gaps: []
 
   heading-zoo:
@@ -93,7 +102,7 @@ fixtures:
     # max_depth=8 是稠密化后的读数：Offset.md 的 h5/h6 只占「笔记深度 +1 / +2」，
     # 不是 +5 / +6。若谁把 depth 改回标题级别字面值，verify 的 rank 断言会红。
     canary: {folders: 1, notes: 7, headings: 22, semantic_edges: 0, max_depth: 8}
-    expected_ok: {verify: 64, browser: 100}
+    expected_ok: {verify: 67, browser: 100}
     known_gaps:
 
   plain:
@@ -102,7 +111,7 @@ fixtures:
     tests: 「内容特征被当成契约」—— verify 的公式断言、标题锚点覆盖率、browser 3e 的靶子
     config: vaults/plain/config.yaml
     canary: {folders: 1, notes: 10, headings: 0, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 77}
+    expected_ok: {verify: 67, browser: 77}
     known_gaps:
       - "[BROWSER] 3c「放大到极端会空视口」在这个库上不成立：最深层就是笔记本身，前景层不参与 wash 的 maxzoom 退场，放大到 ZOOM_HARD 上限仍有 2 个圆覆盖视口 —— 显式跳过并计数（阶段 2.4）"
 
@@ -112,5 +121,5 @@ fixtures:
     tests: scope_file 工作流 / `as` 落地名 / 同名 stem 解析歧义 / 空目录不进图
     config: vaults/remap-dup/config.yaml
     canary: {folders: 2, notes: 4, headings: 4, semantic_edges: 0}
-    expected_ok: {verify: 64, browser: 98}
+    expected_ok: {verify: 67, browser: 98}
     known_gaps:

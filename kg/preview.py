@@ -107,12 +107,35 @@ def _fence_flags(lines):
     return flags
 
 
-def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, list, list]:
+def _truncate_body(body: str, limit: int) -> str:
+    """把正文截到 `limit` 字符，**在行边界**切，并保证围栏代码块不被切坏。
+
+    为什么不在字符中间硬切：markdown 结构（围栏、表格、链接）都会被切断，
+    python-markdown 可能把后面整段当代码块吞掉。行边界切 + 奇数围栏补一个闭合围栏，
+    是「能不破结构的最小动作」。
+    """
+    if limit <= 0 or len(body) <= limit:
+        return body
+    cut = body.rfind("\n", 0, limit)
+    if cut < limit * 0.6:          # 一整行就超过 limit（超长段落）→ 只能硬切
+        cut = limit
+    head = body[:cut].rstrip()
+    # 围栏计数：奇数说明切在代码块里，补一个闭合围栏
+    fences = sum(1 for line in head.split("\n") if line.lstrip().startswith("```"))
+    tail = "\n\n…（预览已按预算截断）"
+    if fences % 2:
+        tail = "\n```" + tail
+    return head + tail
+
+
+def render(note, cfg: dict, index: dict, base_dir: str, resolve,
+           limit_chars: int = 0) -> tuple[str, list, list]:
     """把一篇笔记渲染成预览片段，返回 (html, links, anchors)。
 
     links：出站链接表 `[{"t": 目标节点 id, "l": 显示文字}, ...]`（去重、只留能解析到
     图上节点的），也给浮层里的链接 span 用。
     anchors：预览 HTML 里各标题的锚点 id（`pv-h0`…，文档序），给「从这一节滚起」用。
+    limit_chars：>0 时正文按它截断（阶段 3.1 的预览预算），锚点/链接只覆盖保留部分。
     """
     by_id = getattr(resolve, "by_id", {})
     links = []
@@ -155,6 +178,9 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve) -> tuple[str, l
 
     body = note.body
     body = COMMENT_RE.sub("", body)
+    # 阶段 3.1：预览预算截断（行边界、围栏安全）。行号不变 → 标题锚点仍然按源行号命中。
+    if limit_chars:
+        body = _truncate_body(body, limit_chars)
     # 顺序很重要：先把**完整**的 ![[...]] 替换掉，再用「少一个右括号」的容错规则收尾。
     # 反过来的话容错规则会把正常图片吃掉一个 ]，651 个图片链接里有 631 个因此退化成
     # 附件文字（2026-10-23 用户截图里的元凶之一）。

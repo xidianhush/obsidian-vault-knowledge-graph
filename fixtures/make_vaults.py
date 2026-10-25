@@ -215,6 +215,41 @@ def fx_edge_storm(base: str) -> None:
     w(os.path.join(base, "config.yaml"), inline_config())
 
 
+def fx_long_notes(base: str) -> None:
+    """超长笔记 + 很小的预览预算 → 验阶段 3.1 的截断路径。
+
+    预览是 payload 里最大的一块（作者库占节点字段 48%），大库不设预算会撑爆 20 MB
+    单文件上限。这个 fixture 把 `preview.total_chars_budget` 压到 12000：
+    8 篇 × 约 3000 字符 → 每篇上限 1500，全部触发截断；
+    其中一篇的截断点落在**围栏代码块里**，验「补一个闭合围栏」不破结构。
+    """
+    notes = os.path.join(base, "vault", "Long")
+    for i in range(1, 9):
+        para = ("这是第 %d 段正文，用来把一篇笔记撑到三千字符以上。" % i) * 40
+        if i == 3:
+            # 故意让代码块盖住截断点：预算 1500 字符左右会切在围栏内部
+            body = "# 长笔记 %d\n\n## 开头\n\n%s\n\n```python\n%s\n```\n\n## 结尾\n\n%s\n" % (
+                i, para[:800], "\n".join("x = %d  # 代码行 %d" % (j, j) for j in range(120)),
+                para[:600])
+        else:
+            body = "# 长笔记 %d\n\n## 开头\n\n%s\n\n## 结尾\n\n%s\n" % (i, para[:1200], para[:600])
+        w(os.path.join(notes, "Long %02d.md" % i), body)
+    cfg = (
+        "# 内联 scope + 很小的预览预算（阶段 3.1 截断路径）\n"
+        "vault: vault\n"
+        "page_title: fixture\n"
+        "preview:\n"
+        "  total_chars_budget: 12000\n"
+        "scopes:\n"
+        "  main:\n"
+        "    include: [\"**\"]\n"
+        "    output:\n"
+        "      json: dist/graph.json\n"
+        "      html: dist/graph.html\n"
+    )
+    w(os.path.join(base, "config.yaml"), cfg)
+
+
 def fx_tiny(base: str) -> None:
     """1 篇笔记，直接放在 vault 根（没有文件夹）—— 退化规模 + 根笔记。"""
     w(os.path.join(base, "vault", "Only.md"), "# 唯一标题\n\n只有这一篇。\n")
@@ -228,6 +263,7 @@ FIXTURES = [
     ("wide-roots", fx_wide_roots),
     ("hub-dense", fx_hub_dense),
     ("edge-storm", fx_edge_storm),
+    ("long-notes", fx_long_notes),
     ("heading-zoo", fx_heading_zoo),
     ("plain", fx_plain),
     ("remap-dup", fx_remap_dup),
