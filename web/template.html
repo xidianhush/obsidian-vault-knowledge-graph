@@ -69,10 +69,18 @@
   option { background: #0d1f24; color: var(--text); }
   #search { width: min(150px, 24vw); }
 
-  #levelbar { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-  #levelbar button { width: 22px; padding: 5px 0; text-align: center; }
+  /* 阶段 2.4：层级胶囊在**深层库**上会挤爆顶栏（10 层在 1440px 下就已经超额，
+     深目录 + h6 能到 16~18 层）。levelbar 允许收缩、pills 横向滚动 —— 宁可让胶囊
+     滚动，也不许把搜索框 / 重置按钮挤出顶栏（那正是 2026-10-20 的老 bug 形态）。 */
+  #levelbar { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+  #pills {
+    display: flex; gap: 3px; min-width: 0;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  }
+  #pills::-webkit-scrollbar { display: none; }
+  #levelbar button { width: 22px; padding: 5px 0; text-align: center; flex: 0 0 auto; }
   .pill {
-    padding: 3px 0; width: 22px; text-align: center;
+    padding: 3px 0; width: 22px; text-align: center; flex: 0 0 auto;
     border-radius: 999px; border: 1px solid rgba(255,255,255,.09);
     background: rgba(255,255,255,.03); color: var(--muted); cursor: pointer; font-size: 12px;
     transition: background .15s ease, border-color .15s ease, color .15s ease;

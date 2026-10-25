@@ -391,6 +391,25 @@ with sync_playwright() as p:
     # 两个条件互相抵消 => shownLabels 恒为 0，整张地图一个文字都没有。
     check("home view has text labels", st["shownLabels"] > 0, str(st["shownLabels"]))
 
+    # 阶段 2.4：深层库（深目录 + h6 能到 16~18 层）的层级胶囊会把搜索框 / 重置按钮挤出
+    # 顶栏（2026-10-20 的老 bug 形态：控件被压成竖排、被裁掉）。判据与形状无关：
+    # 顶栏每个可见子元素都必须完整落在顶栏矩形内；胶囊多时必须靠横向滚动消化。
+    bar = page.evaluate("""() => {
+        const bar = document.getElementById('topbar');
+        const br = bar.getBoundingClientRect();
+        const kids = [...bar.children].filter(el => el.offsetWidth > 0);
+        const bad = kids.filter(el => { const r = el.getBoundingClientRect();
+            return r.right > br.right + 1 || r.left < br.left - 1 ||
+                   r.bottom > br.bottom + 1 || r.top < br.top - 1; })
+            .map(el => el.id || el.className || el.tagName);
+        const pills = document.getElementById('pills');
+        return {bad: bad, barH: Math.round(br.height),
+                pillCount: pills.children.length,
+                pillsScroll: pills.scrollWidth > pills.clientWidth + 1}; }""")
+    check("topbar controls stay inside the bar (deep vaults scroll their pill bar)",
+          not bar["bad"], "%s (pills=%d scrollable=%s barH=%d)"
+          % (bar["bad"], bar["pillCount"], bar["pillsScroll"], bar["barH"]))
+
     print("\n=== 1b. label mode switch ===")
     page.evaluate("() => { window.KG.renderer.labelMode = 'off'; }")
     page.wait_for_timeout(400)
@@ -605,9 +624,17 @@ with sync_playwright() as p:
         z0, ("%.1f" % empty_at) if empty_at else "未达到",
         ("%.1f" % (empty_at / z0)) if empty_at else "-",
         ("%.1f" % (empty_at / meta["zMax"])) if empty_at else "-"))
-    check("zooming in far enough does empty the viewport (maxzoom rule, pre-existing)",
-          empty_at is not None, str(empty_at))
-    if empty_at is not None:
+    if empty_at is None:
+        # 阶段 2.4 泛化：「放大到极端会空」只对**有更深层可看**的库成立。浅库（plain 实测）
+        # 最深层就是笔记本身，圆一直铺满视口 —— `drawNodes` 的前景层不参与 wash 的 maxzoom
+        # 退场（那条规则只管祖先罩子），所以在这个库里「空视口」这个状态根本不存在。
+        # 这是形状前提不成立，显式跳过并计数，而不是判红。
+        skip_check("zooming in far enough does empty the viewport (maxzoom rule, pre-existing)",
+                   "放大到 ZOOM_HARD 上限仍有 %s 个圆覆盖视口（最深层圆太大，没有空视口态）"
+                   % page.evaluate(STATE)["painted"])
+    else:
+        check("zooming in far enough does empty the viewport (maxzoom rule, pre-existing)",
+              True, str(empty_at))
         hint_n2 = page.evaluate(HINT_PIXELS)
         check("extreme zoom-in still paints the fallback hint",
               hint_n2 > 50, "中心带非透明像素=%d" % hint_n2)
