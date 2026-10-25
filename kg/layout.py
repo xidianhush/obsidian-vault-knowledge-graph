@@ -386,13 +386,25 @@ def compute(nodes: dict, cfg: dict, max_depth: int):
             root_radius = max(root_radius, ring + radius[node_id])
 
     cos_a, sin_a = math.cos(start_angle), math.sin(start_angle)
+    # 阶段 3.2：坐标精度**随最小半径自适应**。深链（30 层）的半径能小到 1e-3，
+    # 固定 3 位小数意味着 5e-4 的量化误差 = 半径的 50% —— verify 的「父内含子 /
+    # 兄弟不交」会因此报红（实测 ultra-deep：1 对越界、2 对重叠、1 对非父子重合）。
+    # 只有 min_r < 1e-2 的库才把精度提到 5~9 位：**正常库仍是 3 位、产物逐位不变**。
+    min_r_all = min(radius.values()) if radius else 1.0
+    coord_dec = 3
+    if min_r_all < 1e-2:
+        coord_dec = min(9, 3 + int(math.ceil(-math.log10(min_r_all))) - 1)
     for node_id, node in nodes.items():
         x, y = pos.get(node_id, (0.0, 0.0))
         rx = x * cos_a - y * sin_a
         ry = x * sin_a + y * cos_a
-        node["x"] = round(rx, 3)
-        node["y"] = round(-ry, 3)          # 屏幕坐标系 y 向下
-        node["r"] = round(radius.get(node_id, leaf_radius * scale), 4)
+        node["x"] = round(rx, coord_dec)
+        node["y"] = round(-ry, coord_dec)   # 屏幕坐标系 y 向下
+        # 阶段 3.2：半径**落盘钳到 ≥1e-4**。round(…, 4) 会把极深链（~30 层，r 按几何级数
+        # 收缩）的最内层圆舍成 **0.0** —— 之后 min_px / r 变成 ZeroDivisionError
+        # （verify 的 LOD 断言、渲染器的 zMin/zMax 都会中招）。0.1 毫米级的世界半径没有
+        # 任何几何意义（min_px 那档早就 > 屏幕像素），钳住它不改变任何可视结果。
+        node["r"] = max(round(radius.get(node_id, leaf_radius * scale), 4), 1e-4)
 
     # ── LOD：minzoom = min_px / r ────────────────────────────────────────
     by_depth: dict[int, list[str]] = {}

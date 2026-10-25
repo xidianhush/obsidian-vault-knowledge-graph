@@ -284,7 +284,16 @@ B=内置 JS 管线）；② canvas 在 Obsidian 容器里的尺寸/DPR/主题隔
    新 fixture `long-notes`（8 篇 × 3000 字符 + 预算压到 12000）实测：总预览 10263 ≤ 12000、
    8/8 触发截断、围栏 `<pre>/</pre>` 配平；浏览器 **98 ok / 0 FAIL / 23 skip**。
    作者库 `verify` **67 ok / 0 FAIL**（64+3）、browser **147/146** 不变。
-3.2 `r` 落盘钳到 ≥1e-4（`kg/layout.py` 现在 round 4 位，30 层深链会落成 0.0 → `verify.py:229` ZeroDivisionError）
+3.2 ✅ **半径钳位 + 坐标精度自适应（2026-10-25）**：新 fixture `ultra-deep`（**30 层单链，
+   max_depth=32**）一进来就把两个真问题照出来了：
+   ① `round(r, 4)` 对极深链会把最内层半径舍到 0.0 → `min_px / r` 就是 ZeroDivisionError；
+   现在**落盘钳到 ≥1e-4**，verify 加断言「最小 r ≥ 1e-4」；
+   ② 更隐蔽的是**坐标量化误差**：固定 3 位小数在 r=1e-3 的层上是 50% 误差，几何断言
+   （父内含子 / 兄弟不交 / 父大 1.5 倍 / 非父子重合）直接报 4 条红。修法不是放宽断言，而是
+   **精度跟着最小半径走**：`min_r < 1e-2` 时坐标精度提到 5~9 位（作者库 min_r=0.347 → 仍是
+   3 位，**产物逐位不变**，已用 A/B 验证 hash 相同）；verify 用同一公式复算量化上界 `quant`，
+   几何断言统一扣掉它 —— 量化误差不是布局错误。
+   实测：ultra-deep **68 ok / 0 FAIL**、浏览器 **99 / 0 / 22**；11 个 fixture 全 68 ok。
 3.3 `_heading_id`/`resolve` 的全表扫改成按 note 分组索引
 3.4 payload 列式化（现在节点字段 0.9~1.3 KB，中文 id/path/title 三重冗余；实测边 366 B/条）
 
@@ -361,7 +370,7 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 | 项 | 基线（2026-10-24 15:12） | 阶段 0 后（0.3 实测） | 阶段 1 后（1.2 实测） | 阶段 2 后 |
 |---|---|---|---|---|
-| `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **134 ok / 0 FAIL（67+67）**（3.1 的预览预算断言） | |
+| `verify --scope all` | 110 ok / 0 FAIL（55+55） | 112 ok（56+56） | **136 ok / 0 FAIL（68+68）**（3.1 预览预算 + 3.2 r 钳位断言） | |
 | `browser_check` private | 132 ok / 0 FAIL / 1 warn | 132 ok / 0 FAIL / 1 skip | **147 ok / 0 FAIL / 0 skip** | |
 | `browser_check` public | 133 ok / 0 FAIL / 0 warn | 133 ok / 0 FAIL / 0 skip | **146 ok / 0 FAIL / 1 skip** | |
 | 两份浏览器 ok 合计 | 265 | 265 | **293** | |
@@ -375,20 +384,21 @@ vault 本体生成到 `fixtures/vaults/` 且 gitignore。
 
 | fixture | 构建 | verify ok / FAIL | browser | HTML KB | depth | 灰节点占比 | 20 格滚轮 |
 |---|---|---|---|---|---|---|---|
-| tiny | ok | **67 / 0** | **94 / 0 / 25 skip** | 776 | 2 | — | — |
-| shallow | ok | **67 / 0** | **79 / 0 / 23 skip** | 784 | 2 | — | — |
-| deep-chain | ok | **67 / 0** | **98 / 0 / 23 skip** | 791 | 12 | — | — |
-| wide-roots | ok | **67 / 0** | **101 / 0 / 22 skip** | 958 | 3 | **0 / 30** | — |
-| hub-dense | ok | **67 / 0** | **136 / 0 / 8 skip** | 1063 | 4 | — | — |
-| edge-storm | ok | **67 / 0** | **133 / 0 / 12 skip** | 3542 | 4 | — | **2.6 ms/帧**（stride 2） |
-| heading-zoo | ok | **67 / 0** | **100 / 0 / 21 skip** | 789 | 8 | — | — |
-| plain | ok | **67 / 0** | **77 / 0 / 24 skip** | 781 | 2 | — | — |
-| remap-dup | ok | **67 / 0** | **98 / 0 / 23 skip** | 779 | 3 | — | — |
-| long-notes | ok | **67 / 0** | **98 / 0 / 23 skip** | 838 | 4 | — | — |
+| tiny | ok | **68 / 0** | **94 / 0 / 25 skip** | 776 | 2 | — | — |
+| shallow | ok | **68 / 0** | **79 / 0 / 23 skip** | 784 | 2 | — | — |
+| deep-chain | ok | **68 / 0** | **98 / 0 / 23 skip** | 791 | 12 | — | — |
+| ultra-deep | ok | **68 / 0** | **99 / 0 / 22 skip** | 862 | **32** | — | — |
+| wide-roots | ok | **68 / 0** | **101 / 0 / 22 skip** | 958 | 3 | **0 / 30** | — |
+| hub-dense | ok | **68 / 0** | **136 / 0 / 8 skip** | 1063 | 4 | — | — |
+| edge-storm | ok | **68 / 0** | **133 / 0 / 12 skip** | 3542 | 4 | — | **2.6 ms/帧**（stride 2） |
+| heading-zoo | ok | **68 / 0** | **100 / 0 / 21 skip** | 789 | 8 | — | — |
+| plain | ok | **68 / 0** | **77 / 0 / 24 skip** | 781 | 2 | — | — |
+| remap-dup | ok | **68 / 0** | **98 / 0 / 23 skip** | 779 | 3 | — | — |
+| long-notes | ok | **68 / 0** | **98 / 0 / 23 skip** | 838 | 4 | — | — |
 
-> 2026-10-25 阶段 3.1 之后：**10 个 fixture**（新增 `long-notes`），verify 侧 10×67 = **670 ok / 0 FAIL**，
-> 浏览器列 **全部 0 FAIL**。`long-notes` 是为预览预算新增的：小预算强制截断，验收「截断标记、
-> 围栏配平、总字符不超预算」；浏览器 98 ok / 0 FAIL / 23 skip。
+> 2026-10-25 阶段 3.2 之后：**11 个 fixture**（新增 `ultra-deep`），verify 侧 11×68 = **748 ok / 0 FAIL**，
+> 浏览器列 **全部 0 FAIL**。`long-notes` 是为预览预算新增的（小预算强制截断）；`ultra-deep`
+> 是 30 层单链（半径收缩到 1e-3），专打 r 下溢与坐标量化 —— 它一进来就抓出 4 条真几何错误。
 > `plain` 的 1 条 `[skip]` 已写进 manifest.known_gaps：这个库最深层就是笔记本身，
 > 放大到 ZOOM_HARD 上限仍有 2 个圆覆盖视口 —— 「空视口」这个状态在它上面**不存在**
 > （前景层不参与 wash 的 maxzoom 退场），不是缺陷。
@@ -536,3 +546,4 @@ JS 移植版对同一输入必须产出**逐位相同**的 `x/y/r/enter[]`。这
 | 2026-10-25 | 2.5 | 搜索 120ms 防抖 + 命中封顶 2000；图例 >12 学科两列（面板 `min(460px,46vw)`）；侧栏/命中列表/搜索框宽度随 vw；browser 新增 8b 段 5 条 | `perf(ui): 阶段 2.5`（见 `git log`） |
 | 2026-10-25 | 2.4 | 深层库 HUD：`#levelbar` 可收缩 + `#pills` 横向滚动（作者库 10 个胶囊本已溢出）；browser 新增「顶栏子元素不越界」；**明确不做树深压缩与虚拟簇节点**（理由见 §4）；9 个库浏览器列全部标定 | `fix(hud): 阶段 2.4`（见 `git log`） |
 | 2026-10-25 | 3.1 | 预览预算：`preview.total_chars_budget`（默认 6M，按笔记数平分）+ `max_note_chars` 真接上 + 行边界/围栏安全截断；新增 fixture `long-notes`；verify 64→67 | `feat(preview): 阶段 3.1`（见 `git log`） |
+| 2026-10-25 | 3.2 | `r` 落盘钳到 ≥1e-4（防 ZeroDivisionError）+ 坐标精度随最小半径自适应（3→5~9 位）+ verify 几何断言扣量化误差；新增 fixture `ultra-deep`（30 层，32 个深度）；作者库产物 A/B 证明逐位不变；verify 67→68 | `fix(layout): 阶段 3.2`（见 `git log`） |

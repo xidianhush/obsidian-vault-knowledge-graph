@@ -102,6 +102,21 @@ def fx_deep_chain(base: str) -> None:
     w(os.path.join(base, "config.yaml"), inline_config())
 
 
+def fx_ultra_deep(base: str) -> None:
+    """**30 层**单链目录（阶段 3.2 的 r 下溢靶子）。
+
+    每层一个目录 + 一篇 h1 笔记 → max_depth≈31。半径沿链按几何级数收缩，落盘 `round(…, 4)`
+    会把最内层舍成 **0.0**，随后 `min_px / r` 就是 ZeroDivisionError（verify 的 LOD 断言、
+    渲染器的 zMin/zMax 都会中招）。这个 fixture 专门把那条路走一遍。
+    """
+    path = os.path.join(base, "vault")
+    for level in range(1, 31):
+        path = os.path.join(path, "L%02d" % level)
+        w(os.path.join(path, "Note L%02d.md" % level),
+          "# 第 %02d 层\n\n这一层只有一篇笔记，用来把半径轴压到下溢边缘。\n" % level)
+    w(os.path.join(base, "config.yaml"), inline_config())
+
+
 def fx_wide_roots(base: str) -> None:
     """30 个顶层目录、共 150 篇；最大那个占 60%（90/150）。"""
     vault = os.path.join(base, "vault")
@@ -260,6 +275,7 @@ FIXTURES = [
     ("tiny", fx_tiny),
     ("shallow", fx_shallow),
     ("deep-chain", fx_deep_chain),
+    ("ultra-deep", fx_ultra_deep),
     ("wide-roots", fx_wide_roots),
     ("hub-dense", fx_hub_dense),
     ("edge-storm", fx_edge_storm),

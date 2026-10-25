@@ -221,10 +221,17 @@ def run(cfg, payload_path=None):
     # packing 下同心是合法几何：父节点只有一个孩子时，_pack_siblings 把那一个孩子
     # 放在原点，于是父子同心、只按 level_ratio 缩小半径 —— 正是地图上「这个省只有
     # 一个市」的画法。所以旧版「坐标两两不同」要放宽成「重合的一对必须是父子」。
+    # 阶段 3.2：所有几何断言都必须**扣掉落盘量化误差**。layout 对 min_r < 1e-2 的库
+    # 自动提高坐标精度（3 → 5~9 位），这里用同一个公式复算，得到误差上界 quant；
+    # 之后「父内含子 / 兄弟不交 / 父大 1.5 倍」都按 quant 放宽——量化误差不是布局错误。
+    min_r_all = min(n.get("r", 0) for n in data["nodes"])
+    coord_dec = 3 if min_r_all >= 1e-2 else min(
+        9, 3 + int(math.ceil(-math.log10(min_r_all))) - 1)
+    quant = 2 * 10 ** (-coord_dec) + 10 ** (-4)   # 坐标 2 个分量 + 半径各自 4 位精度
     coords = {}
     dup_pairs = []
     for node in data["nodes"]:
-        key = (round(node["x"], 3), round(node["y"], 3))
+        key = (round(node["x"], coord_dec), round(node["y"], coord_dec))
         if key in coords:
             dup_pairs.append((coords[key], node["id"]))
         coords[key] = node["id"]
@@ -253,6 +260,12 @@ def run(cfg, payload_path=None):
            "每层登记的 count 与实际节点数一致", failures)
     _check(all(n.get("r", 0) > 0 for n in data["nodes"]),
            f"{len(data['nodes'])} 个节点都有正的世界半径 r", failures)
+    # 阶段 3.2：半径不只「> 0」，还要**离浮点下溢有安全距离** —— `round(…, 4)` 会把
+    # 极深链（~30 层，r 几何级数收缩）舍成 0.0，随后 min_px / r 就是 ZeroDivisionError。
+    # 1e-4 是落盘精度本身（4 位小数），钳位后这条断言同时守住「精度」和「除法安全」。
+    min_r = min(n.get("r", 0) for n in data["nodes"])
+    _check(min_r >= 1e-4,
+           f"世界半径落盘精度下限：最小 r={min_r:.4g} ≥ 1e-4（round 4 位的下限）", failures)
 
     outside, too_small = [], []
     for n in data["nodes"]:
@@ -260,9 +273,9 @@ def run(cfg, payload_path=None):
         if p is None:
             continue
         d = math.hypot(n["x"] - p["x"], n["y"] - p["y"])
-        if d + n["r"] > p["r"] * (1 + REL_TOL):
+        if d + n["r"] > p["r"] + quant:
             outside.append((n["id"], d + n["r"], p["r"]))
-        if p["r"] < n["r"] * level_ratio * (1 - REL_TOL):
+        if p["r"] + quant < n["r"] * level_ratio * (1 - REL_TOL):
             too_small.append((n["id"], p["r"], n["r"]))
     _check(not outside,
            f"每个节点都完整落在父节点圆内（越界 {len(outside)} 个）", failures)
@@ -281,7 +294,7 @@ def run(cfg, payload_path=None):
                 sibling_pairs += 1
                 a, b = kids[i], kids[j]
                 d = math.hypot(a["x"] - b["x"], a["y"] - b["y"])
-                if d < (a["r"] + b["r"]) * (1 - REL_TOL):
+                if d < (a["r"] + b["r"]) - quant:
                     overlap.append((a["id"], b["id"], d, a["r"] + b["r"]))
     _check(not overlap,
            f"{sibling_pairs} 对兄弟圆互不相交（重叠 {len(overlap)} 对）", failures)
@@ -294,7 +307,7 @@ def run(cfg, payload_path=None):
     min_px = float(cfg["lod"]["min_px"])
     fade = float(cfg["lod"]["fade_span"])
     viol = [n["id"] for n in data["nodes"]
-            if n["parent"] in nodes and n["r"] >= nodes[n["parent"]]["r"] * (1 - REL_TOL)]
+            if n["parent"] in nodes and n["r"] + quant >= nodes[n["parent"]]["r"]]
     _check(not viol,
            f"r 沿包含链严格递减（违反 {len(viol)} 个）", failures)
 
