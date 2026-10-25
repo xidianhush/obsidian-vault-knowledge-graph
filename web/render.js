@@ -268,6 +268,15 @@
       e._nl = !!(A && B && A.kind === 'note' && B.kind === 'note');
     });
 
+    // 按深度分桶的节点索引（阶段 2.3）：ghost 只需要「当前最深层 +1」那一层，
+    // 旧版每帧都扫一遍全部 NODES（2 万节点的库上白扫 2 万次/帧）。
+    var BY_DEPTH = [];
+    NODES.forEach(function (n) {
+      var arr = BY_DEPTH[n.depth];
+      if (!arr) { arr = []; BY_DEPTH[n.depth] = arr; }
+      arr.push(n);
+    });
+
     // ── 缩放边界：全部从 r / enter 现算，不写死任何绝对值 ─────────────────
     var rootNeed = 0, maxMz = 0;
     NODES.forEach(function (n) {
@@ -783,6 +792,9 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
         var e0 = SEM[i];
         var A0 = byId.get(e0.s), B0 = byId.get(e0.t);
         if (!A0 || !B0) continue;
+        // 阶段 2.3：学科过滤后，只要有一端被过滤掉，这条边也不画 ——
+        // 否则画面上会出现「圆没了、线还连着空气」的残线（用户报过的语义错误）。
+        if (filterSet && (!filterSet.has(A0.id) || !filterSet.has(B0.id))) continue;
         var sF0 = isFocusSide(A0, selN), tF0 = isFocusSide(B0, selN);
         var hs0 = !!(sF0 || tF0);
         if (A0.id === B0.id) {
@@ -1325,9 +1337,12 @@ var ctrlMode = false;   // Ctrl 按住时给标题圆画虚线圈（可预览提
       var zoom = cam.zoom;
       var Hc = contentHeight();
       var labels = [];
-      for (var j = 0; j < NODES.length; j++) {
-        var n = NODES[j];
-        if (n.depth !== gd) continue;
+      // 阶段 2.3：只扫**目标层**（BY_DEPTH），并尊重学科过滤 —— 过滤后「圆没了 shadow 还在」
+      // 是同一类错误（幽灵层不该画出被过滤掉的元素）。
+      var layer = BY_DEPTH[gd] || [];
+      for (var j = 0; j < layer.length; j++) {
+        var n = layer[j];
+        if (filterSet && !filterSet.has(n.id)) continue;
         var sr = n._r * zoom;
         if (sr < 1.5) continue;
         var sx = w2sx(n.x), sy = w2sy(n.y);

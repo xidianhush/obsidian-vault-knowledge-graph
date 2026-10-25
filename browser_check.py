@@ -1724,6 +1724,20 @@ with sync_playwright() as p:
         filt = page.evaluate(STATE)["shownNodes"]
         print("    shownNodes all=%d  filtered=%d" % (base, filt))
         check("domain filter reduces visible nodes", filt < base, "%d -> %d" % (base, filt))
+        # 阶段 2.3：过滤后不许留「残线」—— 只要有一端被过滤掉，那条边就不能画。
+        # 判据：这一帧真正画的边数 ≤ 「两端都还在」的语义边数。
+        orphans = page.evaluate("""() => { const R = window.KG.renderer; const fs = R.filterSet;
+            if (!fs) return null;
+            let kept = 0;
+            for (const e of R.SEM) { if (fs.has(e.s) && fs.has(e.t)) kept++; }
+            return {drawn: R.stats.edges, kept: kept,
+                    ghost: R.stats.ghost}; }""")
+        print("    edges drawn=%s  both-ends-kept=%s  ghost=%s"
+              % (orphans and orphans["drawn"], orphans and orphans["kept"],
+                 orphans and orphans["ghost"]))
+        check("filtered-out edges are not drawn (no orphan lines)",
+              bool(orphans) and orphans["drawn"] <= orphans["kept"],
+              json.dumps(orphans, ensure_ascii=False))
         page.select_option("#domain", index=0)
         page.wait_for_timeout(700)
         check("clearing the filter restores", page.evaluate(STATE)["shownNodes"] == base)

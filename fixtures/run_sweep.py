@@ -89,6 +89,24 @@ def _fmt_expected(vals: dict) -> str:
     return "{" + ", ".join(parts) + "}"
 
 
+def _merge_expected(existing_line: str, vals: dict) -> str:
+    """把新读数**合并进**已有值 —— 不带 --browser 跑一次不会把 browser 的标定抹掉。
+
+    （2026-10-25 踩过：一次普通的 --update-manifest 把 tiny/wide-roots/hub-dense 的
+    browser 期望值全清了，sweep 随后把「未标定」当 pending，等于静默丢标定。）
+    """
+    m = re.search(r"\{([^}]*)\}", existing_line)
+    cur = {}
+    if m:
+        try:
+            cur = yaml.safe_load("{" + m.group(1) + "}") or {}
+        except yaml.YAMLError:
+            cur = {}
+    cur = dict(cur) if isinstance(cur, dict) else {}
+    cur.update(vals)
+    return _fmt_expected(cur)
+
+
 def patch_expected_ok(path: str, vals: dict) -> None:
     """只改 `expected_ok:` 那一行，保留 manifest 里的全部注释。
 
@@ -104,7 +122,7 @@ def patch_expected_ok(path: str, vals: dict) -> None:
             cur = m.group(1)
         if cur in vals and re.match(r"^\s+expected_ok:", line):
             pad = line[:len(line) - len(line.lstrip())]
-            out.append(pad + "expected_ok: " + _fmt_expected(vals[cur]))
+            out.append(pad + "expected_ok: " + _merge_expected(line, vals[cur]))
             continue
         out.append(line)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
