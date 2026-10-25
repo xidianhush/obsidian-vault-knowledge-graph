@@ -60,8 +60,9 @@ fixtures:
     config: vaults/deep-chain/config.yaml
     canary: {folders: 10, notes: 10, headings: 10, semantic_edges: 0}
     expected_ok: {verify: 69, browser: 98}
-    known_gaps:
-      - "[PILLS] 浏览器侧胶囊数 = max_depth，12 个在 1440px 下会挤压 / 裁切（template.html:86-91）—— 阶段 2.4"
+    # 阶段 2.4 已修：levelbar 可收缩 + pills 横向滚动，12 个胶囊不再挤压/裁切，
+    # browser_check 的「顶栏子元素不越界」断言覆盖它（实测 pills=12 scrollable=True）。
+    known_gaps: []
 
   wide-roots:
     title: 宽扇出库
