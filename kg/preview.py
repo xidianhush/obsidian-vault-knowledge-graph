@@ -129,17 +129,18 @@ def _truncate_body(body: str, limit: int) -> str:
 
 
 def render(note, cfg: dict, index: dict, base_dir: str, resolve,
-           limit_chars: int = 0) -> tuple[str, list, list]:
+           limit_chars: int = 0, heading_index: dict | None = None) -> tuple[str, list, list]:
     """把一篇笔记渲染成预览片段，返回 (html, links, anchors)。
 
     links：出站链接表 `[{"t": 目标节点 id, "l": 显示文字}, ...]`（去重、只留能解析到
     图上节点的），也给浮层里的链接 span 用。
     anchors：预览 HTML 里各标题的锚点 id（`pv-h0`…，文档序），给「从这一节滚起」用。
     limit_chars：>0 时正文按它截断（阶段 3.1 的预览预算），锚点/链接只覆盖保留部分。
+    heading_index：note_id → 该笔记的标题节点列表（阶段 3.3，避免逐锚点全表扫）。
     """
-    by_id = getattr(resolve, "by_id", {})
     links = []
     seen = set()
+    hidx = heading_index if heading_index is not None else {}
 
     def sub(m):
         bang, inner = m.group(1), m.group(2)
@@ -167,7 +168,7 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve,
             return WL_PLAIN_TPL.format(label=label)
         node_id = tid
         if anchor:
-            hid = _heading_id(by_id, tid, anchor)
+            hid = _heading_id(hidx, tid, anchor)
             if hid:
                 node_id = hid
         key = (node_id, label)
@@ -260,24 +261,27 @@ def render(note, cfg: dict, index: dict, base_dir: str, resolve,
     return html, links, anchors
 
 
-def _heading_id(by_id: dict, note_id: str, anchor: str) -> str | None:
-    """把 `#标题` 锚点解析到具体标题节点 id（宽松匹配：去除首尾空白与 `#`）。"""
+def _heading_id(heading_index: dict, note_id: str, anchor: str) -> str | None:
+    """把 `#标题` 锚点解析到具体标题节点 id（宽松匹配：去除首尾空白与 `#`）。
+
+    阶段 3.3：`heading_index` 是**按笔记分组**的索引（note_id → 该笔记的标题节点列表），
+    由 graph.attach_previews 建一次、所有笔记共用。旧实现在**全部节点**上扫两遍
+    （`for node_id, node in by_id.items()`），每处理一个锚点链接就是 2×N 次判断 ——
+    2 万节点的库 + 3 千处 `[[笔记#标题]]` 就是 1.2 亿次比较。现在只看那一篇的标题。
+    """
     want = anchor.strip().lstrip("#").strip()
     if not want:
         return None
-    for node_id, node in by_id.items():
-        if node.get("kind") != "heading" or node.get("note") != note_id:
-            continue
+    cands = heading_index.get(note_id) or ()
+    for node in cands:
         if (node.get("title") or "").strip() == want:
-            return node_id
+            return node.get("id")
     # 退一步：大小写不敏感 + 去掉行内 markdown 记号的比较
     low = want.lower().replace("*", "").replace("$", "")
-    for node_id, node in by_id.items():
-        if node.get("kind") != "heading" or node.get("note") != note_id:
-            continue
+    for node in cands:
         t = (node.get("title") or "").lower().replace("*", "").replace("$", "")
         if t == low:
-            return node_id
+            return node.get("id")
     return None
 
 

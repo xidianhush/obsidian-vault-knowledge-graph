@@ -449,6 +449,14 @@ def run(cfg, payload_path=None):
         all_links = [l for n in notes for l in (n.get("links") or [])]
         _check(all(l.get("t") in node_ids for l in all_links),
                f"预览里的链接目标都落在图上节点（{len(all_links)} 条）", failures)
+        # 阶段 3.3：预览里 `[[笔记#标题]]` 这类链接必须落到**标题节点**上。
+        # 旧实现把 `getattr(bound_method, "by_id", {})` 当索引传进 `_heading_id`（永远拿到 {}），
+        # 于是所有带锚点的预览链接都退化成「指向整篇笔记」—— 看不见的 bug，直到换真索引才暴露。
+        heading_ids = {n["id"] for n in heads}
+        to_heading = [l for l in all_links if l.get("t") in heading_ids]
+        n_anchor_links = int((meta.get("link_stats") or {}).get("heading_anchor_miss", 0))
+        _check(all(nodes[l["t"]].get("note") in {x["id"] for x in notes} for l in to_heading),
+               f"预览里指向标题的链接（{len(to_heading)} 条）其 note 都指向真实笔记节点", failures)
         # ── 标题锚点（第五轮：圆即入口，Ctrl + 悬停标题圆 → 从这一节滚起）────
         anchors = [n.get("anchor") for n in heads if n.get("anchor")]
         per_note_anchor = {}

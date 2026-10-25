@@ -27,6 +27,7 @@ class GraphBuilder:
         self.unresolved: dict[str, int] = defaultdict(int)
         self.heading_links: list[dict] = []   # 笔记 → 目标笔记内部某个标题
         self.stats = defaultdict(int)
+        self._suffix: dict[str, list[str]] | None = None   # 阶段 3.3：含 / 的链接后缀索引
         self._build_index()
 
     # ── 索引与链接解析 ───────────────────────────────────────────────────
@@ -55,7 +56,7 @@ class GraphBuilder:
         if t.lower() in self.alias:
             return self.alias[t.lower()]
         if "/" in t:
-            hits = [i for i in self.by_id if i == t or i.endswith("/" + t)]
+            hits = self._suffix_hits(t)
             if hits:
                 return sorted(hits, key=len)[0]
             low = t.lower()
@@ -69,6 +70,23 @@ class GraphBuilder:
         folded = "/".join(t.lower().split("/"))
         same_dir = [i for i in hits if i.rsplit("/", 1)[0].lower() == folded]
         return same_dir[0] if same_dir else hits[0]
+
+    def _suffix_hits(self, t: str) -> list[str]:
+        """含 `/` 的链接目标：按**后缀索引**找，不再全表 `endswith` 扫描（阶段 3.3）。
+
+        索引键是每个 id 的末 1~4 段（`"A/B/Note"` 这类目标够用；目标本身超过 4 段时
+        退回全表扫，保持行为与旧实现完全一致 —— 这种写法极少）。
+        """
+        if self._suffix is None:
+            idx: dict[str, list[str]] = {}
+            for node_id in self.by_id:
+                parts = node_id.split("/")
+                for k in range(1, min(len(parts), 4) + 1):
+                    idx.setdefault("/".join(parts[-k:]), []).append(node_id)
+            self._suffix = idx
+        if t.count("/") + 1 > 4:
+            return [i for i in self.by_id if i == t or i.endswith("/" + t)]
+        return self._suffix.get(t, [])
 
     # ── 节点 ────────────────────────────────────────────────────────────
     def add_node(self, node_id: str, **kw):
@@ -190,6 +208,13 @@ class GraphBuilder:
         if not (cfg.get("preview") or {}).get("enabled"):
             return
         index = preview_mod.build_attachment_index(cfg["vault"])
+        # 阶段 3.3：按笔记分组的标题索引（note_id → 标题节点列表），建一次给所有笔记共用。
+        # 旧版每遇到一个 `[[笔记#标题]]` 就在**全部节点**上扫两遍（2×N），2 万节点的库上
+        # 3 千处锚点链接 = 1.2 亿次比较。
+        heading_index: dict[str, list] = {}
+        for nd in self.nodes.values():
+            if nd.get("kind") == "heading":
+                heading_index.setdefault(nd.get("note"), []).append(nd)
         preview_cfg = cfg.get("preview") or {}
         # 阶段 3.1：预览预算。预览是 payload 里最大的一块（作者库占节点字段 48%），
         # 不设上限时一篇 2 万字的笔记就能单独贡献几百 KB。规则：
@@ -208,7 +233,8 @@ class GraphBuilder:
             if node is None:
                 continue
             html, links, anchors = preview_mod.render(
-                note, cfg, index, base_dir, self.resolve, limit_chars=limit)
+                note, cfg, index, base_dir, self.resolve, limit_chars=limit,
+                heading_index=heading_index)
             if limit and len(note.body) > limit and "…（预览已按预算截断）" in html:
                 truncated += 1
             node["preview"] = html
