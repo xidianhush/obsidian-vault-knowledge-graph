@@ -51,8 +51,40 @@ python build.py scope  --scope public     # 打印公开那份的镜像清单（
 
 ```
 python build.py verify      # 数据侧断言
-python browser_check.py     # 浏览器侧约 132 项断言（Playwright + 本机 Chrome，自动截图；公开那份 133）
+python browser_check.py     # 浏览器侧约 147 项断言（Playwright + 本机 Chrome，自动截图；公开那份 146）
 ```
+
+---
+
+## 0. 目前进度（阶段总览）
+
+2026-10-24 ~ 10-25 做了一轮**适用性 / 鲁棒性**改造：目标不是「在作者这 114 篇的库上好看」，
+而是「换一个别人的 vault 也不崩、不卡、语义不错」。完整计划、决策理由、量化阈值见
+[`PLAN_APPLICABILITY.md`](PLAN_APPLICABILITY.md)；阶段 4 的交接见
+[`HANDOFF_STAGE4.md`](HANDOFF_STAGE4.md)。
+
+| 阶段 | 内容 | 状态 | 关键结果 |
+|---|---|---|---|
+| **0. 适用性收口** | 0.1 `--config`/内联 scope；0.2 形状 fixture 矩阵（`fixtures/`）；0.3 审计「4 处真耦合 + 5 处伪耦合」 | ✅ | 加参数后产物**逐位不变**；fixture 从 2 个扩到 11 个 |
+| **0.5 插件探针** | 半天探针：插件里能不能跑同一套管线（路线 B = JS 管线进插件） | ✅ | 12 条硬约束 C1–C12，见 PLAN §9 |
+| **1. 数据侧泛化** | 1.1 标题级别稠密化；1.2 缩放行程自动标定；1.3 学科色板自动补齐；1.4 根笔记模型；1.5 视口 inset 自适应 | ✅ | `verify` 全绿；10 层深链可滚、30 个学科各有色、根笔记不再崩 |
+| **2. 渲染侧泛化** | 2.0 浏览器断言「前提不成立 → 显式跳过并计数」；2.1 标签预算/字号派生；2.2 边批处理 + 可见面积预算；2.3 过滤后不留残线；2.4 深层库顶栏胶囊；2.5 搜索防抖/图例两列/面板随 vw | ✅ | 6000 条边的库连续缩放 **10 → 23 fps**、`draw()` 14.0 → **2.6 ms** |
+| **3. 规模上限落地** | 3.1 预览预算；3.2 半径钳位 + 坐标精度自适应；3.3 全表扫改索引；3.4 payload 列式化 | ✅ | 单文件 **6338 → 4699 KB（-26%）**；`_heading_id` 在 2 万节点上 **2185×** |
+| **4. Obsidian 插件** | 抽 `GraphCore` + 浏览器/Obsidian 两个适配层；插件内图片走 `getResourcePath` | ⬜ 下一步 | 先做 30 分钟 `ItemView` + canvas 冒烟，见 `HANDOFF_STAGE4.md` |
+| **5. 构建期语义增强**（可选） | 无文件夹的库跑 Louvain 聚类生成虚拟学科层（LLM 仅用于簇命名，默认关闭） | ⬜ 可选 | 不进入核心几何 |
+
+**当前硬闸（2026-10-25 实测，改动前后必须对得上、不能降）**：
+
+| 命令 | 期望 |
+|---|---|
+| `python build.py verify --scope all` | **138 ok / 0 FAIL（69+69）** |
+| `python browser_check.py`（private） | **147 ok / 0 FAIL / 0 skip** |
+| `python browser_check.py`（public） | **146 ok / 0 FAIL / 1 skip** |
+| `python fixtures/run_sweep.py --browser` | 11 个 fixture 四列全绿（verify 11×69） |
+| 单文件 | private **4699 KB** / public **4751 KB** |
+
+数字会随笔记增删漂移，**以命令输出为准**；ok 数变少（而不是变多）就是回归，
+例外必须写进 `fixtures/manifest.yaml` 的 `known_gaps`。
 
 ---
 
@@ -695,7 +727,7 @@ knowledge-graph/
 ├── config.yaml            构建入口：scope_file / scopes（哪几份、各输出到哪）/ 缩放 / 权重 / 布局 / LOD / 配色
 ├── build.py               CLI：scan | suggest | build | verify | watch | scope（都支持 --scope private|public|all）
 ├── verify.py              数据侧自动校验（断言式，无测试框架）
-├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，~132 项断言 + 截图，默认查 private 那份；public 133）
+├── browser_check.py       浏览器侧自动回归（Playwright + 本机 Chrome，~147 项断言 + 截图，默认查 private 那份；public 146）
 ├── kg/preview.py          Obsidian 式预览：markdown → HTML、图片/链接解析、KaTeX 资产内联（2026-10-22）
 ├── web/vendor/katex/      vendored KaTeX 0.16.11（js/css/auto-render/woff2 字体，约 0.55MB，含 LICENSE）
 ├── sync-graph.ps1         计划任务包装脚本（防重入 + python 检查 + UTF-8 + 日志裁剪；建本地两份 `--scope all`）
@@ -707,6 +739,8 @@ knowledge-graph/
 │   ├── candidates.py      候选边挖掘（3 条启发式）
 │   ├── layout.py          circle packing 布局 + 世界半径 r / minzoom
 │   ├── ioutils.py         stdout UTF-8
+│   ├── codec.py           payload 列式化编解码（阶段 3.4：字符串引用 → 数组下标）
+│   ├── palette.py         学科色板（手写优先，其余按黄金角自动补齐）
 │   └── emit.py            输出 graph.json 与自包含单文件 HTML
 ├── web/                   前端源码（构建时全部内联进单文件）
 │   ├── template.html      骨架 + CSS（深青玻璃主题：`body` 背景渐变 + 颗粒、`:root` 里的
@@ -719,11 +753,13 @@ knowledge-graph/
 ├── annotations.yaml       你的手工标注
 ├── candidates.yaml        候选边（待审核）
 ├── HANDOFF.md             交接文档：现状、实测数据、坑、待办、调参地图
+├── PLAN_APPLICABILITY.md  适用性/鲁棒性改造计划：阶段 0~5、规模边界、量化阈值、changelog
+├── HANDOFF_STAGE4.md      阶段 4（Obsidian 插件）交接：现状、硬闸、怎么跑、冒烟步骤
 └── dist/                  构建产物（gitignore）
-    ├── graph.json                private 的中间产物，调试用（2026-10-24 14:45 快照：5771 KB ≈ 5.64 MB）
-    ├── knowledge-graph.html      ★ 双击打开（同快照：6277 KB ≈ 6.13 MB）
-    ├── graph.public.json         public 的中间产物（同快照：5770 KB ≈ 5.64 MB）
-    └── knowledge-graph.public.html  public 那份（同快照：6303 KB ≈ 6.15 MB；上不上站见 §1）
+    ├── graph.json                private 的中间产物，调试用（2026-10-25 快照：4196 KB ≈ 4.1 MB）
+    ├── knowledge-graph.html      ★ 双击打开（同快照：4699 KB ≈ 4.6 MB）
+    ├── graph.public.json         public 的中间产物（同快照：4217 KB ≈ 4.1 MB）
+    └── knowledge-graph.public.html  public 那份（同快照：4751 KB ≈ 4.6 MB；上不上站见 §1）
 ```
 
 数据流：vault →（按 `public-scope.yaml` 的 scope 取范围）→ `kg/*` → `graph.json` →
@@ -735,7 +771,7 @@ knowledge-graph/
 
 1. **单文件必须全内联。** Chrome 在 `file://` 下禁止 `fetch`/XHR 读本地文件，
    HTML 一旦去 fetch `graph.json`，双击打开必然失败。数据与全部 JS/CSS 都内联。
-   代价是约 6.1 MB（2026-10-24 14:45 实测 **6.13 MB**；删聚合边之前是 8.7 MB），但换来「双击即用」。
+   代价是约 4.6 MB（2026-10-25 列式化后 **4699 KB**；列式化前 6.13 MB，删聚合边之前 8.7 MB），但换来「双击即用」。
 
 2. **坐标一次算定，缩放只改可见性。** `layout.py` 用 circle packing：深度 = 嵌套层数，
    规模 = 圆半径，子圆严格落在父圆内部、兄弟圆互不相交。半径分两步定 —— 目标半径
@@ -858,6 +894,10 @@ knowledge-graph/
 > **62~63 fps**；20 格滚轮 private **1244 ms** / public **1303 ms** —— 视觉改版前基线
 > **1081 ms**，加材质后慢约 **15~20%**，仍在 **1.5 s** 预算内（要再加材质先量这个读数，见
 > HANDOFF 坑 43）。
+>
+> **2026-10-25 阶段 0~3 完成后（当前读数）**：`verify --scope all` **138 ok / 0 FAIL（69+69）**；
+> `browser_check` private **147 / 0 / 0**、public **146 / 0 / 1**；单文件 **4699 KB（private）/
+> 4751 KB（public）**；11 个形状 fixture 四列全绿。逐项说明见 `PLAN_APPLICABILITY.md` §7。
 
 ### `python build.py verify`（数据侧）
 
@@ -897,7 +937,7 @@ knowledge-graph/
 公开范围之外，这条边在 public 里就不存在。本次快照正好有一处笔记→笔记链接是这样
 （**09:07 那轮** `scan` 里 private 46 条、public 45 条），差的就是它。**别把「两份语义边相等」当契约。**
 
-### `python browser_check.py`（浏览器侧，约 132 / 133 项断言）
+### `python browser_check.py`（浏览器侧，约 147 / 146 项断言）
 
 Playwright 驱动本机 Chrome（`channel="chrome"`）直接 `goto file:///…`，无需起服务器。
 默认查 private 那份（`dist/knowledge-graph.html`）；两份共用 `web/*.js`，只是 payload 不同，
@@ -962,6 +1002,10 @@ public 133 `[ok]`**，各 0 FAIL、1 warn；warn 是「天花板处没找到空�
 是删用例不是静默跳过**：1c 整节 14 条 + 7b/7c/7d 不再各跑两遍的 43 条，逐条对得上。
 空视口本身已经由 2b / 3c / 3d 三段从「缩太远」「放太大」与「任何缩放 × 任何平移」三个角度
 直接钉住，不再靠那段运气。
+
+阶段 0~3 之后（2026-10-25）这些数字涨到 **private 147 / public 146**：新增的是形状感知跳过、
+标签模式、过滤残线、顶栏越界、搜索上限与图例布局等断言；`plain` 上有 1 条 `[skip]`（该库不存在
+「放大到极端的空视口」状态），写进了 `fixtures/manifest.yaml` 的 `known_gaps`。
 
 ### 仍需在浏览器里人工确认
 
