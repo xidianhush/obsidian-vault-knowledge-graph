@@ -415,11 +415,19 @@ with sync_playwright() as p:
     if picked_lbl:
         page.mouse.click(picked_lbl["x"], picked_lbl["y"])
         page.wait_for_timeout(500)
-        page.evaluate("() => { window.KG.renderer.labelMode = 'selected'; }")
-        page.wait_for_timeout(400)
+        # 阶段 2.5 泛化：屏幕半径 <28px 的圆按设计**不挂标签**（标签只进圆内）。
+        # wide-roots 上探针可能点中 17px 的小圆 —— 那不是「off 老 bug」，是形状。
+        # 所以先把选中的圆放大到能放字（focusOn 瞬时），再验 selected 模式。
+        page.evaluate("(id) => window.KG.renderer.focusOn(id, 1.0, 0)", picked_lbl["id"])
+        page.wait_for_timeout(700)
+        page.evaluate("() => { window.KG.renderer.labelMode = 'selected'; window.KG.renderer.draw(); }")
+        page.wait_for_timeout(300)
         sel_n = page.evaluate(STATE)["shownLabels"]
         nb = page.evaluate("() => window.KG.state().focusNeighbors")
-        print("    labelMode 'selected': labels=%d neighbors=%s" % (sel_n, nb or 0))
+        sel_sr = page.evaluate("(id) => Math.round((window.KG.renderer.byId.get(id) || {})._sr || 0)",
+                               picked_lbl["id"])
+        print("    labelMode 'selected': labels=%d neighbors=%s selected_sr=%dpx"
+              % (sel_n, nb or 0, sel_sr))
         check("labelMode 'selected' labels the selection (not zero, the old 'off' bug)",
               sel_n > 0, "labels=%d" % sel_n)
         check("labelMode 'selected' shows far fewer labels than 'auto'",
@@ -1707,6 +1715,33 @@ with sync_playwright() as p:
         check("clicking a hit selects and focuses it", page.evaluate(STATE)["selected"] is not None)
     page.evaluate("() => window.KG.runSearch('')")
     page.wait_for_timeout(300)
+
+    print("\n=== 8b. 搜索防抖/命中上限与面板自适应（阶段 2.5）===")
+    st_search = page.evaluate(STATE)
+    # 命中封顶：1 个字符的查询在最坏形状上能匹配全库；matchSet 必须有上限。
+    check("search hit set respects the cap (2000)",
+          st_search["searchMatches"] <= 2000, str(st_search["searchMatches"]))
+    page.evaluate("() => window.KG.runSearch('')")
+    page.wait_for_timeout(400)
+    check("clearing the search empties the match set",
+          page.evaluate(STATE)["searchMatches"] == 0,
+          str(page.evaluate(STATE)["searchMatches"]))
+    # 图例：学科多时两列，且不许横向溢出（30 个学科的库单列会变成一条长滚动条）
+    legend = page.evaluate("""() => {
+        const box = document.getElementById('legend-domains');
+        const n = ((window.KG.data.meta || {}).domains || []).length;
+        return {n: n, display: getComputedStyle(box).display,
+                overflow: box.scrollWidth > box.clientWidth + 1,
+                panelW: Math.round(document.getElementById('legend').getBoundingClientRect().width),
+                vw: window.innerWidth}; }""")
+    check("legend switches to two columns only when there are many domains",
+          (legend["display"] == "grid") == (legend["n"] > 12),
+          "domains=%d display=%s" % (legend["n"], legend["display"]))
+    check("legend domains do not overflow horizontally", not legend["overflow"],
+          "scrollWidth>clientWidth? %s" % legend["overflow"])
+    check("legend panel stays under half the viewport width",
+          legend["panelW"] <= legend["vw"] * 0.5 + 1,
+          "panel=%dpx vw=%dpx" % (legend["panelW"], legend["vw"]))
 
     print("\n=== 9. filters (domain) ===")
     page.evaluate("() => window.KG.renderer.resetView()")

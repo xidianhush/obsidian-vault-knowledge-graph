@@ -203,6 +203,12 @@
     // 「扫 depth-1 的 folder 节点」猜 —— 那个猜法在「全散笔记、没有文件夹」的库上
     // 会得到空图例，在 domain 被 annotations 覆盖但目录名不同时也会漏。
     const domains = (META && META.domains) || [];
+    // 阶段 2.5：学科多的时候图例改成两列 —— 30 个学科单列会变成一条长滚动条，
+    // 1/3 屏高都被它占掉。12 个以内保持单列（列宽更松、更好读）。
+    const multi = domains.length > 12;
+    box.classList.toggle('multi', multi);
+    const legendEl = $('legend');
+    if (legendEl) legendEl.classList.toggle('wide', multi);
     if (!domains.length) {
       const row = document.createElement('div');
       row.className = 'row';
@@ -476,6 +482,13 @@
   // ── 搜索 ──────────────────────────────────────────────────────────────
   // 标题已经是一等节点，所以一次遍历 NODES 就同时覆盖「笔记 / 文件夹 / 知识点」，
   // 不再需要单独扫一份标题表。
+  // 2026-10-25 阶段 2.5：加**防抖 + 命中上限**。旧版每敲一个键就全量扫 NODES
+  // （2 万标题 = 2 万次 toLowerCase）、并把全部命中塞进 matchSet、每帧给全部命中画
+  // 强调环与强制标签 —— 连续打字时主线程被占满，输入框都会掉字。
+  const SEARCH_DEBOUNCE_MS = 120;
+  const SEARCH_HIT_CAP = 2000;
+  let searchTimer = 0;
+
   function runSearch(q) {
     searchQ = q;
     const matchSet = new Set();
@@ -488,8 +501,12 @@
     }
     const needle = q.toLowerCase();
     const out = [];
-    NODES.forEach((n) => {
-      if (n.label.toLowerCase().indexOf(needle) < 0) return;
+    let truncated = false;
+    for (let i = 0; i < NODES.length; i++) {
+      const n = NODES[i];
+      if (n.label.toLowerCase().indexOf(needle) < 0) continue;
+      // 命中封顶：够多就停，不再继续扫（否则 1 个字符的查询在最坏形状上能扫全库）
+      if (matchSet.size >= SEARCH_HIT_CAP) { truncated = true; break; }
       matchSet.add(n.id);
       let why;
       if (n.kind === 'heading') {
@@ -501,7 +518,7 @@
         why = '文件夹 · ' + (n.note_count || 0) + ' 篇笔记';
       }
       out.push({ id: n.id, label: n.label, why: why });
-    });
+    }
     R.matchSet = matchSet;
     out.sort((a, b) => a.label.length - b.label.length);
     hits.innerHTML = out.slice(0, 30).map((h) =>
@@ -512,7 +529,13 @@
     hits.querySelectorAll('.hit[data-id]').forEach((el) => {
       el.addEventListener('click', () => select(el.dataset.id, true));
     });
-    toast('匹配 ' + matchSet.size + ' 个元素，列出前 ' + Math.min(30, out.length) + ' 个');
+    toast('匹配 ' + matchSet.size + ' 个元素' + (truncated ? '（已到上限，只高亮前 '
+      + SEARCH_HIT_CAP + ' 个）' : '') + '，列出前 ' + Math.min(30, out.length) + ' 个');
+  }
+
+  function searchSoon(value) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runSearch(String(value || '').trim()), SEARCH_DEBOUNCE_MS);
   }
 
   // ── 渲染器 ────────────────────────────────────────────────────────────
@@ -768,7 +791,7 @@
   $('zoomin').addEventListener('click', () => stepLevel(1));
   $('zoomout').addEventListener('click', () => stepLevel(-1));
   $('reset').addEventListener('click', () => { R.resetView(); toast('已回到默认视角'); });
-  $('search').addEventListener('input', (e) => runSearch(e.target.value.trim()));
+  $('search').addEventListener('input', (e) => searchSoon(e.target.value));
   $('search').addEventListener('focus', (e) => { if (e.target.value.trim()) runSearch(e.target.value.trim()); });
   $('search').addEventListener('blur', () => setTimeout(() => { $('hits').style.display = 'none'; }, 180));
   $('search').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(e.target.value.trim()); });
@@ -848,6 +871,8 @@
       selected: R.selected,
       hovered: R.hover,
       search: searchQ,
+      // 阶段 2.5：命中集合大小（有上限 2000），回归据此验「封顶生效」
+      searchMatches: R.matchSet ? R.matchSet.size : 0,
       labelMode: labelMode,
       filterSet: R.filterSet ? R.filterSet.size : null,
       camera: { zoom: R.camera.zoom, panX: R.camera.panX, panY: R.camera.panY },
